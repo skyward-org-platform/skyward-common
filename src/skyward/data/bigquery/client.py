@@ -24,7 +24,14 @@ class BigQueryClient:
             self.client = bigquery.Client(credentials=self.credentials, project=self.project_id)
         else:
             # Use Application Default Credentials (ADC)
-            self.client = bigquery.Client(project=self.project_id)
+            try:
+                self.client = bigquery.Client(project=self.project_id)
+            except Exception as e:
+                raise RuntimeError(
+                    "No Google Cloud credentials found. To authenticate, run:\n\n"
+                    "    gcloud auth application-default login\n\n"
+                    "Or set GCP_DATAHUB_CREDENTIALS in your .env to a service account JSON path."
+                ) from e
 
 
 

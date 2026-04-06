@@ -30,3 +30,13 @@ def test_missing_project_id_raises():
         assert False, "Should have raised RuntimeError"
     except RuntimeError as e:
         assert "project_id" in str(e)
+
+
+@patch("skyward.data.bigquery.client.bigquery.Client", side_effect=Exception("Could not automatically determine credentials"))
+def test_adc_missing_gives_helpful_error(mock_bq_client):
+    """When ADC is not configured, raise RuntimeError with setup instructions."""
+    try:
+        BigQueryClient(project_id="my-project")
+        assert False, "Should have raised RuntimeError"
+    except RuntimeError as e:
+        assert "gcloud auth application-default login" in str(e)
