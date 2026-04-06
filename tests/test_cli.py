@@ -141,6 +141,60 @@ def test_list_projects(mock_get_hub):
 
 
 @patch("skyward.cli._get_hub")
+def test_add_project(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    hub.add_project.return_value = 1
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "add-project", "--client-id", "1", "--type", "seo_pipeline", "--name", "SEO Audit"])
+    assert result.exit_code == 0
+    hub.add_project.assert_called_once_with(client_id=1, project_type="seo_pipeline", project_name="SEO Audit")
+    assert "1" in result.output
+
+
+@patch("skyward.cli._get_hub")
+def test_deactivate_project(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "deactivate-project", "--id", "3"])
+    assert result.exit_code == 0
+    hub.deactivate_project.assert_called_once_with(project_id=3)
+
+
+@patch("skyward.cli._get_hub")
+def test_complete_project(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "complete-project", "--id", "3"])
+    assert result.exit_code == 0
+    hub.complete_project.assert_called_once_with(project_id=3)
+
+
+@patch("skyward.cli._get_hub")
+def test_add_project_domains_cli(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    hub.add_project_domains.return_value = 2
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "add-project-domains", "--project-id", "1", "--domain-ids", "10,20"])
+    assert result.exit_code == 0
+    hub.add_project_domains.assert_called_once_with(project_id=1, domain_ids=[10, 20], role="client", priority="NORMAL")
+    assert "2" in result.output
+
+
+@patch("skyward.cli._get_hub")
+def test_remove_project_domains_cli(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "remove-project-domains", "--project-id", "1", "--domain-ids", "10,20"])
+    assert result.exit_code == 0
+    hub.remove_project_domains.assert_called_once_with(project_id=1, domain_ids=[10, 20])
+
+
+@patch("skyward.cli._get_hub")
 def test_list_datasets(mock_get_hub):
     hub = MagicMock()
     mock_get_hub.return_value = hub

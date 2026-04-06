@@ -118,6 +118,59 @@ def meta_list_projects(client_id, fmt):
         click.echo(df.to_string(index=False))
 
 
+@meta.command("add-project")
+@click.option("--client-id", required=True, type=int, help="Client ID.")
+@click.option("--type", "project_type", required=True, help="Project type (seo_pipeline, kga, wqa, etc.).")
+@click.option("--name", "project_name", default=None, help="Project display name.")
+def meta_add_project(client_id, project_type, project_name):
+    """Add a new project."""
+    hub = _get_hub()
+    project_id = hub.add_project(client_id=client_id, project_type=project_type, project_name=project_name)
+    click.echo(f"Created project {project_id}")
+
+
+@meta.command("deactivate-project")
+@click.option("--id", "project_id", required=True, type=int, help="Project ID.")
+def meta_deactivate_project(project_id):
+    """Deactivate a project."""
+    hub = _get_hub()
+    hub.deactivate_project(project_id=project_id)
+    click.echo(f"Deactivated project {project_id}")
+
+
+@meta.command("complete-project")
+@click.option("--id", "project_id", required=True, type=int, help="Project ID.")
+def meta_complete_project(project_id):
+    """Mark a project as complete."""
+    hub = _get_hub()
+    hub.complete_project(project_id=project_id)
+    click.echo(f"Completed project {project_id}")
+
+
+@meta.command("add-project-domains")
+@click.option("--project-id", required=True, type=int, help="Project ID.")
+@click.option("--domain-ids", required=True, help="Comma-separated domain IDs.")
+@click.option("--role", default="client", help="Role (client or competitor).")
+@click.option("--priority", default="NORMAL", help="Priority level.")
+def meta_add_project_domains(project_id, domain_ids, role, priority):
+    """Add domains to a project."""
+    hub = _get_hub()
+    ids = [int(d.strip()) for d in domain_ids.split(",")]
+    count = hub.add_project_domains(project_id=project_id, domain_ids=ids, role=role, priority=priority)
+    click.echo(f"Added {count} domain(s) to project {project_id}")
+
+
+@meta.command("remove-project-domains")
+@click.option("--project-id", required=True, type=int, help="Project ID.")
+@click.option("--domain-ids", required=True, help="Comma-separated domain IDs.")
+def meta_remove_project_domains(project_id, domain_ids):
+    """Remove domains from a project."""
+    hub = _get_hub()
+    ids = [int(d.strip()) for d in domain_ids.split(",")]
+    hub.remove_project_domains(project_id=project_id, domain_ids=ids)
+    click.echo(f"Removed {len(ids)} domain(s) from project {project_id}")
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # LLM group
 # ══════════════════════════════════════════════════════════════════════════
