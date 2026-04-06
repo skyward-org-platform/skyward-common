@@ -48,13 +48,13 @@ Source layout: `src/skyward/` (standard Python package `src` layout).
 Copy `.env.example` to `.env` and fill in credentials. Load in code:
 
 ```python
-RUNNING_DIR = os.getcwd()
 from skyward.config import load_config
 cfg = load_config()
-os.chdir(RUNNING_DIR)
 ```
 
-**IMPORTANT:** `load_config()` changes the working directory to PROJECT_ROOT. Always save and restore cwd.
+**Google Cloud auth:** For local dev, run `gcloud auth application-default login` once. Leave `GCP_DATAHUB_CREDENTIALS` empty in `.env` to use ADC. For CI/production, set the path to a service account JSON file.
+
+**IMPORTANT:** `load_config()` changes the working directory to PROJECT_ROOT. Always save and restore cwd if needed.
 
 ## Rules
 

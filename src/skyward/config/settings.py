@@ -31,15 +31,15 @@ class Settings:
 
     # DB
     datahub_project_id: str
-    datahub_credentials: dict
+    datahub_credentials: dict | None
 
     # Data For SEO
     dataforseo_username: str
     dataforseo_password: str
 
     # Google Drive
-    gdrive_credentials: dict
-    gdrive_oauth_token_path: Path
+    gdrive_credentials: dict | None
+    gdrive_oauth_token_path: Path | None
 
     # OpenAI Key
     openai_key: str
@@ -63,57 +63,28 @@ def load_config(env_file: str | None = ".env") -> Settings:
     # Load .env if present (no-op in CI unless you create one)
     load_dotenv(env_file, override=False)
 
-    # Normalize backslashes in .env paths so they work on both Windows and Linux/WSL
-    _raw_datahub = os.getenv("GCP_DATAHUB_CREDENTIALS", "")
-    gcp_datahub_credentials_path = PROJECT_ROOT / _raw_datahub.replace("\\", "/")
-    gcp_datahub_credentials = {}
+    # Helper: load a JSON credential file from an env var path.
+    # Returns None if the env var is empty (signals ADC / no credentials).
+    def _load_json_credential(env_var: str) -> dict | None:
+        raw = os.getenv(env_var, "").strip()
+        if not raw:
+            return None
+        cred_path = PROJECT_ROOT / raw.replace("\\", "/")
+        if not cred_path.is_file():
+            warnings.warn(f"{env_var} path '{cred_path}' is not a file. Using ADC.")
+            return None
+        try:
+            with cred_path.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            warnings.warn(f"Failed to load JSON from {cred_path}: {e}")
+            return None
 
-    if gcp_datahub_credentials_path:
-        cred_path = Path(gcp_datahub_credentials_path)
-        if cred_path.exists():
-            try:
-                with cred_path.open("r", encoding="utf-8") as f:
-                    gcp_datahub_credentials = json.load(f)
-            except Exception as e:
-                warnings.warn(f"Failed to load JSON from {cred_path}: {e}")
-        else:
-            warnings.warn(
-                f"GCP_DATAHUB_CREDENTIALS path '{cred_path}' does not exist. Using empty credentials."
-            )
+    gcp_datahub_credentials = _load_json_credential("GCP_DATAHUB_CREDENTIALS")
+    gdrive_credentials = _load_json_credential("GDRIVE_CREDENTIALS")
 
-    _raw_gdrive = os.getenv("GDRIVE_CREDENTIALS", "")
-    gdrive_credentials_path = PROJECT_ROOT / _raw_gdrive.replace("\\", "/")
-    gdrive_credentials = {}
-
-    if gdrive_credentials_path:
-        cred_path = Path(gdrive_credentials_path)
-        if cred_path.exists():
-            try:
-                with cred_path.open("r", encoding="utf-8") as f:
-                    gdrive_credentials = json.load(f)
-            except Exception as e:
-                warnings.warn(f"Failed to load JSON from {cred_path}: {e}")
-        else:
-            warnings.warn(
-                f"GDRIVE_CREDENTIALS path '{cred_path}' does not exist. Using empty credentials."
-            )
-
-    _raw_oauth = os.getenv("GDRIVE_OAUTH_TOKEN", "")
-    gdrive_oauth_token_path = PROJECT_ROOT / _raw_oauth.replace("\\", "/")
-
-    if gdrive_oauth_token_path:
-        cred_path = Path(gdrive_oauth_token_path)
-        if cred_path.exists():
-            try:
-                with cred_path.open("r", encoding="utf-8") as f:
-                    gdrive_oauth = json.load(f)
-            except Exception as e:
-                warnings.warn(f"Failed to load JSON from {cred_path}: {e}")
-        else:
-            warnings.warn(
-                f"GDRIVE_OAUTH_TOKEN path '{cred_path}' does not exist. Using empty credentials."
-            )
-            gdrive_oauth_token_path = Path("__missing__")
+    _raw_oauth = os.getenv("GDRIVE_OAUTH_TOKEN", "").strip()
+    gdrive_oauth_token_path = (PROJECT_ROOT / _raw_oauth.replace("\\", "/")) if _raw_oauth else None
 
 
     return Settings(

@@ -17,7 +17,7 @@ def _get_hub():
         BigQueryClient = _bq
         DataHub = _dh
     cfg = load_config()
-    bq = BigQueryClient(credentials_info=cfg.datahub_credentials, project_id=cfg.datahub_project_id)
+    bq = BigQueryClient(project_id=cfg.datahub_project_id, credentials_info=cfg.datahub_credentials or None)
     return DataHub(bq)
 
 

@@ -13,20 +13,18 @@ class BigQueryClient:
     Create once in your app, then pass to any function that needs it.
     """
 
-    def __init__(self, credentials_info: str = None, project_id: str = None):
+    def __init__(self, project_id: str = None, credentials_info: dict = None):
+        if not project_id:
+            raise RuntimeError("Missing BigQuery project_id.")
+
         self.project_id = project_id
-        self.credentials = service_account.Credentials.from_service_account_info(credentials_info) if credentials_info else None
 
-         # Validate credentials
-
-        if not self.credentials or not self.project_id:
-            raise RuntimeError("Missing BigQuery credentials.")
-
-        # Initialize BigQuery client
-        self.client: bigquery.Client = bigquery.Client(
-            credentials=self.credentials,
-            project=self.project_id
-        )
+        if credentials_info:
+            self.credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            self.client = bigquery.Client(credentials=self.credentials, project=self.project_id)
+        else:
+            # Use Application Default Credentials (ADC)
+            self.client = bigquery.Client(project=self.project_id)
 
 
 

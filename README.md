@@ -25,15 +25,13 @@ uv pip install -e .
 ```python
 import os
 
-# Load config (saves/restores cwd because load_config changes it)
-RUNNING_DIR = os.getcwd()
+# Load config
 from skyward.config import load_config
 cfg = load_config()
-os.chdir(RUNNING_DIR)
 
-# BigQuery
+# BigQuery (uses ADC if no credentials in .env)
 from skyward.data.bigquery import BigQueryClient
-bq = BigQueryClient(cfg.datahub_credentials, cfg.datahub_project_id)
+bq = BigQueryClient(project_id=cfg.datahub_project_id, credentials_info=cfg.datahub_credentials)
 
 # DataForSEO
 from skyward.data.dataforseo import DataForSEOClient, ClientConfig
@@ -86,9 +84,30 @@ Tests use mock BQ fixtures — no real credentials needed.
 
 ## Configuration
 
+### Google Cloud (BigQuery / Drive) — Application Default Credentials
+
+For local development, authenticate once:
+
+```bash
+gcloud auth application-default login
+```
+
+This saves a refresh token to `~/.config/gcloud/application_default_credentials.json`. All Google client libraries find it automatically. It persists across reboots — you only need to run it once.
+
+For CI or production, use a service account:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+```
+
+Or set `GCP_DATAHUB_CREDENTIALS=secrets/your-sa.json` in `.env` (path relative to project root).
+
+### Environment Variables
+
 Copy `.env.example` to `.env` and fill in:
 
-- `GCP_DATAHUB_PROJECT_ID` / `GCP_DATAHUB_CREDENTIALS` — BigQuery access
+- `GCP_DATAHUB_PROJECT_ID` — BigQuery project ID (always required)
+- `GCP_DATAHUB_CREDENTIALS` — leave empty for ADC, or path to service account JSON
 - `DATAFORSEO_API_LOGIN` / `DATAFORSEO_API_PASSWORD` — DataForSEO API
 - `OPENAI_API_KEY` — OpenAI
 - `GEMINI_API_KEY` — Google Gemini
