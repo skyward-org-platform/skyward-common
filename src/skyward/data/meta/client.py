@@ -83,9 +83,11 @@ class MetaClient:
         if include_counts:
             count_subqueries = """,
                 (SELECT COUNT(*) FROM `{project}.Meta.client_domains` cd
-                 WHERE cd.client_id = c.client_id AND cd.is_competitor = FALSE) AS domain_count,
+                 JOIN `{project}.Meta.domains` d ON cd.domain_id = d.domain_id
+                 WHERE cd.client_id = c.client_id AND cd.is_competitor = FALSE AND d.is_active = TRUE) AS domain_count,
                 (SELECT COUNT(*) FROM `{project}.Meta.client_domains` cd
-                 WHERE cd.client_id = c.client_id AND cd.is_competitor = TRUE) AS competitor_count,
+                 JOIN `{project}.Meta.domains` d ON cd.domain_id = d.domain_id
+                 WHERE cd.client_id = c.client_id AND cd.is_competitor = TRUE AND d.is_active = TRUE) AS competitor_count,
                 (SELECT COUNT(*) FROM `{project}.Meta.projects` p
                  WHERE p.client_id = c.client_id) AS project_count""".format(project=self._project_id)
         else:

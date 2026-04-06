@@ -53,6 +53,19 @@ def test_list_clients_with_counts(hub, fake_bq):
     assert "domain_count" in sql or "COUNT" in sql
 
 
+def test_list_clients_counts_exclude_inactive_domains(hub, fake_bq):
+    """Count subqueries should only count active domains (d.is_active = TRUE)."""
+    fake_bq.client.set_next_result(pd.DataFrame({
+        "client_id": [1], "client_name": ["Test"], "abbreviation": [None],
+        "is_active": [True], "notes": [None], "created_at": [pd.Timestamp.now()],
+        "domain_count": [2], "competitor_count": [1], "project_count": [0],
+    }))
+    hub.list_clients(include_counts=True)
+    sql = fake_bq.client.queries[-1]["sql"]
+    # The count subqueries must join domains and filter by is_active
+    assert "is_active = TRUE" in sql.replace("  ", " ")
+
+
 # ─── Test 2: add_client generates auto-ID ───────────────────────────────────
 
 def test_add_client_generates_id(hub, fake_bq):
