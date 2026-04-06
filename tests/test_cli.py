@@ -84,7 +84,7 @@ def test_add_client(mock_get_hub):
     runner = CliRunner()
     result = runner.invoke(cli, ["meta", "add-client", "--name", "New Corp"])
     assert result.exit_code == 0
-    hub.add_client.assert_called_once_with(name="New Corp", abbreviation=None)
+    hub.add_client.assert_called_once_with(client_name="New Corp", abbreviation=None)
     assert "5" in result.output
 
 

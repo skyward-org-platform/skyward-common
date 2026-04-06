@@ -63,7 +63,7 @@ def meta_list_clients(search, counts, fmt):
 def meta_add_client(name, abbreviation):
     """Add a new client."""
     hub = _get_hub()
-    client_id = hub.add_client(name=name, abbreviation=abbreviation)
+    client_id = hub.add_client(client_name=name, abbreviation=abbreviation)
     click.echo(f"Created client {client_id}")
 
 
