@@ -31,6 +31,18 @@ def test_cli_has_help():
     assert "Usage" in result.output
 
 
+@patch("skyward.cli._get_hub", side_effect=RuntimeError("No Google Cloud credentials found."))
+def test_meta_command_shows_clean_error_on_auth_failure(mock_get_hub):
+    """CLI catches RuntimeError and shows clean error, not a traceback."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "list-clients"])
+    assert result.exit_code != 0
+    combined = result.output + (result.stderr or "")
+    assert "Error" in combined
+    assert "Google Cloud credentials" in combined
+    assert "Traceback" not in combined
+
+
 def test_meta_group_exists():
     runner = CliRunner()
     result = runner.invoke(cli, ["meta", "--help"])

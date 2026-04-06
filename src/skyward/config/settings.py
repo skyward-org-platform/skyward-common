@@ -89,7 +89,7 @@ def load_config(env_file: str | None = ".env") -> Settings:
 
     return Settings(
         ENV=os.getenv("ENV"),
-        datahub_project_id=os.getenv("GCP_DATAHUB_PROJECT_ID", ""),
+        datahub_project_id=os.getenv("GCP_DATAHUB_PROJECT_ID", "data-hub-468216"),
         datahub_credentials=gcp_datahub_credentials,
         dataforseo_username=os.getenv("DATAFORSEO_API_LOGIN", ""),
         dataforseo_password=os.getenv("DATAFORSEO_API_PASSWORD", ""),

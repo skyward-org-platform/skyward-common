@@ -21,7 +21,17 @@ def _get_hub():
     return DataHub(bq)
 
 
-@click.group()
+class SkywardCLI(click.Group):
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except click.exceptions.Exit:
+            raise
+        except RuntimeError as e:
+            raise click.ClickException(str(e))
+
+
+@click.group(cls=SkywardCLI)
 def cli():
     """Skyward shared infrastructure CLI."""
     pass
