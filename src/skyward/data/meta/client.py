@@ -467,6 +467,7 @@ class MetaClient:
         self,
         client_id: Optional[int] = None,
         project_type: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         Get projects, optionally filtered by client and/or type.
@@ -486,10 +487,14 @@ class MetaClient:
             conditions.append("project_type = @project_type")
             params.append(bigquery.ScalarQueryParameter("project_type", "STRING", project_type))
 
+        if status is not None:
+            conditions.append("status = @status")
+            params.append(bigquery.ScalarQueryParameter("status", "STRING", status))
+
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
         query = f"""
-            SELECT project_id, client_id, project_type, project_name, notes, created_at
+            SELECT project_id, client_id, project_type, project_name, notes, status, created_at
             FROM `{self._project_id}.Meta.projects`
             {where_clause}
             ORDER BY project_id
@@ -522,26 +527,29 @@ class MetaClient:
 
     def add_project(
         self,
-        project_id: int,
         client_id: int,
         project_type: str,
         project_name: Optional[str] = None,
         notes: Optional[str] = None,
-    ) -> None:
+    ) -> int:
         """
-        Register a new project.
+        Register a new project with auto-generated ID.
 
         Args:
-            project_id: Unique project identifier
             client_id: Owning client
             project_type: Type of project ('seo_pipeline', 'kga', 'wqa', etc.)
             project_name: Optional display name
             notes: Optional notes
+
+        Returns:
+            The generated project_id
         """
+        project_id = self.get_next_id("projects", "project_id")
+
         query = f"""
             INSERT INTO `{self._project_id}.Meta.projects`
-            (project_id, client_id, project_type, project_name, notes)
-            VALUES (@project_id, @client_id, @project_type, @project_name, @notes)
+            (project_id, client_id, project_type, project_name, notes, status)
+            VALUES (@project_id, @client_id, @project_type, @project_name, @notes, @status)
         """
 
         params = [
@@ -550,8 +558,72 @@ class MetaClient:
             bigquery.ScalarQueryParameter("project_type", "STRING", project_type),
             bigquery.ScalarQueryParameter("project_name", "STRING", project_name),
             bigquery.ScalarQueryParameter("notes", "STRING", notes),
+            bigquery.ScalarQueryParameter("status", "STRING", "active"),
         ]
 
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        self.bq.client.query(query, job_config=job_config).result()
+        return project_id
+
+    def update_project(self, project_id, project_name=None, status=None, notes=None):
+        """Update a project's mutable fields."""
+        set_clauses = []
+        params = [bigquery.ScalarQueryParameter("project_id", "INT64", project_id)]
+
+        if project_name is not None:
+            set_clauses.append("project_name = @project_name")
+            params.append(bigquery.ScalarQueryParameter("project_name", "STRING", project_name))
+        if status is not None:
+            set_clauses.append("status = @status")
+            params.append(bigquery.ScalarQueryParameter("status", "STRING", status))
+        if notes is not None:
+            set_clauses.append("notes = @notes")
+            params.append(bigquery.ScalarQueryParameter("notes", "STRING", notes))
+
+        if not set_clauses:
+            return
+
+        query = f"""
+            UPDATE `{self._project_id}.Meta.projects`
+            SET {', '.join(set_clauses)}
+            WHERE project_id = @project_id
+        """
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        self.bq.client.query(query, job_config=job_config).result()
+
+    def deactivate_project(self, project_id: int) -> None:
+        """Deactivate a project."""
+        self.update_project(project_id, status="deactivated")
+
+    def complete_project(self, project_id: int) -> None:
+        """Mark a project as complete."""
+        self.update_project(project_id, status="complete")
+
+    def add_project_domains(self, project_id, domain_ids, role="client", priority="NORMAL"):
+        """Link domains to a project. Returns count of rows inserted."""
+        if not domain_ids:
+            return 0
+        rows = [
+            {"project_id": project_id, "domain_id": did, "role": role, "priority": priority.upper()}
+            for did in domain_ids
+        ]
+        table_ref = f"{self._project_id}.Meta.project_domains"
+        df = pd.DataFrame(rows)
+        self.bq.client.load_table_from_dataframe(df, table_ref).result()
+        return len(rows)
+
+    def remove_project_domains(self, project_id, domain_ids):
+        """Remove domains from a project (hard delete)."""
+        if not domain_ids:
+            return
+        query = f"""
+            DELETE FROM `{self._project_id}.Meta.project_domains`
+            WHERE project_id = @project_id AND domain_id IN UNNEST(@domain_ids)
+        """
+        params = [
+            bigquery.ScalarQueryParameter("project_id", "INT64", project_id),
+            bigquery.ArrayQueryParameter("domain_ids", "INT64", domain_ids),
+        ]
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         self.bq.client.query(query, job_config=job_config).result()
 
