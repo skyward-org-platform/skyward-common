@@ -1,9 +1,5 @@
-import requests
-from requests.auth import HTTPBasicAuth
 from typing import List, Tuple, Dict, Optional, Any
 import pandas as pd
-import time
-import asyncio
 from datetime import datetime
 from google.cloud import bigquery
 from google.oauth2 import service_account

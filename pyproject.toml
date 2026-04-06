@@ -20,10 +20,21 @@ dependencies = [
     "google-genai>=1.0.0",
     "python-dotenv>=1.0.0",
     "tldextract>=5.0.0",
+    "click>=8.3.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+    "tdd-guard-pytest>=0.1.2",
+]
+
+[project.scripts]
+skyward = "skyward.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/skyward"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+tdd_guard_project_root = "/mnt/d/Skyward/skyward-common"

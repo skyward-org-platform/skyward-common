@@ -1,11 +1,12 @@
 from typing import List, Tuple, Dict, Optional, Any
 import pandas as pd
 import time
-from datetime import date
-import asyncio
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
-from datetime import datetime
-from IPython.display import HTML, FileLink, display
+try:
+    from IPython.display import HTML, FileLink, display
+except ImportError:
+    HTML = FileLink = display = None
 import tldextract
 
 
