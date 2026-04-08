@@ -115,7 +115,10 @@ class DataForSEOClient:
         config: ClientConfig | None = None,
     ):
         if not username or not password:
-            raise RuntimeError("Missing DataForSEO credentials.")
+            raise RuntimeError(
+                "Missing DataForSEO credentials. Set DATAFORSEO_API_LOGIN and "
+                "DATAFORSEO_API_PASSWORD in your environment or .env file."
+            )
 
         self._username = username
         self._password = password

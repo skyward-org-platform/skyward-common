@@ -27,7 +27,7 @@ class SkywardCLI(click.Group):
             return super().invoke(ctx)
         except click.exceptions.Exit:
             raise
-        except RuntimeError as e:
+        except (RuntimeError, ValueError) as e:
             raise click.ClickException(str(e))
 
 

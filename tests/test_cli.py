@@ -43,6 +43,17 @@ def test_meta_command_shows_clean_error_on_auth_failure(mock_get_hub):
     assert "Traceback" not in combined
 
 
+@patch("skyward.cli._get_hub", side_effect=ValueError("gemini_api_key required for Gemini provider"))
+def test_cli_catches_value_error(mock_get_hub):
+    """CLI catches ValueError and shows clean error."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "list-clients"])
+    assert result.exit_code != 0
+    combined = result.output + (result.stderr or "")
+    assert "gemini_api_key required" in combined
+    assert "Traceback" not in combined
+
+
 def test_meta_group_exists():
     runner = CliRunner()
     result = runner.invoke(cli, ["meta", "--help"])
