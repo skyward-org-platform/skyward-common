@@ -74,6 +74,20 @@ class MetaClient:
     # Client CRUD
     # ══════════════════════════════════════════════════════════════════════════
 
+    def get_client(self, client_id: int) -> Optional[dict]:
+        """Get a single client by ID. Returns dict or None if not found."""
+        query = f"""
+            SELECT client_id, client_name, abbreviation, is_active, notes, created_at
+            FROM `{self._project_id}.Meta.clients`
+            WHERE client_id = @client_id
+        """
+        params = [bigquery.ScalarQueryParameter("client_id", "INT64", client_id)]
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        df = self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        if df.empty:
+            return None
+        return df.iloc[0].to_dict()
+
     def list_clients(self, search: Optional[str] = None, include_counts: bool = False) -> pd.DataFrame:
         """Get all clients from Meta.clients, optionally filtered by search term.
 

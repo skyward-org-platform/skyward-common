@@ -3,6 +3,21 @@ import pandas as pd
 import pytest
 
 
+# ─── get_client by ID ──────────────────────────────────────────────────────
+
+def test_get_client_by_id(hub, fake_bq):
+    """get_client queries by client_id, not fetching all clients."""
+    fake_bq.client.set_next_result(pd.DataFrame({
+        "client_id": [1], "client_name": ["Acme"], "abbreviation": ["ACM"],
+        "is_active": [True], "notes": [None], "created_at": [pd.Timestamp.now()],
+    }))
+    result = hub.get_client(client_id=1)
+    sql = fake_bq.client.queries[-1]["sql"]
+    assert "@client_id" in sql
+    assert result is not None
+    assert result["client_name"] == "Acme"
+
+
 # ─── Test 1: list_clients includes is_active ────────────────────────────────
 
 def test_list_clients_includes_is_active(hub, fake_bq):
