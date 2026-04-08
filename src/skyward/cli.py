@@ -139,6 +139,15 @@ def meta_deactivate_project(project_id):
     click.echo(f"Deactivated project {project_id}")
 
 
+@meta.command("reactivate-project")
+@click.option("--id", "project_id", required=True, type=int, help="Project ID.")
+def meta_reactivate_project(project_id):
+    """Reactivate a project (set status back to active)."""
+    hub = _get_hub()
+    hub.update_project(project_id=project_id, status="active")
+    click.echo(f"Reactivated project {project_id}")
+
+
 @meta.command("complete-project")
 @click.option("--id", "project_id", required=True, type=int, help="Project ID.")
 def meta_complete_project(project_id):

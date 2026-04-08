@@ -197,6 +197,16 @@ def test_complete_project(mock_get_hub):
 
 
 @patch("skyward.cli._get_hub")
+def test_reactivate_project(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "reactivate-project", "--id", "3"])
+    assert result.exit_code == 0
+    hub.update_project.assert_called_once_with(project_id=3, status="active")
+
+
+@patch("skyward.cli._get_hub")
 def test_add_project_domains_cli(mock_get_hub):
     hub = MagicMock()
     mock_get_hub.return_value = hub
