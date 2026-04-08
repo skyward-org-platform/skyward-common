@@ -25,7 +25,7 @@ uv pip install -e .
 ```python
 import os
 
-# Load config
+# Load config (reads env vars / .env file — no side effects)
 from skyward.config import load_config
 cfg = load_config()
 

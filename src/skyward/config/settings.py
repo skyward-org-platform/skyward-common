@@ -2,11 +2,9 @@
 """
 Central configuration loader for Skyward projects.
 
-IMPORTANT: load_config() changes the working directory to PROJECT_ROOT.
-Always save and restore cwd if needed:
-    RUNNING_DIR = os.getcwd()
-    cfg = load_config()
-    os.chdir(RUNNING_DIR)
+Credentials come from environment variables. For local dev, a .env file
+is loaded automatically if found (searching cwd and parents via python-dotenv).
+GCP auth uses Application Default Credentials by default.
 """
 from __future__ import annotations
 
@@ -16,12 +14,7 @@ import os
 import json
 import warnings
 from dotenv import load_dotenv
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# In src layout: src/skyward/config/settings.py -> parents[3] = repo root
-# When installed as editable (-e), this resolves to the repo root.
-# When installed as a package, callers should pass env_file path explicitly.
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 @dataclass
 class Settings:
@@ -47,29 +40,23 @@ class Settings:
     # Gemini Key
     gemini_key: str
 
-    model_config = SettingsConfigDict(
-        env_file=str(PROJECT_ROOT / ".env"),
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
 
+def load_config() -> Settings:
+    """Load configuration from environment variables.
 
+    Automatically loads a .env file if found (python-dotenv searches cwd and parents).
+    Does NOT change the working directory.
+    """
+    load_dotenv(override=False)
 
-def load_config(env_file: str | None = ".env") -> Settings:
-
-    # making sure we are using the config in the root directory
-    os.chdir(PROJECT_ROOT)
-
-    # Load .env if present (no-op in CI unless you create one)
-    load_dotenv(env_file, override=False)
-
-    # Helper: load a JSON credential file from an env var path.
-    # Returns None if the env var is empty (signals ADC / no credentials).
     def _load_json_credential(env_var: str) -> dict | None:
+        """Load a JSON credential file from a path in an env var. Returns None for ADC."""
         raw = os.getenv(env_var, "").strip()
         if not raw:
             return None
-        cred_path = PROJECT_ROOT / raw.replace("\\", "/")
+        cred_path = Path(raw.replace("\\", "/")).expanduser()
+        if not cred_path.is_absolute():
+            cred_path = Path.cwd() / cred_path
         if not cred_path.is_file():
             warnings.warn(f"{env_var} path '{cred_path}' is not a file. Using ADC.")
             return None
@@ -84,8 +71,13 @@ def load_config(env_file: str | None = ".env") -> Settings:
     gdrive_credentials = _load_json_credential("GDRIVE_CREDENTIALS")
 
     _raw_oauth = os.getenv("GDRIVE_OAUTH_TOKEN", "").strip()
-    gdrive_oauth_token_path = (PROJECT_ROOT / _raw_oauth.replace("\\", "/")) if _raw_oauth else None
-
+    if _raw_oauth:
+        oauth_path = Path(_raw_oauth.replace("\\", "/")).expanduser()
+        if not oauth_path.is_absolute():
+            oauth_path = Path.cwd() / oauth_path
+        gdrive_oauth_token_path = oauth_path if oauth_path.is_file() else None
+    else:
+        gdrive_oauth_token_path = None
 
     return Settings(
         ENV=os.getenv("ENV"),

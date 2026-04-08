@@ -37,3 +37,16 @@ def test_load_config_defaults_project_id():
     """When GCP_DATAHUB_PROJECT_ID is not set, defaults to data-hub-468216."""
     cfg = load_config()
     assert cfg.datahub_project_id == "data-hub-468216"
+
+
+@patch.dict(os.environ, {
+    "ENV": "TEST",
+    "GCP_DATAHUB_CREDENTIALS": "",
+    "GDRIVE_CREDENTIALS": "",
+    "GDRIVE_OAUTH_TOKEN": "",
+}, clear=False)
+def test_load_config_does_not_change_cwd(tmp_path):
+    """load_config should not change the working directory."""
+    os.chdir(tmp_path)
+    load_config()
+    assert os.getcwd() == str(tmp_path)
