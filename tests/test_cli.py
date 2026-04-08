@@ -152,6 +152,19 @@ def test_list_projects(mock_get_hub):
 
 
 @patch("skyward.cli._get_hub")
+def test_list_projects_with_status_filter(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    hub.list_projects.return_value = pd.DataFrame([
+        {"project_id": 1, "name": "SEO Audit", "client_id": 1, "status": "active"},
+    ])
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "list-projects", "--status", "active", "--format", "json"])
+    assert result.exit_code == 0
+    hub.list_projects.assert_called_once_with(client_id=None, status="active")
+
+
+@patch("skyward.cli._get_hub")
 def test_add_project(mock_get_hub):
     hub = MagicMock()
     mock_get_hub.return_value = hub

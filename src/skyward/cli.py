@@ -107,11 +107,12 @@ def meta_add_domains(client_id, domains, competitor, priority):
 
 @meta.command("list-projects")
 @click.option("--client-id", default=None, type=int, help="Filter by client ID.")
+@click.option("--status", default=None, help="Filter by status (active, complete, deactivated, cancelled).")
 @click.option("--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format.")
-def meta_list_projects(client_id, fmt):
+def meta_list_projects(client_id, status, fmt):
     """List projects."""
     hub = _get_hub()
-    df = hub.list_projects(client_id=client_id)
+    df = hub.list_projects(client_id=client_id, status=status)
     if fmt == "json":
         click.echo(df.to_json(orient="records", indent=2))
     else:
