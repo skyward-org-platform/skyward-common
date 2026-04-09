@@ -273,24 +273,77 @@ class MetaClient:
         return name
 
     @staticmethod
-    def _clean_domain(raw: str) -> str:
+    def _clean_domain(raw: str, preserve_path: bool = False) -> str:
         """Extract bare domain from a URL or domain string.
-        Strips protocol, www., paths, query strings, port numbers, and trailing slashes."""
+        Strips protocol, www., query strings, fragments, port numbers, and trailing slashes.
+        When preserve_path=True, keeps the path (e.g. kitchenguard.com/fw)."""
         d = raw.strip().lower()
-        # Strip any protocol (http, https, ftp, etc.)
         if "://" in d:
             d = d.split("://", 1)[1]
-        # Strip www.
         if d.startswith("www."):
             d = d[4:]
-        # Strip path, query, fragment
+        if preserve_path:
+            d = d.split("?")[0]
+            d = d.split("#")[0]
+            parts = d.split("/", 1)
+            host = parts[0]
+            if ":" in host:
+                host = host.rsplit(":", 1)[0]
+            d = host if len(parts) == 1 else f"{host}/{parts[1]}"
+            return d.rstrip("/")
         d = d.split("/")[0]
         d = d.split("?")[0]
         d = d.split("#")[0]
-        # Strip port number
         if ":" in d:
             d = d.rsplit(":", 1)[0]
         return d.strip()
+
+    def get_domain(self, domain: str) -> dict | None:
+        """Exact match lookup for a domain in Meta.domains.
+
+        Returns dict with domain_id, domain, domain_name, is_active — or None.
+        Uses preserve_path=True so domains like 'kitchenguard.com/fw' are kept intact.
+        """
+        cleaned = self._clean_domain(domain, preserve_path=True)
+        query = f"""
+            SELECT domain_id, domain, domain_name, is_active
+            FROM `{self._project_id}.Meta.domains`
+            WHERE domain = @domain
+            LIMIT 1
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("domain", "STRING", cleaned)]
+        )
+        df = self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        if df.empty:
+            return None
+        row = df.iloc[0]
+        return {
+            "domain_id": int(row["domain_id"]),
+            "domain": row["domain"],
+            "domain_name": row["domain_name"],
+            "is_active": bool(row["is_active"]),
+        }
+
+    def search_domains(self, query: str, limit: int = 10) -> pd.DataFrame:
+        """Fuzzy/partial match search against Meta.domains."""
+        import tldextract
+        extracted = tldextract.extract(query)
+        search_term = extracted.domain if extracted.domain else query
+
+        sql = f"""
+            SELECT domain_id, domain, domain_name, is_active
+            FROM `{self._project_id}.Meta.domains`
+            WHERE LOWER(domain) LIKE @pattern
+            LIMIT @limit
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("pattern", "STRING", f"%{search_term.lower()}%"),
+                bigquery.ScalarQueryParameter("limit", "INT64", limit),
+            ]
+        )
+        return self.bq.client.query(sql, job_config=job_config).result().to_dataframe()
 
     def get_client_domains(self, client_id: int, is_competitor: Optional[bool] = None) -> pd.DataFrame:
         params = [bigquery.ScalarQueryParameter("client_id", "INT64", client_id)]
