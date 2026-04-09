@@ -75,7 +75,6 @@ def test_old_company_methods_removed():
     assert not hasattr(DataHub, "list_companies"), "list_companies() should be removed"
     assert not hasattr(DataHub, "get_project_companies"), "get_project_companies() should be removed"
     assert not hasattr(DataHub, "add_company"), "add_company() should be removed"
-    assert not hasattr(DataHub, "add_domain"), "add_domain() should be removed"
     assert not hasattr(DataHub, "add_project_company"), "add_project_company() should be removed"
 
 
