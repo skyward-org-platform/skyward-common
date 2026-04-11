@@ -361,10 +361,21 @@ class MetaClient:
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
 
-    def add_domains(self, domains: List[str], client_id: int, is_competitor: bool, priority: str = "NORMAL") -> List[dict]:
-        """Bulk-add domains and link them to a client. Batched for performance."""
-        # Clean input — extract bare domains from URLs
-        clean_domains = list(dict.fromkeys(self._clean_domain(d) for d in domains if d.strip()))
+    def add_domains(
+        self,
+        domains: List[str],
+        client_id: int | None = None,
+        is_competitor: bool = False,
+        priority: str = "NORMAL",
+    ) -> List[dict]:
+        """Bulk-add domains; optionally link them to a client.
+
+        If client_id is None, just inserts the domains (no client_domains rows).
+        Handles existing domains (returns their IDs) and existing links (skipped).
+        Uses preserve_path=True so paths like 'kitchenguard.com/fw' are kept intact.
+        """
+        # Clean input — extract bare domains from URLs (preserving paths)
+        clean_domains = list(dict.fromkeys(self._clean_domain(d, preserve_path=True) for d in domains if d.strip()))
         clean_domains = [d for d in clean_domains if d]  # Remove empties
         if not clean_domains:
             return []
@@ -403,42 +414,44 @@ class MetaClient:
             job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
             self.bq.client.load_table_from_dataframe(domains_df, table_ref, job_config=job_config).result()
 
-        # 3. Check which client_domains links already exist
-        all_domain_ids = [existing_map[d] for d in clean_domains]
-        existing_links_query = f"""
-            SELECT domain_id FROM `{self._project_id}.Meta.client_domains`
-            WHERE client_id = @client_id AND domain_id IN UNNEST(@domain_ids)
-        """
-        link_check_params = [
-            bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-            bigquery.ArrayQueryParameter("domain_ids", "INT64", all_domain_ids),
-        ]
-        link_check_config = bigquery.QueryJobConfig(query_parameters=link_check_params)
-        existing_links_df = self.bq.client.query(existing_links_query, job_config=link_check_config).result().to_dataframe()
-        already_linked = set(existing_links_df["domain_id"].tolist()) if not existing_links_df.empty else set()
+        skipped: list[str] = []
 
-        # 4. Bulk insert only new client_domains links
-        link_rows = []
-        skipped = []
-        for domain in clean_domains:
-            domain_id = existing_map[domain]
-            if domain_id in already_linked:
-                skipped.append(domain)
-                continue
-            link_rows.append({
-                "client_id": client_id,
-                "domain_id": domain_id,
-                "is_competitor": is_competitor,
-                "priority": priority.upper() if priority else "NORMAL",
-            })
+        if client_id is not None:
+            # 3. Check which client_domains links already exist
+            all_domain_ids = [existing_map[d] for d in clean_domains]
+            existing_links_query = f"""
+                SELECT domain_id FROM `{self._project_id}.Meta.client_domains`
+                WHERE client_id = @client_id AND domain_id IN UNNEST(@domain_ids)
+            """
+            link_check_params = [
+                bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
+                bigquery.ArrayQueryParameter("domain_ids", "INT64", all_domain_ids),
+            ]
+            link_check_config = bigquery.QueryJobConfig(query_parameters=link_check_params)
+            existing_links_df = self.bq.client.query(existing_links_query, job_config=link_check_config).result().to_dataframe()
+            already_linked = set(existing_links_df["domain_id"].tolist()) if not existing_links_df.empty else set()
 
-        if link_rows:
-            links_df = pd.DataFrame(link_rows)
-            links_df["client_id"] = links_df["client_id"].astype("int64")
-            links_df["domain_id"] = links_df["domain_id"].astype("int64")
-            link_table_ref = f"{self._project_id}.Meta.client_domains"
-            link_job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-            self.bq.client.load_table_from_dataframe(links_df, link_table_ref, job_config=link_job_config).result()
+            # 4. Bulk insert only new client_domains links
+            link_rows = []
+            for domain in clean_domains:
+                domain_id = existing_map[domain]
+                if domain_id in already_linked:
+                    skipped.append(domain)
+                    continue
+                link_rows.append({
+                    "client_id": client_id,
+                    "domain_id": domain_id,
+                    "is_competitor": is_competitor,
+                    "priority": priority.upper() if priority else "NORMAL",
+                })
+
+            if link_rows:
+                links_df = pd.DataFrame(link_rows)
+                links_df["client_id"] = links_df["client_id"].astype("int64")
+                links_df["domain_id"] = links_df["domain_id"].astype("int64")
+                link_table_ref = f"{self._project_id}.Meta.client_domains"
+                link_job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
+                self.bq.client.load_table_from_dataframe(links_df, link_table_ref, job_config=link_job_config).result()
 
         # 5. Return results
         return [
@@ -1405,46 +1418,14 @@ class MetaClient:
         is_competitor: bool = False,
         priority: str = "NORMAL",
     ) -> int:
-        """Add a single domain to Meta.domains and optionally link to a client.
+        """Add a single domain, optionally linking to a client. Returns domain_id.
 
-        If the domain already exists, returns its existing domain_id (without re-inserting).
-        If client_id is given and the link doesn't exist, adds the client_domains link.
-        If client_id is given and the link already exists, it's a no-op.
+        Thin wrapper around add_domains() for the single-domain case.
         """
-        cleaned = self._clean_domain(domain, preserve_path=True)
-        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-
-        existing = self.get_domain(cleaned)
-        if existing is not None:
-            domain_id = existing["domain_id"]
-        else:
-            domain_id = self.get_next_id("domains", "domain_id", dataset="Meta")
-            domain_name = self._domain_to_name(cleaned)
-            domains_df = pd.DataFrame(
-                [{"domain_id": domain_id, "domain": cleaned, "domain_name": domain_name, "is_active": True}]
-            )
-            domains_df["is_active"] = domains_df["is_active"].astype(object)
-            table_ref = f"{self._project_id}.Meta.domains"
-            self.bq.client.load_table_from_dataframe(domains_df, table_ref, job_config=job_config).result()
-
-        if client_id is not None:
-            link_query = f"""
-                SELECT domain_id FROM `{self._project_id}.Meta.client_domains`
-                WHERE client_id = @client_id AND domain_id = @domain_id
-                LIMIT 1
-            """
-            link_params = [
-                bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-                bigquery.ScalarQueryParameter("domain_id", "INT64", domain_id),
-            ]
-            link_config = bigquery.QueryJobConfig(query_parameters=link_params)
-            link_df = self.bq.client.query(link_query, job_config=link_config).result().to_dataframe()
-            if link_df.empty:
-                cd_df = pd.DataFrame(
-                    [{"client_id": client_id, "domain_id": domain_id, "is_competitor": is_competitor, "priority": priority}]
-                )
-                cd_df["is_competitor"] = cd_df["is_competitor"].astype(object)
-                cd_ref = f"{self._project_id}.Meta.client_domains"
-                self.bq.client.load_table_from_dataframe(cd_df, cd_ref, job_config=job_config).result()
-
-        return domain_id
+        results = self.add_domains(
+            domains=[domain],
+            client_id=client_id,
+            is_competitor=is_competitor,
+            priority=priority,
+        )
+        return results[0]["domain_id"]

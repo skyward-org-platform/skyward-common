@@ -290,10 +290,10 @@ class TestAddDomains:
         assert result[0]["domain"] == "example.com"
 
     def test_urls_clean_to_same_domain_deduplicated(self, meta, fake_bq):
-        """http://example.com and https://www.example.com both clean to example.com."""
+        """Different URL forms of the same bare domain should dedupe."""
         self._queue_for_new_domain(fake_bq)
         result = meta.add_domains(
-            ["http://example.com", "https://www.example.com/page"],
+            ["http://example.com", "https://www.example.com"],
             1,
             is_competitor=False,
         )
@@ -340,14 +340,14 @@ class TestAddDomains:
         )
 
     def test_urls_are_cleaned_before_insert(self, meta, fake_bq):
-        """URLs should be cleaned so the stored domain is bare."""
+        """URLs should strip protocol/www/query but preserve path."""
         self._queue_for_new_domain(fake_bq)
         result = meta.add_domains(
             ["https://www.example.com/path?q=1"],
             1,
             is_competitor=False,
         )
-        assert result[0]["domain"] == "example.com"
+        assert result[0]["domain"] == "example.com/path"
 
     def test_priority_normalised_to_upper(self, meta, fake_bq):
         """Priority passed as lowercase should be uppercased in the inserted row."""

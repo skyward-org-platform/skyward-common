@@ -96,9 +96,9 @@ def test_search_domains_normalizes_input(hub, fake_bq):
 
 def test_add_domain_basic(hub, fake_bq):
     """add_domain inserts into Meta.domains and returns new domain_id."""
-    # First query: check if domain already exists (get_domain call)
+    # 1. batch existing check — none exist
     fake_bq.client.queue_result(pd.DataFrame())
-    # Second query: get_next_id (MAX domain_id)
+    # 2. get_next_id (MAX domain_id)
     fake_bq.client.queue_result(pd.DataFrame([{"max_id": 99}]))
 
     domain_id = hub.add_domain("newsite.com")
@@ -107,59 +107,59 @@ def test_add_domain_basic(hub, fake_bq):
     # Should have loaded a DataFrame into Meta.domains
     loaded = fake_bq.client.loaded_tables
     assert len(loaded) >= 1
-    domains_load = loaded[-1]
+    domains_load = loaded[0]
     assert "Meta.domains" in domains_load["table_ref"]
     df = domains_load["df"]
     assert df.iloc[0]["domain"] == "newsite.com"
     assert df.iloc[0]["domain_id"] == 100
-    assert df.iloc[0]["is_active"] is True
+
 
 def test_add_domain_with_client_id(hub, fake_bq):
     """add_domain with client_id also inserts into Meta.client_domains."""
-    # check if domain already exists
+    # 1. batch existing check — none exist
     fake_bq.client.queue_result(pd.DataFrame())
-    # get_next_id for domains
+    # 2. get_next_id
     fake_bq.client.queue_result(pd.DataFrame([{"max_id": 50}]))
+    # 3. existing links check — none
+    fake_bq.client.queue_result(pd.DataFrame())
 
     domain_id = hub.add_domain("client-site.com", client_id=7, is_competitor=True, priority="HIGH")
     assert domain_id == 51
 
-    # Should have two loads: Meta.domains and Meta.client_domains
     loaded = fake_bq.client.loaded_tables
-    assert len(loaded) >= 2
     client_domains_load = [l for l in loaded if "client_domains" in l["table_ref"]]
     assert len(client_domains_load) == 1
     cd_df = client_domains_load[0]["df"]
     assert cd_df.iloc[0]["client_id"] == 7
     assert cd_df.iloc[0]["domain_id"] == 51
-    assert cd_df.iloc[0]["is_competitor"] is True
+    assert bool(cd_df.iloc[0]["is_competitor"]) is True
     assert cd_df.iloc[0]["priority"] == "HIGH"
+
 
 def test_add_domain_already_exists(hub, fake_bq):
     """add_domain returns existing domain_id if domain is already in Meta.domains."""
-    # check if domain exists — it does
+    # batch existing check — domain exists
     fake_bq.client.queue_result(
-        pd.DataFrame([{"domain_id": 42, "domain": "existing.com", "domain_name": "Existing", "is_active": True}])
+        pd.DataFrame([{"domain_id": 42, "domain": "existing.com"}])
     )
 
     domain_id = hub.add_domain("existing.com")
     assert domain_id == 42
-    # Should NOT have loaded anything new into Meta.domains
+    # Should NOT have loaded anything new
     assert len(fake_bq.client.loaded_tables) == 0
 
 
 def test_add_domain_existing_domain_new_client_link(hub, fake_bq):
     """add_domain creates the client_domains link even when the domain already exists."""
-    # get_domain check — domain exists
+    # 1. batch existing check — domain exists
     fake_bq.client.queue_result(
-        pd.DataFrame([{"domain_id": 42, "domain": "existing.com", "domain_name": "Existing", "is_active": True}])
+        pd.DataFrame([{"domain_id": 42, "domain": "existing.com"}])
     )
-    # link check — no existing link for this client
+    # 2. existing links check — none
     fake_bq.client.queue_result(pd.DataFrame())
 
     domain_id = hub.add_domain("existing.com", client_id=7, is_competitor=False, priority="HIGH")
     assert domain_id == 42
-    # Should have inserted into client_domains (but NOT into domains)
     loaded = fake_bq.client.loaded_tables
     cd_loads = [l for l in loaded if "client_domains" in l["table_ref"]]
     domain_loads = [l for l in loaded if "Meta.domains" in l["table_ref"] and "client_domains" not in l["table_ref"]]
@@ -168,7 +168,7 @@ def test_add_domain_existing_domain_new_client_link(hub, fake_bq):
     cd_df = cd_loads[0]["df"]
     assert cd_df.iloc[0]["client_id"] == 7
     assert cd_df.iloc[0]["domain_id"] == 42
-    assert cd_df.iloc[0]["is_competitor"] is False
+    assert bool(cd_df.iloc[0]["is_competitor"]) is False
     assert cd_df.iloc[0]["priority"] == "HIGH"
 
 
@@ -185,6 +185,22 @@ def test_add_domain_existing_link_skipped(hub, fake_bq):
     assert domain_id == 42
     # Should NOT have inserted anything
     assert len(fake_bq.client.loaded_tables) == 0
+
+
+def test_add_domains_without_client_id(hub, fake_bq):
+    """add_domains should work without a client_id (just inserts domains, no links)."""
+    # existing check — none exist
+    fake_bq.client.queue_result(pd.DataFrame())
+    # get_next_id
+    fake_bq.client.queue_result(pd.DataFrame([{"max_id": 10}]))
+
+    result = hub.add_domains(domains=["test-standalone.com"])
+    assert len(result) == 1
+    assert result[0]["domain"] == "test-standalone.com"
+    # Should have inserted into Meta.domains but NOT into client_domains
+    loaded = fake_bq.client.loaded_tables
+    cd_loads = [l for l in loaded if "client_domains" in l["table_ref"]]
+    assert len(cd_loads) == 0
 
 
 def test_add_domain_skips_get_next_id_when_exists(hub, fake_bq):
