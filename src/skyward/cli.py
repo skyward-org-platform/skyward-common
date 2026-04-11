@@ -139,12 +139,12 @@ def meta_add_domain(domain, client_id, competitor, priority):
 
 
 @meta.command("add-domains")
-@click.option("--client-id", required=True, type=int, help="Client ID.")
+@click.option("--client-id", default=None, type=int, help="Optional client ID to link the domains to.")
 @click.option("--domains", required=True, help="Comma-separated list of domains.")
-@click.option("--competitor", is_flag=True, default=False, help="Mark as competitor domains.")
-@click.option("--priority", default="NORMAL", help="Priority level.")
+@click.option("--competitor", is_flag=True, default=False, help="Mark as competitor domains (only with --client-id).")
+@click.option("--priority", default="NORMAL", help="Priority level (only with --client-id).")
 def meta_add_domains(client_id, domains, competitor, priority):
-    """Add domains to a client."""
+    """Bulk-add domains, optionally linking to a client."""
     hub = _get_hub()
     domain_list = [d.strip() for d in domains.split(",")]
     result = hub.add_domains(domains=domain_list, client_id=client_id, is_competitor=competitor, priority=priority)
