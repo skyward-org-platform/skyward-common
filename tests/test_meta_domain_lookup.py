@@ -148,6 +148,45 @@ def test_add_domain_already_exists(hub, fake_bq):
     assert len(fake_bq.client.loaded_tables) == 0
 
 
+def test_add_domain_existing_domain_new_client_link(hub, fake_bq):
+    """add_domain creates the client_domains link even when the domain already exists."""
+    # get_domain check — domain exists
+    fake_bq.client.queue_result(
+        pd.DataFrame([{"domain_id": 42, "domain": "existing.com", "domain_name": "Existing", "is_active": True}])
+    )
+    # link check — no existing link for this client
+    fake_bq.client.queue_result(pd.DataFrame())
+
+    domain_id = hub.add_domain("existing.com", client_id=7, is_competitor=False, priority="HIGH")
+    assert domain_id == 42
+    # Should have inserted into client_domains (but NOT into domains)
+    loaded = fake_bq.client.loaded_tables
+    cd_loads = [l for l in loaded if "client_domains" in l["table_ref"]]
+    domain_loads = [l for l in loaded if "Meta.domains" in l["table_ref"] and "client_domains" not in l["table_ref"]]
+    assert len(cd_loads) == 1
+    assert len(domain_loads) == 0
+    cd_df = cd_loads[0]["df"]
+    assert cd_df.iloc[0]["client_id"] == 7
+    assert cd_df.iloc[0]["domain_id"] == 42
+    assert cd_df.iloc[0]["is_competitor"] is False
+    assert cd_df.iloc[0]["priority"] == "HIGH"
+
+
+def test_add_domain_existing_link_skipped(hub, fake_bq):
+    """add_domain does nothing if the domain is already linked to this client."""
+    # get_domain check — domain exists
+    fake_bq.client.queue_result(
+        pd.DataFrame([{"domain_id": 42, "domain": "existing.com", "domain_name": "Existing", "is_active": True}])
+    )
+    # link check — link already exists
+    fake_bq.client.queue_result(pd.DataFrame([{"domain_id": 42}]))
+
+    domain_id = hub.add_domain("existing.com", client_id=7)
+    assert domain_id == 42
+    # Should NOT have inserted anything
+    assert len(fake_bq.client.loaded_tables) == 0
+
+
 def test_add_domain_skips_get_next_id_when_exists(hub, fake_bq):
     """add_domain should check for existing domain BEFORE calling get_next_id."""
     # Only queue the get_domain check result — no get_next_id result needed

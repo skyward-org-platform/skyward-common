@@ -1405,25 +1405,46 @@ class MetaClient:
         is_competitor: bool = False,
         priority: str = "NORMAL",
     ) -> int:
-        """Add a single domain to Meta.domains. Returns the domain_id."""
+        """Add a single domain to Meta.domains and optionally link to a client.
+
+        If the domain already exists, returns its existing domain_id (without re-inserting).
+        If client_id is given and the link doesn't exist, adds the client_domains link.
+        If client_id is given and the link already exists, it's a no-op.
+        """
         cleaned = self._clean_domain(domain, preserve_path=True)
+        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
+
         existing = self.get_domain(cleaned)
         if existing is not None:
-            return existing["domain_id"]
-        domain_id = self.get_next_id("domains", "domain_id", dataset="Meta")
-        domain_name = self._domain_to_name(cleaned)
-        domains_df = pd.DataFrame(
-            [{"domain_id": domain_id, "domain": cleaned, "domain_name": domain_name, "is_active": True}]
-        )
-        domains_df["is_active"] = domains_df["is_active"].astype(object)
-        table_ref = f"{self._project_id}.Meta.domains"
-        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-        self.bq.client.load_table_from_dataframe(domains_df, table_ref, job_config=job_config).result()
-        if client_id is not None:
-            cd_df = pd.DataFrame(
-                [{"client_id": client_id, "domain_id": domain_id, "is_competitor": is_competitor, "priority": priority}]
+            domain_id = existing["domain_id"]
+        else:
+            domain_id = self.get_next_id("domains", "domain_id", dataset="Meta")
+            domain_name = self._domain_to_name(cleaned)
+            domains_df = pd.DataFrame(
+                [{"domain_id": domain_id, "domain": cleaned, "domain_name": domain_name, "is_active": True}]
             )
-            cd_df["is_competitor"] = cd_df["is_competitor"].astype(object)
-            cd_ref = f"{self._project_id}.Meta.client_domains"
-            self.bq.client.load_table_from_dataframe(cd_df, cd_ref, job_config=job_config).result()
+            domains_df["is_active"] = domains_df["is_active"].astype(object)
+            table_ref = f"{self._project_id}.Meta.domains"
+            self.bq.client.load_table_from_dataframe(domains_df, table_ref, job_config=job_config).result()
+
+        if client_id is not None:
+            link_query = f"""
+                SELECT domain_id FROM `{self._project_id}.Meta.client_domains`
+                WHERE client_id = @client_id AND domain_id = @domain_id
+                LIMIT 1
+            """
+            link_params = [
+                bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
+                bigquery.ScalarQueryParameter("domain_id", "INT64", domain_id),
+            ]
+            link_config = bigquery.QueryJobConfig(query_parameters=link_params)
+            link_df = self.bq.client.query(link_query, job_config=link_config).result().to_dataframe()
+            if link_df.empty:
+                cd_df = pd.DataFrame(
+                    [{"client_id": client_id, "domain_id": domain_id, "is_competitor": is_competitor, "priority": priority}]
+                )
+                cd_df["is_competitor"] = cd_df["is_competitor"].astype(object)
+                cd_ref = f"{self._project_id}.Meta.client_domains"
+                self.bq.client.load_table_from_dataframe(cd_df, cd_ref, job_config=job_config).result()
+
         return domain_id
