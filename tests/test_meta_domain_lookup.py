@@ -116,11 +116,13 @@ def test_add_domain_basic(hub, fake_bq):
 
 def test_add_domain_with_client_id(hub, fake_bq):
     """add_domain with client_id also inserts into Meta.client_domains."""
-    # 1. batch existing check — none exist
+    # 1. client existence check
+    fake_bq.client.queue_result(pd.DataFrame([{"client_id": 7, "client_name": "Acme", "abbreviation": None, "is_active": True, "notes": None, "created_at": pd.Timestamp.now()}]))
+    # 2. batch existing check — none exist
     fake_bq.client.queue_result(pd.DataFrame())
-    # 2. get_next_id
+    # 3. get_next_id
     fake_bq.client.queue_result(pd.DataFrame([{"max_id": 50}]))
-    # 3. existing links check — none
+    # 4. existing links check — none
     fake_bq.client.queue_result(pd.DataFrame())
 
     domain_id = hub.add_domain("client-site.com", client_id=7, is_competitor=True, priority="HIGH")
@@ -151,11 +153,13 @@ def test_add_domain_already_exists(hub, fake_bq):
 
 def test_add_domain_existing_domain_new_client_link(hub, fake_bq):
     """add_domain creates the client_domains link even when the domain already exists."""
-    # 1. batch existing check — domain exists
+    # 1. client existence check
+    fake_bq.client.queue_result(pd.DataFrame([{"client_id": 7, "client_name": "Acme", "abbreviation": None, "is_active": True, "notes": None, "created_at": pd.Timestamp.now()}]))
+    # 2. batch existing check — domain exists
     fake_bq.client.queue_result(
         pd.DataFrame([{"domain_id": 42, "domain": "existing.com"}])
     )
-    # 2. existing links check — none
+    # 3. existing links check — none
     fake_bq.client.queue_result(pd.DataFrame())
 
     domain_id = hub.add_domain("existing.com", client_id=7, is_competitor=False, priority="HIGH")
@@ -174,7 +178,9 @@ def test_add_domain_existing_domain_new_client_link(hub, fake_bq):
 
 def test_add_domain_existing_link_skipped(hub, fake_bq):
     """add_domain does nothing if the domain is already linked to this client."""
-    # get_domain check — domain exists
+    # client existence check
+    fake_bq.client.queue_result(pd.DataFrame([{"client_id": 7, "client_name": "Acme", "abbreviation": None, "is_active": True, "notes": None, "created_at": pd.Timestamp.now()}]))
+    # domain exists check
     fake_bq.client.queue_result(
         pd.DataFrame([{"domain_id": 42, "domain": "existing.com", "domain_name": "Existing", "is_active": True}])
     )
@@ -185,6 +191,53 @@ def test_add_domain_existing_link_skipped(hub, fake_bq):
     assert domain_id == 42
     # Should NOT have inserted anything
     assert len(fake_bq.client.loaded_tables) == 0
+
+
+def test_add_domains_rejects_invalid_priority(hub, fake_bq):
+    """add_domains should raise ValueError for an invalid priority."""
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="Invalid priority"):
+        hub.add_domains(domains=["test-bad.com"], client_id=1, priority="FLAMINGO")
+
+
+def test_add_domains_rejects_nonexistent_client(hub, fake_bq):
+    """add_domains should raise RuntimeError when client_id doesn't exist."""
+    import pytest as _pytest
+    # client existence check — returns empty (client not found)
+    fake_bq.client.queue_result(pd.DataFrame())
+    with _pytest.raises(RuntimeError, match="Client 99999 not found"):
+        hub.add_domains(domains=["test-orphan.com"], client_id=99999)
+
+
+def test_add_domain_rejects_empty_string(hub, fake_bq):
+    """add_domain should raise ValueError for an empty domain string."""
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="Domain cannot be empty"):
+        hub.add_domain("")
+
+
+def test_add_domain_rejects_whitespace(hub, fake_bq):
+    """add_domain should raise ValueError for whitespace-only input."""
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="Domain cannot be empty"):
+        hub.add_domain("   ")
+
+
+def test_add_domains_normalizes_priority(hub, fake_bq):
+    """add_domains should normalize lowercase 'very high' to 'VERY HIGH'."""
+    # client existence check
+    fake_bq.client.queue_result(pd.DataFrame([{"client_id": 1, "client_name": "Acme", "abbreviation": None, "is_active": True, "notes": None, "created_at": pd.Timestamp.now()}]))
+    # batch existing check — none exist
+    fake_bq.client.queue_result(pd.DataFrame())
+    # get_next_id
+    fake_bq.client.queue_result(pd.DataFrame([{"max_id": 10}]))
+    # existing links check — none
+    fake_bq.client.queue_result(pd.DataFrame())
+
+    hub.add_domains(domains=["test-vhigh.com"], client_id=1, priority="very high")
+    link_loads = [t for t in fake_bq.client.loaded_tables if "client_domains" in t["table_ref"]]
+    assert len(link_loads) == 1
+    assert link_loads[0]["df"]["priority"].iloc[0] == "VERY HIGH"
 
 
 def test_add_domains_without_client_id(hub, fake_bq):

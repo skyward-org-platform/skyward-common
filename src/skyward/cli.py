@@ -124,16 +124,22 @@ def meta_search_domains(query, limit, fmt):
         click.echo(df.to_string(index=False))
 
 
+_PRIORITY_CHOICES = click.Choice(
+    ["VERY LOW", "LOW", "NORMAL", "HIGH", "VERY HIGH"],
+    case_sensitive=False,
+)
+
+
 @meta.command("add-domain")
 @click.option("--domain", required=True, help="Domain to add (single).")
 @click.option("--client-id", default=None, type=int, help="Optional client ID to link the domain to.")
 @click.option("--competitor", is_flag=True, default=False, help="Mark as competitor (only with --client-id).")
-@click.option("--priority", default="NORMAL", help="Priority level (only with --client-id).")
+@click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Priority (only with --client-id).")
 def meta_add_domain(domain, client_id, competitor, priority):
     """Add a single domain, optionally linking to a client."""
     hub = _get_hub()
     domain_id = hub.add_domain(
-        domain, client_id=client_id, is_competitor=competitor, priority=priority,
+        domain, client_id=client_id, is_competitor=competitor, priority=priority.upper(),
     )
     click.echo(f"Domain ID: {domain_id}")
 
@@ -142,12 +148,12 @@ def meta_add_domain(domain, client_id, competitor, priority):
 @click.option("--client-id", default=None, type=int, help="Optional client ID to link the domains to.")
 @click.option("--domains", required=True, help="Comma-separated list of domains.")
 @click.option("--competitor", is_flag=True, default=False, help="Mark as competitor domains (only with --client-id).")
-@click.option("--priority", default="NORMAL", help="Priority level (only with --client-id).")
+@click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Priority (only with --client-id).")
 def meta_add_domains(client_id, domains, competitor, priority):
     """Bulk-add domains, optionally linking to a client."""
     hub = _get_hub()
     domain_list = [d.strip() for d in domains.split(",")]
-    result = hub.add_domains(domains=domain_list, client_id=client_id, is_competitor=competitor, priority=priority)
+    result = hub.add_domains(domains=domain_list, client_id=client_id, is_competitor=competitor, priority=priority.upper())
     click.echo(f"Added {len(result)} domain(s)")
 
 

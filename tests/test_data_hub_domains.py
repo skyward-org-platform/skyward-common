@@ -6,8 +6,15 @@ import pytest
 # ─── Test: add_domains ──────────────────────────────────────────────────────
 
 def test_add_domains_bulk(hub, fake_bq):
+    # client existence check
+    fake_bq.client.queue_result(pd.DataFrame([{
+        "client_id": 1, "client_name": "Test", "abbreviation": None,
+        "is_active": True, "notes": None, "created_at": pd.Timestamp.now(),
+    }]))
     fake_bq.client.queue_result(pd.DataFrame(columns=["domain_id"]))
     fake_bq.client.queue_result(pd.DataFrame({"max_id": [None]}))
+    # existing links check
+    fake_bq.client.queue_result(pd.DataFrame(columns=["domain_id"]))
     result = hub.add_domains(["example.com"], 1, is_competitor=False)
     assert len(result) == 1
     assert result[0]["domain_id"] == 1

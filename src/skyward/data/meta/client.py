@@ -361,6 +361,8 @@ class MetaClient:
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
 
+    VALID_PRIORITIES = {"VERY LOW", "LOW", "NORMAL", "HIGH", "VERY HIGH"}
+
     def add_domains(
         self,
         domains: List[str],
@@ -374,6 +376,17 @@ class MetaClient:
         Handles existing domains (returns their IDs) and existing links (skipped).
         Uses preserve_path=True so paths like 'kitchenguard.com/fw' are kept intact.
         """
+        # Normalize and validate priority
+        priority = (priority or "NORMAL").strip().upper()
+        if priority not in self.VALID_PRIORITIES:
+            raise ValueError(
+                f"Invalid priority '{priority}'. Must be one of: {sorted(self.VALID_PRIORITIES)}"
+            )
+
+        # Validate client exists (BigQuery has no FK enforcement)
+        if client_id is not None and self.get_client(client_id) is None:
+            raise RuntimeError(f"Client {client_id} not found")
+
         # Clean input — extract bare domains from URLs (preserving paths)
         clean_domains = list(dict.fromkeys(self._clean_domain(d, preserve_path=True) for d in domains if d.strip()))
         clean_domains = [d for d in clean_domains if d]  # Remove empties
@@ -442,7 +455,7 @@ class MetaClient:
                     "client_id": client_id,
                     "domain_id": domain_id,
                     "is_competitor": is_competitor,
-                    "priority": priority.upper() if priority else "NORMAL",
+                    "priority": priority,
                 })
 
             if link_rows:
@@ -1422,6 +1435,8 @@ class MetaClient:
 
         Thin wrapper around add_domains() for the single-domain case.
         """
+        if not domain or not domain.strip():
+            raise ValueError("Domain cannot be empty")
         results = self.add_domains(
             domains=[domain],
             client_id=client_id,

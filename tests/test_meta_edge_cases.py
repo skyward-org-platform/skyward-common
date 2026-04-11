@@ -262,8 +262,17 @@ class TestGetNextId:
 
 class TestAddDomains:
 
+    def _queue_client_exists(self, fake_bq, client_id=1):
+        """Queue the client existence check (first call in add_domains when client_id is set)."""
+        fake_bq.client.queue_result(pd.DataFrame([{
+            "client_id": client_id, "client_name": "Test", "abbreviation": None,
+            "is_active": True, "notes": None, "created_at": pd.Timestamp.now(),
+        }]))
+
     def _queue_for_new_domain(self, fake_bq):
-        """Queue the three BQ calls needed when adding a genuinely new domain."""
+        """Queue the BQ calls needed when adding a genuinely new domain with a client_id."""
+        # 0. client existence check
+        self._queue_client_exists(fake_bq)
         # 1. check which domains exist → none
         fake_bq.client.queue_result(pd.DataFrame(columns=["domain_id", "domain"]))
         # 2. get_next_id for domains table
@@ -272,10 +281,12 @@ class TestAddDomains:
         fake_bq.client.queue_result(pd.DataFrame(columns=["domain_id"]))
 
     def test_empty_list_returns_empty(self, meta, fake_bq):
+        self._queue_client_exists(fake_bq)
         result = meta.add_domains([], 1, is_competitor=False)
         assert result == []
 
     def test_whitespace_only_strings_filtered(self, meta, fake_bq):
+        self._queue_client_exists(fake_bq)
         result = meta.add_domains(["  ", "\t", ""], 1, is_competitor=False)
         assert result == []
 
@@ -302,6 +313,7 @@ class TestAddDomains:
 
     def test_domain_already_exists_and_already_linked_is_skipped(self, meta, fake_bq):
         """When the domain already exists AND is already linked, skipped=True."""
+        self._queue_client_exists(fake_bq)
         # Step 1: domain exists
         fake_bq.client.queue_result(pd.DataFrame({
             "domain_id": [5],
@@ -320,6 +332,7 @@ class TestAddDomains:
 
     def test_domain_already_exists_but_not_linked_is_inserted(self, meta, fake_bq):
         """When the domain exists in Meta.domains but is not yet linked to this client."""
+        self._queue_client_exists(fake_bq, client_id=2)
         # Step 1: domain already in Meta.domains
         fake_bq.client.queue_result(pd.DataFrame({
             "domain_id": [7],
@@ -367,6 +380,7 @@ class TestAddDomains:
 
     def test_domain_ids_increment_for_multiple_new(self, meta, fake_bq):
         """IDs should increment in Python without extra BQ round-trips."""
+        self._queue_client_exists(fake_bq)
         # Step 1: no existing domains
         fake_bq.client.queue_result(pd.DataFrame(columns=["domain_id", "domain"]))
         # Step 2: max_id=3 → next=4
