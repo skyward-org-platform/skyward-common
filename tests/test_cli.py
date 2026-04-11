@@ -138,6 +138,67 @@ def test_add_domains(mock_get_hub):
 
 
 @patch("skyward.cli._get_hub")
+def test_get_domain(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    hub.get_domain.return_value = {
+        "domain_id": 42, "domain": "example.com", "domain_name": "Example", "is_active": True,
+    }
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "get-domain", "--domain", "example.com", "--format", "json"])
+    assert result.exit_code == 0
+    hub.get_domain.assert_called_once_with("example.com")
+    data = json.loads(result.output)
+    assert data["domain_id"] == 42
+
+
+@patch("skyward.cli._get_hub")
+def test_search_domains(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    hub.search_domains.return_value = pd.DataFrame([
+        {"domain_id": 1, "domain": "buscharter.com.au", "domain_name": "Buscharter", "is_active": True},
+        {"domain_id": 2, "domain": "buscharter.co.nz", "domain_name": "Buscharter", "is_active": True},
+    ])
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "search-domains", "--query", "buscharter", "--format", "json"])
+    assert result.exit_code == 0
+    hub.search_domains.assert_called_once_with("buscharter", limit=10)
+    data = json.loads(result.output)
+    assert len(data) == 2
+
+
+@patch("skyward.cli._get_hub")
+def test_add_domain_single(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    hub.add_domain.return_value = 42
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "add-domain", "--domain", "newsite.com"])
+    assert result.exit_code == 0
+    hub.add_domain.assert_called_once_with(
+        "newsite.com", client_id=None, is_competitor=False, priority="NORMAL"
+    )
+    assert "42" in result.output
+
+
+@patch("skyward.cli._get_hub")
+def test_add_domain_single_with_client(mock_get_hub):
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    hub.add_domain.return_value = 99
+    runner = CliRunner()
+    result = runner.invoke(cli, [
+        "meta", "add-domain", "--domain", "comp.com",
+        "--client-id", "5", "--competitor", "--priority", "HIGH",
+    ])
+    assert result.exit_code == 0
+    hub.add_domain.assert_called_once_with(
+        "comp.com", client_id=5, is_competitor=True, priority="HIGH"
+    )
+
+
+@patch("skyward.cli._get_hub")
 def test_list_projects(mock_get_hub):
     hub = MagicMock()
     mock_get_hub.return_value = hub

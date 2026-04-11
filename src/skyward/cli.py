@@ -92,6 +92,52 @@ def meta_list_domains(client_id, competitors_only, fmt):
         click.echo(df.to_string(index=False))
 
 
+@meta.command("get-domain")
+@click.option("--domain", required=True, help="Domain to look up (exact match).")
+@click.option("--format", "fmt", default="json", type=click.Choice(["json", "table"]), help="Output format.")
+def meta_get_domain(domain, fmt):
+    """Look up a single domain by exact match."""
+    hub = _get_hub()
+    result = hub.get_domain(domain)
+    if result is None:
+        click.echo(f"Domain '{domain}' not found", err=True)
+        raise click.exceptions.Exit(1)
+    if fmt == "json":
+        import json as _json
+        click.echo(_json.dumps(result, indent=2, default=str))
+    else:
+        for key, value in result.items():
+            click.echo(f"{key}: {value}")
+
+
+@meta.command("search-domains")
+@click.option("--query", required=True, help="Search query (partial match against domains).")
+@click.option("--limit", default=10, type=int, help="Max results to return.")
+@click.option("--format", "fmt", default="json", type=click.Choice(["json", "table"]), help="Output format.")
+def meta_search_domains(query, limit, fmt):
+    """Fuzzy search for domains by partial match."""
+    hub = _get_hub()
+    df = hub.search_domains(query, limit=limit)
+    if fmt == "json":
+        click.echo(df.to_json(orient="records", indent=2))
+    else:
+        click.echo(df.to_string(index=False))
+
+
+@meta.command("add-domain")
+@click.option("--domain", required=True, help="Domain to add (single).")
+@click.option("--client-id", default=None, type=int, help="Optional client ID to link the domain to.")
+@click.option("--competitor", is_flag=True, default=False, help="Mark as competitor (only with --client-id).")
+@click.option("--priority", default="NORMAL", help="Priority level (only with --client-id).")
+def meta_add_domain(domain, client_id, competitor, priority):
+    """Add a single domain, optionally linking to a client."""
+    hub = _get_hub()
+    domain_id = hub.add_domain(
+        domain, client_id=client_id, is_competitor=competitor, priority=priority,
+    )
+    click.echo(f"Domain ID: {domain_id}")
+
+
 @meta.command("add-domains")
 @click.option("--client-id", required=True, type=int, help="Client ID.")
 @click.option("--domains", required=True, help="Comma-separated list of domains.")

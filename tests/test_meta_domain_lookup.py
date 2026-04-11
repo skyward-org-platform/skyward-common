@@ -96,10 +96,10 @@ def test_search_domains_normalizes_input(hub, fake_bq):
 
 def test_add_domain_basic(hub, fake_bq):
     """add_domain inserts into Meta.domains and returns new domain_id."""
-    # First query: get_next_id (MAX domain_id)
-    fake_bq.client.queue_result(pd.DataFrame([{"max_id": 99}]))
-    # Second query: check if domain already exists (get_domain call)
+    # First query: check if domain already exists (get_domain call)
     fake_bq.client.queue_result(pd.DataFrame())
+    # Second query: get_next_id (MAX domain_id)
+    fake_bq.client.queue_result(pd.DataFrame([{"max_id": 99}]))
 
     domain_id = hub.add_domain("newsite.com")
     assert domain_id == 100
@@ -116,10 +116,10 @@ def test_add_domain_basic(hub, fake_bq):
 
 def test_add_domain_with_client_id(hub, fake_bq):
     """add_domain with client_id also inserts into Meta.client_domains."""
-    # get_next_id for domains
-    fake_bq.client.queue_result(pd.DataFrame([{"max_id": 50}]))
     # check if domain already exists
     fake_bq.client.queue_result(pd.DataFrame())
+    # get_next_id for domains
+    fake_bq.client.queue_result(pd.DataFrame([{"max_id": 50}]))
 
     domain_id = hub.add_domain("client-site.com", client_id=7, is_competitor=True, priority="HIGH")
     assert domain_id == 51
@@ -137,8 +137,6 @@ def test_add_domain_with_client_id(hub, fake_bq):
 
 def test_add_domain_already_exists(hub, fake_bq):
     """add_domain returns existing domain_id if domain is already in Meta.domains."""
-    # get_next_id (won't be used)
-    fake_bq.client.queue_result(pd.DataFrame([{"max_id": 10}]))
     # check if domain exists — it does
     fake_bq.client.queue_result(
         pd.DataFrame([{"domain_id": 42, "domain": "existing.com", "domain_name": "Existing", "is_active": True}])
@@ -148,3 +146,16 @@ def test_add_domain_already_exists(hub, fake_bq):
     assert domain_id == 42
     # Should NOT have loaded anything new into Meta.domains
     assert len(fake_bq.client.loaded_tables) == 0
+
+
+def test_add_domain_skips_get_next_id_when_exists(hub, fake_bq):
+    """add_domain should check for existing domain BEFORE calling get_next_id."""
+    # Only queue the get_domain check result — no get_next_id result needed
+    fake_bq.client.queue_result(
+        pd.DataFrame([{"domain_id": 42, "domain": "existing.com", "domain_name": "Existing", "is_active": True}])
+    )
+    domain_id = hub.add_domain("existing.com")
+    assert domain_id == 42
+    # Only ONE query should have been made (the get_domain lookup)
+    assert len(fake_bq.client.queries) == 1
+    assert "Meta.domains" in fake_bq.client.queries[0]["sql"]

@@ -1407,10 +1407,10 @@ class MetaClient:
     ) -> int:
         """Add a single domain to Meta.domains. Returns the domain_id."""
         cleaned = self._clean_domain(domain, preserve_path=True)
-        domain_id = self.get_next_id("domains", "domain_id", dataset="Meta")
         existing = self.get_domain(cleaned)
         if existing is not None:
             return existing["domain_id"]
+        domain_id = self.get_next_id("domains", "domain_id", dataset="Meta")
         domain_name = self._domain_to_name(cleaned)
         domains_df = pd.DataFrame(
             [{"domain_id": domain_id, "domain": cleaned, "domain_name": domain_name, "is_active": True}]
@@ -1426,5 +1426,4 @@ class MetaClient:
             cd_df["is_competitor"] = cd_df["is_competitor"].astype(object)
             cd_ref = f"{self._project_id}.Meta.client_domains"
             self.bq.client.load_table_from_dataframe(cd_df, cd_ref, job_config=job_config).result()
-        print(f"Added domain '{cleaned}' (domain_id: {domain_id})")
         return domain_id
