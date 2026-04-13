@@ -11,6 +11,8 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
+from google import genai
+from google import genai
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -190,126 +192,50 @@ class OpenAIProvider(LLMProvider):
 class GeminiProvider(LLMProvider):
     """Google Gemini API provider using google.genai."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, *, api_key: Optional[str] = None):
         """
         Initialize with Gemini API key.
 
         Parameters
         ----------
-        api_key : str
-            Gemini API key
+        api_key : str, optional
+            Gemini API key. Falls back to GEMINI_API_KEY env var.
         """
-        self._api_key = api_key
+        import os
+
+        resolved_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if not resolved_key:
+            raise ValueError(
+                "Gemini API key required. Pass api_key= or set GEMINI_API_KEY."
+            )
+        self._api_key = resolved_key
+        # Temporarily unset GOOGLE_API_KEY to prevent auto-detection conflicts
+        google_api_key_backup = os.environ.pop("GOOGLE_API_KEY", None)
+        try:
+            self._client = genai.Client(api_key=resolved_key)
+        finally:
+            if google_api_key_backup is not None:
+                os.environ["GOOGLE_API_KEY"] = google_api_key_backup
 
     @property
     def name(self) -> str:
         return "gemini"
 
-    def call_structured(
+    def call(
         self,
         messages: List[Dict[str, str]],
-        response_model: Type[T],
-        model: str = "gemini-2.0-flash",
-        temperature: float = 0.7,
+        model: str,
+        *,
+        response_model: Optional[Type[T]] = None,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
-        retry_delay: int = DEFAULT_RETRY_DELAY,
-        **kwargs: Any,
-    ) -> Tuple[T, int, int]:
-        """
-        Call Gemini with structured output.
-
-        Uses JSON-in-prompt approach for reliability across all Pydantic models.
-        """
+        retry_delay: float = DEFAULT_RETRY_DELAY,
+        **provider_kwargs: Any,
+    ) -> Tuple[Any, int, int]:
+        """Call the Gemini API."""
         import json
-        import os
-        from google import genai
         from google.genai import types
-
-        # Temporarily unset GOOGLE_API_KEY to prevent auto-detection
-        google_api_key_backup = os.environ.pop("GOOGLE_API_KEY", None)
-        try:
-            client = genai.Client(api_key=self._api_key)
-        finally:
-            if google_api_key_backup is not None:
-                os.environ["GOOGLE_API_KEY"] = google_api_key_backup
-
-        # Build schema string for prompt
-        schema_str = json.dumps(response_model.model_json_schema(), indent=2)
-
-        # Convert messages to Gemini format, adding JSON instruction to system prompt
-        system_prompt = None
-        contents = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_prompt = (
-                    f"{msg['content']}\n\n"
-                    f"IMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
-                    f"{schema_str}"
-                )
-            elif msg["role"] == "user":
-                contents.append({"role": "user", "parts": [{"text": msg["content"]}]})
-            elif msg["role"] == "assistant":
-                contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
-
-        attempt = 1
-        total_input_tokens = 0
-        total_output_tokens = 0
-
-        while attempt <= max_retries:
-            try:
-                config = types.GenerateContentConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_tokens,
-                    response_mime_type="application/json",
-                    system_instruction=system_prompt,
-                )
-
-                response = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=config,
-                )
-
-                # Track tokens even if parsing fails
-                if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                    total_input_tokens += response.usage_metadata.prompt_token_count or 0
-                    total_output_tokens += response.usage_metadata.candidates_token_count or 0
-
-                # Parse JSON response into Pydantic model
-                parsed = response_model.model_validate(json.loads(response.text))
-
-                return parsed, total_input_tokens, total_output_tokens
-
-            except Exception as e:
-                print(f"Error on attempt {attempt}/{max_retries}: {e}")
-                attempt += 1
-                time.sleep(retry_delay)
-
-        raise RuntimeError(f"Gemini call failed after {max_retries} attempts")
-
-    def call_text(
-        self,
-        messages: List[Dict[str, str]],
-        model: str = "gemini-2.0-flash",
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        max_retries: int = DEFAULT_MAX_RETRIES,
-        retry_delay: int = DEFAULT_RETRY_DELAY,
-        **kwargs: Any,
-    ) -> Tuple[str, int, int]:
-        """Call Gemini for plain text output."""
-        import os
-        from google import genai
-        from google.genai import types
-
-        # Temporarily unset GOOGLE_API_KEY to prevent auto-detection
-        google_api_key_backup = os.environ.pop("GOOGLE_API_KEY", None)
-        try:
-            client = genai.Client(api_key=self._api_key)
-        finally:
-            if google_api_key_backup is not None:
-                os.environ["GOOGLE_API_KEY"] = google_api_key_backup
 
         # Convert messages to Gemini format
         system_prompt = None
@@ -322,35 +248,38 @@ class GeminiProvider(LLMProvider):
             elif msg["role"] == "assistant":
                 contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
 
-        attempt = 1
-        total_input_tokens = 0
-        total_output_tokens = 0
+        config_kwargs: Dict[str, Any] = {
+            "system_instruction": system_prompt,
+        }
+        if response_model is not None:
+            config_kwargs["response_mime_type"] = "application/json"
 
-        while attempt <= max_retries:
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        for attempt in range(1, max_retries + 1):
             try:
-                config = types.GenerateContentConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_tokens,
-                    system_instruction=system_prompt,
-                )
-
-                response = client.models.generate_content(
+                response = self._client.models.generate_content(
                     model=model,
                     contents=contents,
                     config=config,
                 )
 
-                # Track tokens
-                if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                    total_input_tokens += response.usage_metadata.prompt_token_count or 0
-                    total_output_tokens += response.usage_metadata.candidates_token_count or 0
+                in_tokens = response.usage_metadata.prompt_token_count or 0
+                out_tokens = response.usage_metadata.candidates_token_count or 0
 
-                return response.text, total_input_tokens, total_output_tokens
+                if response_model is not None:
+                    parsed = response_model.model_validate(json.loads(response.text))
+                    return parsed, in_tokens, out_tokens
+
+                return response.text, in_tokens, out_tokens
 
             except Exception as e:
-                print(f"Error on attempt {attempt}/{max_retries}: {e}")
-                attempt += 1
-                time.sleep(retry_delay)
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                else:
+                    raise RuntimeError(
+                        f"Gemini call failed after {max_retries} attempts"
+                    ) from e
 
         raise RuntimeError(f"Gemini call failed after {max_retries} attempts")
 
