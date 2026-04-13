@@ -287,154 +287,107 @@ class GeminiProvider(LLMProvider):
 class PerplexityProvider(LLMProvider):
     """Perplexity API provider (OpenAI-compatible)."""
 
-    def __init__(self, api_key: str, base_url: str = "https://api.perplexity.ai"):
+    def __init__(self, *, api_key: Optional[str] = None, base_url: str = "https://api.perplexity.ai"):
         """
         Initialize Perplexity provider.
 
         Parameters
         ----------
-        api_key : str
-            Perplexity API key
+        api_key : str, optional
+            Perplexity API key. Falls back to PERPLEXITY_API_KEY env var.
         base_url : str
             Perplexity API base URL
         """
-        from openai import OpenAI
+        import os
 
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        resolved_key = api_key or os.environ.get("PERPLEXITY_API_KEY")
+        if not resolved_key:
+            raise ValueError(
+                "Perplexity API key required. Pass api_key= or set PERPLEXITY_API_KEY."
+            )
+        self._client = OpenAI(api_key=resolved_key, base_url=base_url)
 
     @property
     def name(self) -> str:
         return "perplexity"
 
-    def call_structured(
+    def call(
         self,
         messages: List[Dict[str, str]],
-        response_model: Type[T],
-        model: str = "sonar",
-        temperature: float = 0.7,
+        model: str,
+        *,
+        response_model: Optional[Type[T]] = None,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
-        retry_delay: int = DEFAULT_RETRY_DELAY,
-        **kwargs: Any,
-    ) -> Tuple[T, int, int]:
-        """
-        Call Perplexity with structured output.
-
-        Note: Perplexity doesn't natively support structured output,
-        so we request JSON and parse it manually.
-        """
+        retry_delay: float = DEFAULT_RETRY_DELAY,
+        **provider_kwargs: Any,
+    ) -> Tuple[Any, int, int]:
+        """Call the Perplexity API."""
         import json
 
-        # Add JSON instruction to system message
-        modified_messages = []
-        for msg in messages:
-            if msg["role"] == "system":
-                schema_str = response_model.model_json_schema()
-                modified_messages.append({
-                    "role": "system",
-                    "content": (
-                        f"{msg['content']}\n\n"
-                        f"IMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
-                        f"{json.dumps(schema_str, indent=2)}"
-                    ),
-                })
-            else:
-                modified_messages.append(msg)
+        # Filter out unsupported kwargs (Perplexity has built-in web search)
+        provider_kwargs.pop("tools", None)
 
-        attempt = 1
-        total_input_tokens = 0
-        total_output_tokens = 0
+        # If structured output requested, inject JSON schema into system message
+        if response_model is not None:
+            schema_str = response_model.model_json_schema()
+            modified_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    modified_messages.append({
+                        "role": "system",
+                        "content": (
+                            f"{msg['content']}\n\n"
+                            f"IMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
+                            f"{json.dumps(schema_str, indent=2)}"
+                        ),
+                    })
+                else:
+                    modified_messages.append(msg)
+        else:
+            modified_messages = messages
 
-        while attempt <= max_retries:
+        for attempt in range(1, max_retries + 1):
             try:
-                # Filter out unsupported kwargs (Perplexity has built-in web search)
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "tools"}
-
-                args = {
+                args: Dict[str, Any] = {
                     "model": model,
                     "messages": modified_messages,
-                    "temperature": temperature,
-                    **filtered_kwargs,
+                    **provider_kwargs,
                 }
+                if temperature is not None:
+                    args["temperature"] = temperature
                 if max_tokens:
                     args["max_tokens"] = max_tokens
 
                 response = self._client.chat.completions.create(**args)
 
-                # Track tokens before parsing (in case parsing fails)
-                if hasattr(response, 'usage') and response.usage:
-                    total_input_tokens += response.usage.prompt_tokens or 0
-                    total_output_tokens += response.usage.completion_tokens or 0
+                in_tokens = response.usage.prompt_tokens or 0
+                out_tokens = response.usage.completion_tokens or 0
 
-                text = response.choices[0].message.content
-
-                # Extract JSON from response (might be wrapped in markdown)
-                if "```json" in text:
-                    text = text.split("```json")[1].split("```")[0]
-                elif "```" in text:
-                    text = text.split("```")[1].split("```")[0]
-
-                parsed = response_model.model_validate(json.loads(text.strip()))
-
-                return (
-                    parsed,
-                    total_input_tokens,
-                    total_output_tokens,
-                )
-
-            except Exception as e:
-                print(f"Error on attempt {attempt}/{max_retries}: {e}")
-                attempt += 1
-                time.sleep(retry_delay)
-
-        raise RuntimeError(f"Perplexity call failed after {max_retries} attempts")
-
-    def call_text(
-        self,
-        messages: List[Dict[str, str]],
-        model: str = "sonar",
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        max_retries: int = DEFAULT_MAX_RETRIES,
-        retry_delay: int = DEFAULT_RETRY_DELAY,
-        **kwargs: Any,
-    ) -> Tuple[str, int, int]:
-        """Call Perplexity for plain text output (with web search)."""
-        attempt = 1
-        total_input_tokens = 0
-        total_output_tokens = 0
-
-        while attempt <= max_retries:
-            try:
-                # Filter out unsupported kwargs (Perplexity has built-in web search)
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "tools"}
-
-                args = {
-                    "model": model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    **filtered_kwargs,
-                }
-                if max_tokens:
-                    args["max_tokens"] = max_tokens
-
-                response = self._client.chat.completions.create(**args)
-
-                # Track tokens
-                if hasattr(response, 'usage') and response.usage:
-                    total_input_tokens += response.usage.prompt_tokens or 0
-                    total_output_tokens += response.usage.completion_tokens or 0
+                if response_model is not None:
+                    text = response.choices[0].message.content
+                    # Extract JSON from response (might be wrapped in markdown)
+                    if "```json" in text:
+                        text = text.split("```json")[1].split("```")[0]
+                    elif "```" in text:
+                        text = text.split("```")[1].split("```")[0]
+                    parsed = response_model.model_validate(json.loads(text.strip()))
+                    return parsed, in_tokens, out_tokens
 
                 return (
                     response.choices[0].message.content,
-                    total_input_tokens,
-                    total_output_tokens,
+                    in_tokens,
+                    out_tokens,
                 )
 
             except Exception as e:
-                print(f"Error on attempt {attempt}/{max_retries}: {e}")
-                attempt += 1
-                time.sleep(retry_delay)
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                else:
+                    raise RuntimeError(
+                        f"Perplexity call failed after {max_retries} attempts"
+                    ) from e
 
         raise RuntimeError(f"Perplexity call failed after {max_retries} attempts")
 
@@ -510,12 +463,12 @@ def get_provider(
     elif provider_name == "gemini":
         if gemini_api_key is None:
             raise ValueError("gemini_api_key required for Gemini provider")
-        return GeminiProvider(gemini_api_key)
+        return GeminiProvider(api_key=gemini_api_key)
 
     elif provider_name == "perplexity":
         if perplexity_api_key is None:
             raise ValueError("perplexity_api_key required for Perplexity provider")
-        return PerplexityProvider(perplexity_api_key)
+        return PerplexityProvider(api_key=perplexity_api_key)
 
     else:
         raise ValueError(f"Unknown provider: {provider_name}")

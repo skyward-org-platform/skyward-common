@@ -355,3 +355,116 @@ class TestGeminiProvider:
         """GeminiProvider should not define its own call_text — only call()."""
         from skyward.llm.providers import GeminiProvider
         assert "call_text" not in GeminiProvider.__dict__
+
+
+class TestPerplexityProvider:
+
+    def _make_provider(self):
+        from skyward.llm.providers import PerplexityProvider
+        with patch("skyward.llm.providers.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_openai_cls.return_value = mock_client
+            provider = PerplexityProvider(api_key="pplx-test-key")
+        return provider, mock_client
+
+    def test_name_property(self):
+        provider, _ = self._make_provider()
+        assert provider.name == "perplexity"
+
+    def test_call_text_returns_string(self):
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(100, 50)
+        mock_client.chat.completions.create.return_value = MockChatCompletion("hello world", usage)
+        result, in_tok, out_tok = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="sonar",
+        )
+        assert result == "hello world"
+        assert in_tok == 100
+        assert out_tok == 50
+
+    def test_call_structured_returns_pydantic_model(self):
+        import json
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(200, 100)
+        response_json = json.dumps({"answer": "yes", "confidence": 0.95})
+        mock_client.chat.completions.create.return_value = MockChatCompletion(response_json, usage)
+        result, in_tok, out_tok = provider.call(
+            messages=[
+                {"role": "system", "content": "Be helpful."},
+                {"role": "user", "content": "question"},
+            ],
+            model="sonar",
+            response_model=SampleResponse,
+        )
+        assert isinstance(result, SampleResponse)
+        assert result.answer == "yes"
+        assert result.confidence == 0.95
+        assert in_tok == 200
+        assert out_tok == 100
+
+    def test_tools_kwarg_filtered_out(self):
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        mock_client.chat.completions.create.return_value = MockChatCompletion("ok", usage)
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="sonar",
+            tools=[{"type": "function", "function": {"name": "search"}}],
+        )
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert "tools" not in call_kwargs
+
+    def test_init_with_env_var_fallback(self):
+        from skyward.llm.providers import PerplexityProvider
+        with patch("skyward.llm.providers.OpenAI") as mock_openai_cls, \
+             patch.dict("os.environ", {"PERPLEXITY_API_KEY": "pplx-env-key"}, clear=True):
+            mock_openai_cls.return_value = MagicMock()
+            provider = PerplexityProvider()
+            mock_openai_cls.assert_called_once_with(
+                api_key="pplx-env-key",
+                base_url="https://api.perplexity.ai",
+            )
+
+    def test_init_no_key_raises(self):
+        from skyward.llm.providers import PerplexityProvider
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ValueError, match="API key"):
+                PerplexityProvider()
+
+    def test_retries_on_transient_error(self):
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        mock_client.chat.completions.create.side_effect = [
+            ConnectionError("transient"),
+            MockChatCompletion("recovered", usage),
+        ]
+        result, in_tok, out_tok = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="sonar",
+            max_retries=2,
+            retry_delay=0,
+        )
+        assert result == "recovered"
+        assert mock_client.chat.completions.create.call_count == 2
+
+    def test_raises_after_max_retries_exhausted(self):
+        provider, mock_client = self._make_provider()
+        mock_client.chat.completions.create.side_effect = ConnectionError("down")
+        with pytest.raises(RuntimeError, match="failed after 2 attempts"):
+            provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                model="sonar",
+                max_retries=2,
+                retry_delay=0,
+            )
+
+    def test_no_legacy_call_structured_method(self):
+        """PerplexityProvider should not define its own call_structured — only call()."""
+        from skyward.llm.providers import PerplexityProvider
+        assert "call_structured" not in PerplexityProvider.__dict__
+
+    def test_no_legacy_call_text_method(self):
+        """PerplexityProvider should not define its own call_text — only call()."""
+        from skyward.llm.providers import PerplexityProvider
+        assert "call_text" not in PerplexityProvider.__dict__
