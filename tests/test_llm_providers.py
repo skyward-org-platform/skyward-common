@@ -468,3 +468,144 @@ class TestPerplexityProvider:
         """PerplexityProvider should not define its own call_text — only call()."""
         from skyward.llm.providers import PerplexityProvider
         assert "call_text" not in PerplexityProvider.__dict__
+
+
+class TestAnthropicProvider:
+
+    def _make_provider(self):
+        from skyward.llm.providers import AnthropicProvider
+        with patch("skyward.llm.providers.Anthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            provider = AnthropicProvider(api_key="sk-ant-test")
+        return provider, mock_client
+
+    def test_name_property(self):
+        provider, _ = self._make_provider()
+        assert provider.name == "anthropic"
+
+    def test_call_text_returns_string(self):
+        provider, mock_client = self._make_provider()
+        response = MagicMock()
+        response.content = [MagicMock(text="hello")]
+        response.usage.input_tokens = 120
+        response.usage.output_tokens = 40
+        mock_client.messages.create.return_value = response
+        result, in_tok, out_tok = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="claude-sonnet-4-20250514",
+        )
+        assert result == "hello"
+        assert in_tok == 120
+        assert out_tok == 40
+
+    def test_call_text_with_system_message(self):
+        provider, mock_client = self._make_provider()
+        response = MagicMock()
+        response.content = [MagicMock(text="hi there")]
+        response.usage.input_tokens = 50
+        response.usage.output_tokens = 10
+        mock_client.messages.create.return_value = response
+        provider.call(
+            messages=[
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "hello"},
+            ],
+            model="claude-sonnet-4-20250514",
+        )
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["system"] == "You are helpful."
+        # system message should NOT be in the messages list
+        for msg in call_kwargs["messages"]:
+            assert msg["role"] != "system"
+
+    def test_call_structured_returns_pydantic_model(self):
+        provider, mock_client = self._make_provider()
+        parsed = SampleResponse(answer="yes", confidence=0.95)
+        response = MagicMock()
+        response.parsed = parsed
+        response.usage.input_tokens = 200
+        response.usage.output_tokens = 100
+        mock_client.messages.parse.return_value = response
+        result, in_tok, out_tok = provider.call(
+            messages=[{"role": "user", "content": "question"}],
+            model="claude-sonnet-4-20250514",
+            response_model=SampleResponse,
+        )
+        assert isinstance(result, SampleResponse)
+        assert result.answer == "yes"
+        assert in_tok == 200
+        assert out_tok == 100
+
+    def test_provider_kwargs_forwarded(self):
+        provider, mock_client = self._make_provider()
+        response = MagicMock()
+        response.content = [MagicMock(text="ok")]
+        response.usage.input_tokens = 10
+        response.usage.output_tokens = 5
+        mock_client.messages.create.return_value = response
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="claude-sonnet-4-20250514",
+            thinking={"type": "enabled", "budget_tokens": 10000},
+        )
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["thinking"] == {"type": "enabled", "budget_tokens": 10000}
+
+    def test_init_with_env_var_fallback(self):
+        from skyward.llm.providers import AnthropicProvider
+        with patch("skyward.llm.providers.Anthropic") as mock_cls, \
+             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-env-key"}, clear=True):
+            mock_cls.return_value = MagicMock()
+            provider = AnthropicProvider()
+            mock_cls.assert_called_once_with(api_key="sk-ant-env-key")
+
+    def test_init_no_key_raises(self):
+        from skyward.llm.providers import AnthropicProvider
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ValueError, match="API key"):
+                AnthropicProvider()
+
+    def test_max_tokens_defaults_to_4096(self):
+        provider, mock_client = self._make_provider()
+        response = MagicMock()
+        response.content = [MagicMock(text="ok")]
+        response.usage.input_tokens = 10
+        response.usage.output_tokens = 5
+        mock_client.messages.create.return_value = response
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="claude-sonnet-4-20250514",
+        )
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["max_tokens"] == 4096
+
+    def test_retries_on_transient_error(self):
+        provider, mock_client = self._make_provider()
+        response = MagicMock()
+        response.content = [MagicMock(text="recovered")]
+        response.usage.input_tokens = 10
+        response.usage.output_tokens = 5
+        mock_client.messages.create.side_effect = [
+            ConnectionError("transient"),
+            response,
+        ]
+        result, in_tok, out_tok = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="claude-sonnet-4-20250514",
+            max_retries=2,
+            retry_delay=0,
+        )
+        assert result == "recovered"
+        assert mock_client.messages.create.call_count == 2
+
+    def test_raises_after_max_retries_exhausted(self):
+        provider, mock_client = self._make_provider()
+        mock_client.messages.create.side_effect = ConnectionError("down")
+        with pytest.raises(RuntimeError, match="failed after 2 attempts"):
+            provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                model="claude-sonnet-4-20250514",
+                max_retries=2,
+                retry_delay=0,
+            )

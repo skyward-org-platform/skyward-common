@@ -11,6 +11,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
+from anthropic import Anthropic
 from google import genai
 from google import genai
 from openai import OpenAI
@@ -390,6 +391,57 @@ class PerplexityProvider(LLMProvider):
                     ) from e
 
         raise RuntimeError(f"Perplexity call failed after {max_retries} attempts")
+
+
+class AnthropicProvider(LLMProvider):
+
+    def __init__(self, *, api_key=None):
+        import os
+
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise ValueError(
+                "Anthropic API key required. Pass api_key= or set ANTHROPIC_API_KEY."
+            )
+        self._client = Anthropic(api_key=key)
+
+    @property
+    def name(self) -> str:
+        return "anthropic"
+
+    def call(self, messages, model="claude-sonnet-4-20250514", *, response_model=None,
+             max_retries=DEFAULT_MAX_RETRIES, retry_delay=DEFAULT_RETRY_DELAY, **kwargs):
+        system_prompt, filtered = self._extract_system(messages)
+        args = {"model": model, "messages": filtered, "max_tokens": 4096, **kwargs}
+        if system_prompt:
+            args["system"] = system_prompt
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                if response_model is not None:
+                    args["response_model"] = response_model
+                    response = self._client.messages.parse(**args)
+                    return response.parsed, response.usage.input_tokens, response.usage.output_tokens
+                response = self._client.messages.create(**args)
+                return response.content[0].text, response.usage.input_tokens, response.usage.output_tokens
+            except Exception as e:
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                else:
+                    raise RuntimeError(
+                        f"Anthropic call failed after {max_retries} attempts"
+                    ) from e
+
+    @staticmethod
+    def _extract_system(messages):
+        system_prompt = None
+        filtered = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = msg["content"]
+            else:
+                filtered.append(msg)
+        return system_prompt, filtered
 
 
 # Model name mappings for each provider
