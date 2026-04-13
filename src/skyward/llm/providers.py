@@ -393,6 +393,45 @@ class PerplexityProvider(LLMProvider):
         raise RuntimeError(f"Perplexity call failed after {max_retries} attempts")
 
 
+class GrokProvider(LLMProvider):
+    """xAI Grok API provider (OpenAI-compatible)."""
+
+    def __init__(self, *, api_key=None, base_url="https://api.x.ai/v1"):
+        import os
+        key = api_key or os.environ.get("XAI_API_KEY")
+        if not key:
+            raise ValueError(
+                "xAI API key required. Pass api_key= or set XAI_API_KEY."
+            )
+        self._client = OpenAI(api_key=key, base_url=base_url)
+
+    @property
+    def name(self) -> str:
+        return "grok"
+
+    def call(self, messages, model="grok-3", *, response_model=None,
+             max_retries=DEFAULT_MAX_RETRIES, retry_delay=DEFAULT_RETRY_DELAY, **kwargs):
+        import json
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self._client.chat.completions.create(model=model, messages=messages, **kwargs)
+                in_tokens = response.usage.prompt_tokens or 0
+                out_tokens = response.usage.completion_tokens or 0
+                text = response.choices[0].message.content
+                if response_model is not None:
+                    parsed = response_model.model_validate(json.loads(text.strip()))
+                    return parsed, in_tokens, out_tokens
+                return text, in_tokens, out_tokens
+            except Exception as e:
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                else:
+                    raise RuntimeError(
+                        f"Grok call failed after {max_retries} attempts"
+                    ) from e
+        raise RuntimeError(f"Grok call failed after {max_retries} attempts")
+
+
 class AnthropicProvider(LLMProvider):
 
     def __init__(self, *, api_key=None):
