@@ -110,18 +110,29 @@ class OpenAIProvider(LLMProvider):
         **provider_kwargs: Any,
     ) -> Tuple[Any, int, int]:
         """Call the OpenAI API."""
-        if response_model is not None:
-            return self._call_structured(
-                messages, model, response_model,
-                temperature=temperature,
-                **provider_kwargs,
-            )
-        return self._call_text(
-            messages, model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **provider_kwargs,
-        )
+        for attempt in range(1, max_retries + 1):
+            try:
+                if response_model is not None:
+                    return self._call_structured(
+                        messages, model, response_model,
+                        temperature=temperature,
+                        **provider_kwargs,
+                    )
+                return self._call_text(
+                    messages, model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    **provider_kwargs,
+                )
+            except Exception as e:
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                else:
+                    raise RuntimeError(
+                        f"OpenAI call failed after {max_retries} attempts"
+                    ) from e
+
+        raise RuntimeError(f"OpenAI call failed after {max_retries} attempts")
 
     def _call_text(
         self,

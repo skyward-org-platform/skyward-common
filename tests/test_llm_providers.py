@@ -161,3 +161,30 @@ class TestOpenAIProvider:
         with patch.dict("os.environ", {}, clear=True):
             with pytest.raises(ValueError, match="API key"):
                 OpenAIProvider()
+
+    def test_retries_on_transient_error(self):
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        mock_client.chat.completions.create.side_effect = [
+            ConnectionError("transient"),
+            MockChatCompletion("recovered", usage),
+        ]
+        result, in_tok, out_tok = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-4o",
+            max_retries=2,
+            retry_delay=0,
+        )
+        assert result == "recovered"
+        assert mock_client.chat.completions.create.call_count == 2
+
+    def test_raises_after_max_retries_exhausted(self):
+        provider, mock_client = self._make_provider()
+        mock_client.chat.completions.create.side_effect = ConnectionError("down")
+        with pytest.raises(RuntimeError, match="failed after 2 attempts"):
+            provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                model="gpt-4o",
+                max_retries=2,
+                retry_delay=0,
+            )
