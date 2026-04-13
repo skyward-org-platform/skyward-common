@@ -520,12 +520,26 @@ PERPLEXITY_MODELS = {
     "sonar-reasoning-pro": "sonar-reasoning-pro",
 }
 
+ANTHROPIC_MODELS = {
+    "claude-opus-4-20250514": "claude-opus-4-20250514",
+    "claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
+    "claude-haiku-3-5-20241022": "claude-haiku-3-5-20241022",
+}
+
+GROK_MODELS = {
+    "grok-3": "grok-3",
+    "grok-3-mini": "grok-3-mini",
+    "grok-3-fast": "grok-3-fast",
+}
+
 
 def get_provider(
     provider_name: str,
     openai_client: Any = None,
     gemini_api_key: str = None,
     perplexity_api_key: str = None,
+    *,
+    api_key: Optional[str] = None,
 ) -> LLMProvider:
     """
     Get an LLM provider instance.
@@ -547,19 +561,33 @@ def get_provider(
         Provider instance
     """
     if provider_name == "openai":
+        if api_key is not None:
+            return OpenAIProvider(api_key=api_key)
         if openai_client is None:
             raise ValueError("openai_client required for OpenAI provider")
         return OpenAIProvider(client=openai_client)
 
     elif provider_name == "gemini":
-        if gemini_api_key is None:
-            raise ValueError("gemini_api_key required for Gemini provider")
-        return GeminiProvider(api_key=gemini_api_key)
+        resolved = api_key or gemini_api_key
+        if resolved is None:
+            raise ValueError("api_key required for Gemini provider")
+        return GeminiProvider(api_key=resolved)
 
     elif provider_name == "perplexity":
-        if perplexity_api_key is None:
-            raise ValueError("perplexity_api_key required for Perplexity provider")
-        return PerplexityProvider(api_key=perplexity_api_key)
+        resolved = api_key or perplexity_api_key
+        if resolved is None:
+            raise ValueError("api_key required for Perplexity provider")
+        return PerplexityProvider(api_key=resolved)
+
+    elif provider_name == "anthropic":
+        if api_key is None:
+            raise ValueError("api_key required for Anthropic provider")
+        return AnthropicProvider(api_key=api_key)
+
+    elif provider_name == "grok":
+        if api_key is None:
+            raise ValueError("api_key required for Grok provider")
+        return GrokProvider(api_key=api_key)
 
     else:
         raise ValueError(f"Unknown provider: {provider_name}")

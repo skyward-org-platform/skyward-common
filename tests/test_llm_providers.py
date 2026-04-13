@@ -724,3 +724,92 @@ class TestGrokProvider:
                 max_retries=2,
                 retry_delay=0,
             )
+
+
+class TestGetProvider:
+    """Tests for the get_provider() factory function."""
+
+    def test_get_openai_with_api_key(self):
+        from skyward.llm.providers import get_provider, OpenAIProvider
+        with patch("skyward.llm.providers.OpenAI"):
+            provider = get_provider("openai", api_key="sk-test")
+        assert isinstance(provider, OpenAIProvider)
+
+    def test_get_gemini_with_api_key(self):
+        from skyward.llm.providers import get_provider, GeminiProvider
+        with patch("skyward.llm.providers.genai"):
+            provider = get_provider("gemini", api_key="gemini-test")
+        assert isinstance(provider, GeminiProvider)
+
+    def test_get_perplexity_with_api_key(self):
+        from skyward.llm.providers import get_provider, PerplexityProvider
+        with patch("skyward.llm.providers.OpenAI"):
+            provider = get_provider("perplexity", api_key="pplx-test")
+        assert isinstance(provider, PerplexityProvider)
+
+    def test_get_anthropic_with_api_key(self):
+        from skyward.llm.providers import get_provider, AnthropicProvider
+        with patch("skyward.llm.providers.Anthropic"):
+            provider = get_provider("anthropic", api_key="sk-ant-test")
+        assert isinstance(provider, AnthropicProvider)
+
+    def test_get_grok_with_api_key(self):
+        from skyward.llm.providers import get_provider, GrokProvider
+        with patch("skyward.llm.providers.OpenAI"):
+            provider = get_provider("grok", api_key="xai-test")
+        assert isinstance(provider, GrokProvider)
+
+    def test_unknown_provider_raises(self):
+        from skyward.llm.providers import get_provider
+        with pytest.raises(ValueError, match="Unknown provider"):
+            get_provider("unknown_provider", api_key="key")
+
+    def test_get_openai_with_client_object(self):
+        from skyward.llm.providers import get_provider, OpenAIProvider
+        mock_client = MagicMock()
+        provider = get_provider("openai", openai_client=mock_client)
+        assert isinstance(provider, OpenAIProvider)
+
+
+class TestModelMappings:
+    """Tests for model name mapping dicts."""
+
+    def test_anthropic_models_exist(self):
+        from skyward.llm.providers import ANTHROPIC_MODELS
+        assert "claude-opus-4-20250514" in ANTHROPIC_MODELS
+        assert "claude-sonnet-4-20250514" in ANTHROPIC_MODELS
+        assert "claude-haiku-3-5-20241022" in ANTHROPIC_MODELS
+
+    def test_grok_models_exist(self):
+        from skyward.llm.providers import GROK_MODELS
+        assert "grok-3" in GROK_MODELS
+        assert "grok-3-mini" in GROK_MODELS
+        assert "grok-3-fast" in GROK_MODELS
+
+
+class TestLLMExports:
+    """Tests that __init__.py exports new providers and mappings."""
+
+    def test_anthropic_provider_exported(self):
+        from skyward.llm import AnthropicProvider
+        assert AnthropicProvider is not None
+
+    def test_grok_provider_exported(self):
+        from skyward.llm import GrokProvider
+        assert GrokProvider is not None
+
+    def test_anthropic_models_exported(self):
+        from skyward.llm import ANTHROPIC_MODELS
+        assert "claude-sonnet-4-20250514" in ANTHROPIC_MODELS
+
+    def test_grok_models_exported(self):
+        from skyward.llm import GROK_MODELS
+        assert "grok-3" in GROK_MODELS
+
+    def test_anthropic_costs_exported(self):
+        from skyward.llm import ANTHROPIC_COSTS
+        assert "claude-sonnet-4-20250514" in ANTHROPIC_COSTS
+
+    def test_grok_costs_exported(self):
+        from skyward.llm import GROK_COSTS
+        assert "grok-3" in GROK_COSTS

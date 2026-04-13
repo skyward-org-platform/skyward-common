@@ -50,3 +50,24 @@ def test_load_config_does_not_change_cwd(tmp_path):
     os.chdir(tmp_path)
     load_config()
     assert os.getcwd() == str(tmp_path)
+
+
+def test_settings_has_perplexity_key():
+    """perplexity_key defaults to empty string when env var is not set."""
+    cfg = load_config()
+    assert hasattr(cfg, "perplexity_key")
+    assert isinstance(cfg.perplexity_key, str)
+
+
+def test_settings_has_anthropic_key():
+    """anthropic_key defaults to empty string when env var is not set."""
+    cfg = load_config()
+    assert hasattr(cfg, "anthropic_key")
+    assert isinstance(cfg.anthropic_key, str)
+
+
+def test_settings_has_xai_key():
+    """xai_key defaults to empty string when env var is not set."""
+    cfg = load_config()
+    assert hasattr(cfg, "xai_key")
+    assert isinstance(cfg.xai_key, str)

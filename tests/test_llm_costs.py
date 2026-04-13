@@ -240,3 +240,32 @@ class TestSummarizeCosts:
         verify_expected = calculate_cost(8000, 3000, "sonar", "perplexity")
         assert result["generate_cost"] == pytest.approx(generate_expected)
         assert result["verify_cost"] == pytest.approx(verify_expected)
+
+
+class TestAnthropicAndGrokCosts:
+
+    def test_anthropic_sonnet_pricing(self):
+        from skyward.llm.costs import ANTHROPIC_COSTS
+        assert "claude-sonnet-4-20250514" in ANTHROPIC_COSTS
+        cost = calculate_cost(1_000_000, 1_000_000, "claude-sonnet-4-20250514", "anthropic")
+        assert cost > 0
+
+    def test_grok_pricing(self):
+        from skyward.llm.costs import GROK_COSTS
+        assert "grok-3" in GROK_COSTS
+        cost = calculate_cost(1_000_000, 1_000_000, "grok-3", "grok")
+        assert cost > 0
+
+    def test_all_anthropic_models_have_pricing(self):
+        from skyward.llm.costs import ANTHROPIC_COSTS
+        for model in ANTHROPIC_COSTS:
+            cost = calculate_cost(1_000_000, 0, model, "anthropic")
+            input_price = ANTHROPIC_COSTS[model][0]
+            assert cost == pytest.approx(input_price)
+
+    def test_all_grok_models_have_pricing(self):
+        from skyward.llm.costs import GROK_COSTS
+        for model in GROK_COSTS:
+            cost = calculate_cost(1_000_000, 0, model, "grok")
+            input_price = GROK_COSTS[model][0]
+            assert cost == pytest.approx(input_price)

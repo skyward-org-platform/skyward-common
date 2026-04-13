@@ -40,6 +40,20 @@ GEMINI_COSTS: Dict[str, Tuple[float, float]] = {
     "gemini-3-pro-preview": (2.00, 12.00),
 }
 
+# Anthropic pricing (per 1M tokens)
+ANTHROPIC_COSTS: Dict[str, Tuple[float, float]] = {
+    "claude-opus-4-20250514": (15.00, 75.00),
+    "claude-sonnet-4-20250514": (3.00, 15.00),
+    "claude-haiku-3-5-20241022": (0.80, 4.00),
+}
+
+# Grok (xAI) pricing (per 1M tokens)
+GROK_COSTS: Dict[str, Tuple[float, float]] = {
+    "grok-3": (3.00, 15.00),
+    "grok-3-mini": (0.30, 0.50),
+    "grok-3-fast": (5.00, 25.00),
+}
+
 # Perplexity pricing (per 1M tokens)
 PERPLEXITY_COSTS: Dict[str, Tuple[float, float]] = {
     "sonar": (1.00, 1.00),
@@ -79,6 +93,10 @@ def calculate_cost(
         costs = GEMINI_COSTS.get(model, (0.075, 0.30))  # Default to flash
     elif provider == "perplexity":
         costs = PERPLEXITY_COSTS.get(model, (1.00, 1.00))  # Default to sonar
+    elif provider == "anthropic":
+        costs = ANTHROPIC_COSTS.get(model, (3.00, 15.00))  # Default to sonnet
+    elif provider == "grok":
+        costs = GROK_COSTS.get(model, (3.00, 15.00))  # Default to grok-3
     else:
         # Unknown provider, use conservative estimate
         costs = (2.50, 10.00)

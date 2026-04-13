@@ -7,12 +7,16 @@ from skyward.llm.providers import (
     OpenAIProvider,
     GeminiProvider,
     PerplexityProvider,
+    AnthropicProvider,
+    GrokProvider,
     # Factory
     get_provider,
     # Model mappings
     OPENAI_MODELS,
     GEMINI_MODELS,
     PERPLEXITY_MODELS,
+    ANTHROPIC_MODELS,
+    GROK_MODELS,
     # Retry defaults
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY,
@@ -23,6 +27,8 @@ from skyward.llm.costs import (
     OPENAI_COSTS,
     GEMINI_COSTS,
     PERPLEXITY_COSTS,
+    ANTHROPIC_COSTS,
+    GROK_COSTS,
     # Functions
     calculate_cost,
     estimate_batch_cost,
@@ -36,11 +42,15 @@ __all__ = [
     "OpenAIProvider",
     "GeminiProvider",
     "PerplexityProvider",
+    "AnthropicProvider",
+    "GrokProvider",
     "get_provider",
     # Model mappings
     "OPENAI_MODELS",
     "GEMINI_MODELS",
     "PERPLEXITY_MODELS",
+    "ANTHROPIC_MODELS",
+    "GROK_MODELS",
     # Retry defaults
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
@@ -48,6 +58,8 @@ __all__ = [
     "OPENAI_COSTS",
     "GEMINI_COSTS",
     "PERPLEXITY_COSTS",
+    "ANTHROPIC_COSTS",
+    "GROK_COSTS",
     # Cost functions
     "calculate_cost",
     "estimate_batch_cost",

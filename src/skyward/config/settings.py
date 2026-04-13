@@ -40,6 +40,15 @@ class Settings:
     # Gemini Key
     gemini_key: str
 
+    # Perplexity Key
+    perplexity_key: str
+
+    # Anthropic Key
+    anthropic_key: str
+
+    # xAI (Grok) Key
+    xai_key: str
+
 
 def load_config() -> Settings:
     """Load configuration from environment variables.
@@ -89,4 +98,7 @@ def load_config() -> Settings:
         gdrive_oauth_token_path=gdrive_oauth_token_path,
         openai_key=os.getenv("OPENAI_API_KEY", ""),
         gemini_key=os.getenv("GEMINI_API_KEY", ""),
+        perplexity_key=os.getenv("PERPLEXITY_API_KEY", ""),
+        anthropic_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        xai_key=os.getenv("XAI_API_KEY", ""),
     )
