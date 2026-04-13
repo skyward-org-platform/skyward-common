@@ -30,62 +30,50 @@ class LLMProvider(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Provider name (openai, gemini, perplexity)."""
+        """Provider name (openai, gemini, perplexity, anthropic, grok)."""
         pass
 
     @abstractmethod
-    def call_structured(
+    def call(
         self,
         messages: List[Dict[str, str]],
-        response_model: Type[T],
         model: str,
-        temperature: float = 0.7,
+        *,
+        response_model: Optional[Type[T]] = None,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Tuple[T, int, int]:
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_delay: float = DEFAULT_RETRY_DELAY,
+        **provider_kwargs: Any,
+    ) -> Tuple[Any, int, int]:
         """
-        Call the LLM with structured output.
+        Call the LLM.
 
         Parameters
         ----------
-        messages : List[Dict[str, str]]
-            List of {"role": str, "content": str} messages
-        response_model : Type[T]
-            Pydantic model for structured output
+        messages : list of {"role": str, "content": str}
+            Conversation messages.
         model : str
-            Model identifier
-        temperature : float
-            Sampling temperature
+            Model identifier.
+        response_model : Type[BaseModel], optional
+            If provided, return a parsed Pydantic instance. Otherwise return str.
+        temperature : float, optional
+            Sampling temperature. Omit to use provider default.
         max_tokens : int, optional
-            Maximum tokens in response
-        **kwargs : Any
-            Additional arguments (e.g., tools)
+            Maximum tokens in response.
+        max_retries : int
+            Retry attempts on transient errors.
+        retry_delay : float
+            Seconds between retries.
+        **provider_kwargs
+            Forwarded directly to the underlying SDK call.
 
         Returns
         -------
-        Tuple[T, int, int]
-            (parsed_response, input_tokens, output_tokens)
+        Tuple[T | str, int, int]
+            (parsed_model_or_text, input_tokens, output_tokens)
         """
-        pass
-
-    @abstractmethod
-    def call_text(
-        self,
-        messages: List[Dict[str, str]],
-        model: str,
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Tuple[str, int, int]:
-        """
-        Call the LLM for plain text output.
-
-        Returns
-        -------
-        Tuple[str, int, int]
-            (text_response, input_tokens, output_tokens)
-        """
-        pass
+        ...
 
 
 class OpenAIProvider(LLMProvider):
