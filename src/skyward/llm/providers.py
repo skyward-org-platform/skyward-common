@@ -11,6 +11,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
+from openai import OpenAI
 from pydantic import BaseModel
 
 
@@ -79,128 +80,100 @@ class LLMProvider(ABC):
 class OpenAIProvider(LLMProvider):
     """OpenAI API provider."""
 
-    def __init__(self, client: Any):
-        """
-        Initialize with OpenAI client.
+    def __init__(self, *, client: Any = None, api_key: Optional[str] = None):
+        import os
 
-        Parameters
-        ----------
-        client : OpenAI
-            OpenAI client instance
-        """
-        self._client = client
+        if client is not None:
+            self._client = client
+        else:
+            resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
+            if not resolved_key:
+                raise ValueError(
+                    "OpenAI API key required. Pass api_key= or set OPENAI_API_KEY."
+                )
+            self._client = OpenAI(api_key=resolved_key)
 
     @property
     def name(self) -> str:
         return "openai"
 
-    def call_structured(
+    def call(
         self,
         messages: List[Dict[str, str]],
-        response_model: Type[T],
-        model: str = "gpt-4o",
-        temperature: float = 0.7,
+        model: str,
+        *,
+        response_model: Optional[Type[T]] = None,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
-        retry_delay: int = DEFAULT_RETRY_DELAY,
-        **kwargs: Any,
-    ) -> Tuple[T, int, int]:
-        """Call OpenAI with structured output using responses.parse."""
-        from openai import RateLimitError
+        retry_delay: float = DEFAULT_RETRY_DELAY,
+        **provider_kwargs: Any,
+    ) -> Tuple[Any, int, int]:
+        """Call the OpenAI API."""
+        if response_model is not None:
+            return self._call_structured(
+                messages, model, response_model,
+                temperature=temperature,
+                **provider_kwargs,
+            )
+        return self._call_text(
+            messages, model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **provider_kwargs,
+        )
 
-        attempt = 1
-        total_input_tokens = 0
-        total_output_tokens = 0
-
-        while attempt <= max_retries:
-            try:
-                # Build args, conditionally including temperature
-                parse_args = {
-                    "model": model,
-                    "input": messages,
-                    "text_format": response_model,
-                    **kwargs,
-                }
-                if model not in NO_TEMPERATURE_MODELS:
-                    parse_args["temperature"] = temperature
-
-                response = self._client.responses.parse(**parse_args)
-                total_input_tokens += response.usage.input_tokens
-                total_output_tokens += response.usage.output_tokens
-                return (
-                    response.output_parsed,
-                    total_input_tokens,
-                    total_output_tokens,
-                )
-
-            except RateLimitError as e:
-                msg = str(e).lower()
-                if "insufficient" in msg or "quota" in msg or "billing" in msg:
-                    raise RuntimeError("OpenAI quota exceeded") from e
-                print(f"Rate limit hit, retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
-                attempt += 1
-
-            except Exception as e:
-                print(f"Error on attempt {attempt}/{max_retries}: {e}")
-                attempt += 1
-                time.sleep(retry_delay)
-
-        raise RuntimeError(f"OpenAI call failed after {max_retries} attempts")
-
-    def call_text(
+    def _call_text(
         self,
         messages: List[Dict[str, str]],
-        model: str = "gpt-4o",
-        temperature: float = 0.7,
+        model: str,
+        *,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        max_retries: int = DEFAULT_MAX_RETRIES,
-        retry_delay: int = DEFAULT_RETRY_DELAY,
-        **kwargs: Any,
+        **provider_kwargs: Any,
     ) -> Tuple[str, int, int]:
-        """Call OpenAI for plain text output."""
-        from openai import RateLimitError
+        args: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            **provider_kwargs,
+        }
+        if temperature is not None and model not in NO_TEMPERATURE_MODELS:
+            args["temperature"] = temperature
+        if max_tokens:
+            args["max_tokens"] = max_tokens
 
-        attempt = 1
-        total_input_tokens = 0
-        total_output_tokens = 0
+        response = self._client.chat.completions.create(**args)
+        return (
+            response.choices[0].message.content,
+            response.usage.prompt_tokens,
+            response.usage.completion_tokens,
+        )
 
-        while attempt <= max_retries:
-            try:
-                # Build args, conditionally including temperature
-                args = {
-                    "model": model,
-                    "messages": messages,
-                    **kwargs,
-                }
-                if model not in NO_TEMPERATURE_MODELS:
-                    args["temperature"] = temperature
-                if max_tokens:
-                    args["max_tokens"] = max_tokens
+    def _call_structured(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        response_model: Type[T],
+        *,
+        temperature: Optional[float] = None,
+        **provider_kwargs: Any,
+    ) -> Tuple[T, int, int]:
+        parse_args: Dict[str, Any] = {
+            "model": model,
+            "input": messages,
+            "text_format": response_model,
+            **provider_kwargs,
+        }
+        if temperature is not None and model not in NO_TEMPERATURE_MODELS:
+            parse_args["temperature"] = temperature
 
-                response = self._client.chat.completions.create(**args)
-                total_input_tokens += response.usage.prompt_tokens
-                total_output_tokens += response.usage.completion_tokens
-                return (
-                    response.choices[0].message.content,
-                    total_input_tokens,
-                    total_output_tokens,
-                )
+        response = self._client.responses.parse(**parse_args)
+        return (
+            response.output_parsed,
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+        )
 
-            except RateLimitError as e:
-                msg = str(e).lower()
-                if "insufficient" in msg or "quota" in msg or "billing" in msg:
-                    raise RuntimeError("OpenAI quota exceeded") from e
-                print(f"Rate limit hit, retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
-                attempt += 1
-
-            except Exception as e:
-                print(f"Error on attempt {attempt}/{max_retries}: {e}")
-                attempt += 1
-                time.sleep(retry_delay)
-
-        raise RuntimeError(f"OpenAI call failed after {max_retries} attempts")
 
 
 class GeminiProvider(LLMProvider):
@@ -592,7 +565,7 @@ def get_provider(
     if provider_name == "openai":
         if openai_client is None:
             raise ValueError("openai_client required for OpenAI provider")
-        return OpenAIProvider(openai_client)
+        return OpenAIProvider(client=openai_client)
 
     elif provider_name == "gemini":
         if gemini_api_key is None:
