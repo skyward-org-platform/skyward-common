@@ -115,3 +115,124 @@ class TestSessionBasics:
         assert session.messages == []
         assert session.total_input_tokens == 0
         assert session.total_output_tokens == 0
+
+
+class TestTokenSummarization:
+    def test_no_summarization_when_disabled(self):
+        from skyward.llm.session import LLMSession
+
+        provider = FakeProvider()
+        session = LLMSession(provider, summarize_after_tokens=None)
+        provider.next_response = ("r", 100000, 50000)
+        session.send("lots of tokens", model="m")
+        assert len(session.messages) == 2
+
+    def test_summarization_triggers_after_token_threshold(self):
+        from skyward.llm.session import LLMSession
+
+        provider = FakeProvider()
+        summarizer = FakeProvider()
+        summarizer.next_response = ("[Summary of conversation so far]", 10, 5)
+
+        session = LLMSession(
+            provider,
+            summarize_after_tokens=200,
+            summarizer_provider=summarizer,
+        )
+
+        # First call: 150 total tokens — below threshold, no summarization
+        provider.next_response = ("reply1", 100, 50)
+        session.send("hello", model="m")
+        assert len(session.messages) == 2  # user + assistant
+
+        # Second call: 300 more tokens — total 450, above 200 threshold
+        provider.next_response = ("reply2", 200, 100)
+        session.send("world", model="m")
+
+        # Summarization should have compressed messages to 1 summary message
+        assert len(session.messages) == 1
+        assert "[Summary" in session.messages[0]["content"]
+
+
+class TestMessageSummarization:
+    def test_summarization_triggers_after_message_count(self):
+        from skyward.llm.session import LLMSession
+
+        provider = FakeProvider()
+        summarizer = FakeProvider()
+        summarizer.next_response = ("Compressed history", 10, 5)
+
+        session = LLMSession(
+            provider,
+            summarize_after_tokens=None,
+            summarize_after_messages=4,
+            summarizer_provider=summarizer,
+        )
+
+        provider.next_response = ("a", 10, 5)
+        session.send("1", model="m")  # 2 messages
+        assert len(session.messages) == 2
+
+        provider.next_response = ("b", 10, 5)
+        session.send("2", model="m")  # 4 messages — triggers
+        assert len(session.messages) == 1
+        assert "[Summary" in session.messages[0]["content"]
+
+
+class TestCustomSummarization:
+    def test_custom_function_called(self):
+        from skyward.llm.session import LLMSession
+
+        provider = FakeProvider()
+        call_log = []
+
+        def my_summarizer(messages):
+            call_log.append(len(messages))
+            return messages[-2:]
+
+        session = LLMSession(
+            provider,
+            summarize_after_tokens=None,
+            summarize_after_messages=4,
+            summarize_fn=my_summarizer,
+        )
+
+        provider.next_response = ("a", 10, 5)
+        session.send("1", model="m")
+
+        provider.next_response = ("b", 10, 5)
+        session.send("2", model="m")
+
+        assert len(call_log) == 1
+        assert call_log[0] == 4
+        assert len(session.messages) == 2
+
+    def test_custom_function_can_extract_and_replace(self):
+        from skyward.llm.session import LLMSession
+
+        provider = FakeProvider()
+        extracted_data = []
+
+        def extract_and_compress(messages):
+            for msg in messages:
+                if msg["role"] == "assistant":
+                    extracted_data.append(msg["content"])
+            return [{"role": "assistant", "content": "Prior context: discussed topics A and B"}]
+
+        session = LLMSession(
+            provider,
+            summarize_after_tokens=None,
+            summarize_after_messages=4,
+            summarize_fn=extract_and_compress,
+        )
+
+        provider.next_response = ("fact A", 10, 5)
+        session.send("tell me about A", model="m")
+
+        provider.next_response = ("fact B", 10, 5)
+        session.send("tell me about B", model="m")
+
+        assert len(extracted_data) == 2
+        assert "fact A" in extracted_data
+        assert "fact B" in extracted_data
+        assert len(session.messages) == 1
