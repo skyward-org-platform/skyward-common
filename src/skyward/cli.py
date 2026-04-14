@@ -243,6 +243,74 @@ def llm():
     pass
 
 
+@llm.command("call")
+@click.option("--provider", required=True, type=click.Choice(["openai", "gemini", "perplexity", "anthropic", "grok"]), help="LLM provider.")
+@click.option("--model", required=True, help="Model name.")
+@click.option("--message", required=True, help="User message.")
+@click.option("--system", default=None, help="System prompt.")
+@click.option("--temperature", default=None, type=float, help="Sampling temperature.")
+@click.option("--max-tokens", default=None, type=int, help="Max output tokens.")
+@click.option("--api-key", default=None, help="API key (overrides env var).")
+def llm_call(provider, model, message, system, temperature, max_tokens, api_key):
+    """Make a single LLM call and print the response."""
+    from skyward.llm import get_provider, calculate_cost, format_cost
+
+    p = get_provider(provider, api_key=api_key)
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": message})
+
+    kwargs = {}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+
+    result, in_tok, out_tok = p.call(messages, model, **kwargs)
+
+    click.echo(result)
+    click.echo(f"\n--- {in_tok} in / {out_tok} out | {format_cost(calculate_cost(in_tok, out_tok, model, provider))} ---")
+
+
+@llm.command("chat")
+@click.option("--provider", required=True, type=click.Choice(["openai", "gemini", "perplexity", "anthropic", "grok"]), help="LLM provider.")
+@click.option("--model", required=True, help="Model name.")
+@click.option("--system", default=None, help="System prompt.")
+@click.option("--api-key", default=None, help="API key (overrides env var).")
+@click.option("--summarize-tokens", default=50000, type=int, help="Summarize after N tokens (0 to disable).")
+def llm_chat(provider, model, system, api_key, summarize_tokens):
+    """Start an interactive chat session. Type 'quit' to exit."""
+    from skyward.llm import get_provider
+    from skyward.llm.session import LLMSession
+
+    p = get_provider(provider, api_key=api_key)
+    session = LLMSession(
+        p,
+        system_prompt=system,
+        summarize_after_tokens=summarize_tokens if summarize_tokens > 0 else None,
+    )
+
+    click.echo(f"Chat with {provider}/{model}. Type 'quit' to exit.\n")
+
+    while True:
+        try:
+            user_input = click.prompt("You", prompt_suffix="> ")
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if user_input.strip().lower() in ("quit", "exit"):
+            break
+
+        result = session.send(user_input, model=model)
+        click.echo(f"\n{result}")
+        click.echo(
+            f"  [{session.total_input_tokens} in / {session.total_output_tokens} out | "
+            f"{len(session.messages)} messages]\n"
+        )
+
+
 @llm.command("cost")
 @click.option("--provider", required=True, help="LLM provider (openai, gemini, perplexity).")
 @click.option("--model", required=True, help="Model name.")

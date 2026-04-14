@@ -787,6 +787,40 @@ class TestModelMappings:
         assert "grok-3-fast" in GROK_MODELS
 
 
+class TestBackwardsCompatibility:
+    """Ensure call_structured and call_text still work."""
+
+    def test_call_structured_delegates_to_call(self):
+        from skyward.llm.providers import OpenAIProvider
+        mock_client = MagicMock()
+        provider = OpenAIProvider(client=mock_client)
+
+        parsed = SampleResponse(answer="yes", confidence=0.9)
+        usage = MockOpenAIUsage(100, 50)
+        mock_client.responses.parse.return_value = MockResponsesParsed(parsed, usage)
+
+        result, in_tok, out_tok = provider.call_structured(
+            messages=[{"role": "user", "content": "q"}],
+            response_model=SampleResponse,
+            model="gpt-4o",
+        )
+        assert isinstance(result, SampleResponse)
+
+    def test_call_text_delegates_to_call(self):
+        from skyward.llm.providers import OpenAIProvider
+        mock_client = MagicMock()
+        provider = OpenAIProvider(client=mock_client)
+
+        usage = MockOpenAIUsage(100, 50)
+        mock_client.chat.completions.create.return_value = MockChatCompletion("hello", usage)
+
+        result, in_tok, out_tok = provider.call_text(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-4o",
+        )
+        assert result == "hello"
+
+
 class TestLLMExports:
     """Tests that __init__.py exports new providers and mappings."""
 
@@ -813,3 +847,11 @@ class TestLLMExports:
     def test_grok_costs_exported(self):
         from skyward.llm import GROK_COSTS
         assert "grok-3" in GROK_COSTS
+
+    def test_llm_session_importable(self):
+        from skyward.llm import LLMSession
+        assert LLMSession is not None
+
+    def test_llm_session_in_all(self):
+        import skyward.llm as llm_module
+        assert "LLMSession" in llm_module.__all__

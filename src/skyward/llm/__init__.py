@@ -22,6 +22,8 @@ from skyward.llm.providers import (
     DEFAULT_RETRY_DELAY,
 )
 
+from skyward.llm.session import LLMSession
+
 from skyward.llm.costs import (
     # Cost tables
     OPENAI_COSTS,
@@ -65,4 +67,6 @@ __all__ = [
     "estimate_batch_cost",
     "format_cost",
     "summarize_costs",
+    # Session
+    "LLMSession",
 ]

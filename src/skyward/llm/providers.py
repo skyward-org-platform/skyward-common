@@ -79,6 +79,17 @@ class LLMProvider(ABC):
         """
         ...
 
+    def call_structured(self, messages, response_model, model, temperature=0.7,
+                       max_tokens=None, **kwargs):
+        """Legacy method. Use call(response_model=...) instead."""
+        return self.call(messages, model, response_model=response_model,
+                        temperature=temperature, max_tokens=max_tokens, **kwargs)
+
+    def call_text(self, messages, model, temperature=0.7, max_tokens=None, **kwargs):
+        """Legacy method. Use call() instead."""
+        return self.call(messages, model, temperature=temperature,
+                        max_tokens=max_tokens, **kwargs)
+
 
 class OpenAIProvider(LLMProvider):
     """OpenAI API provider."""
