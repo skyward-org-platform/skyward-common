@@ -489,6 +489,24 @@ class TestPerplexityProvider:
         from skyward.llm.providers import PerplexityProvider
         assert "call_text" not in PerplexityProvider.__dict__
 
+    def test_structured_without_system_message(self):
+        """Structured output should work even without a system message."""
+        import json
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        response_json = json.dumps({"answer": "4", "confidence": 1.0})
+        mock_client.chat.completions.create.return_value = MockChatCompletion(response_json, usage)
+        result, _, _ = provider.call(
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            model="sonar",
+            response_model=SampleResponse,
+        )
+        assert isinstance(result, SampleResponse)
+        # Verify a system message was prepended with the schema
+        sent_msgs = mock_client.chat.completions.create.call_args[1]["messages"]
+        assert sent_msgs[0]["role"] == "system"
+        assert "JSON" in sent_msgs[0]["content"]
+
 
 class TestAnthropicProvider:
 

@@ -86,7 +86,7 @@ class LLMSession:
                 )},
                 {"role": "user", "content": conversation_text},
             ],
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
         )
         self._messages[:] = [
             {"role": "assistant", "content": f"[Summary of prior conversation]\n{summary_result}"}

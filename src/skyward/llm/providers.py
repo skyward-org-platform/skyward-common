@@ -352,16 +352,19 @@ class PerplexityProvider(LLMProvider):
         # If structured output requested, inject JSON schema into system message
         if response_model is not None:
             schema_str = response_model.model_json_schema()
+            schema_instruction = (
+                f"IMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
+                f"{json.dumps(schema_str, indent=2)}"
+            )
             modified_messages = []
+            has_system = any(msg["role"] == "system" for msg in messages)
+            if not has_system:
+                modified_messages.append({"role": "system", "content": schema_instruction})
             for msg in messages:
                 if msg["role"] == "system":
                     modified_messages.append({
                         "role": "system",
-                        "content": (
-                            f"{msg['content']}\n\n"
-                            f"IMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
-                            f"{json.dumps(schema_str, indent=2)}"
-                        ),
+                        "content": f"{msg['content']}\n\n{schema_instruction}",
                     })
                 else:
                     modified_messages.append(msg)
@@ -456,16 +459,19 @@ class GrokProvider(LLMProvider):
     def _inject_json_schema(messages, response_model):
         import json
         schema_str = json.dumps(response_model.model_json_schema(), indent=2)
+        schema_instruction = (
+            f"IMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
+            f"{schema_str}"
+        )
         modified = []
+        has_system = any(msg["role"] == "system" for msg in messages)
+        if not has_system:
+            modified.append({"role": "system", "content": schema_instruction})
         for msg in messages:
             if msg["role"] == "system":
                 modified.append({
                     "role": "system",
-                    "content": (
-                        f"{msg['content']}\n\n"
-                        f"IMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
-                        f"{schema_str}"
-                    ),
+                    "content": f"{msg['content']}\n\n{schema_instruction}",
                 })
             else:
                 modified.append(msg)

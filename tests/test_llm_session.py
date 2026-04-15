@@ -127,6 +127,14 @@ class TestTokenSummarization:
         session.send("lots of tokens", model="m")
         assert len(session.messages) == 2
 
+    def test_default_summarizer_uses_gemini_2_5_flash(self):
+        """Default summarizer model should be gemini-2.5-flash, not deprecated 2.0."""
+        from skyward.llm.session import LLMSession
+        import inspect
+        source = inspect.getsource(LLMSession._summarize)
+        assert "gemini-2.5-flash" in source, "Default summarizer should use gemini-2.5-flash"
+        assert "gemini-2.0-flash" not in source, "Should not reference deprecated gemini-2.0-flash"
+
     def test_summarization_triggers_after_token_threshold(self):
         from skyward.llm.session import LLMSession
 
