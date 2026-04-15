@@ -853,6 +853,15 @@ class TestModelMappings:
         assert "grok-3-mini" in GROK_MODELS
         assert "grok-3-fast" in GROK_MODELS
 
+    def test_gemini_deprecated_models_removed(self):
+        from skyward.llm.providers import GEMINI_MODELS
+        assert "gemini-2.0-flash" not in GEMINI_MODELS, "gemini-2.0-flash is deprecated"
+        assert "gemini-1.5-pro" not in GEMINI_MODELS, "gemini-1.5-pro is deprecated"
+        assert "gemini-1.5-flash" not in GEMINI_MODELS, "gemini-1.5-flash is deprecated"
+        # Current models should be present
+        assert "gemini-2.5-flash" in GEMINI_MODELS
+        assert "gemini-2.5-pro" in GEMINI_MODELS
+
 
 class TestBackwardsCompatibility:
     """Ensure call_structured and call_text still work."""

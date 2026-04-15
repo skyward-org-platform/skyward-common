@@ -42,14 +42,9 @@ class TestCalculateCost:
         assert cost == pytest.approx(10.00)
 
     def test_gemini_flash_pricing(self):
-        # gemini-2.0-flash: input=0.075, output=0.30
-        cost = calculate_cost(1_000_000, 1_000_000, "gemini-2.0-flash", "gemini")
-        assert cost == pytest.approx(0.375)
-
-    def test_gemini_free_preview(self):
-        # gemini-2.0-flash-exp: free during preview
-        cost = calculate_cost(1_000_000, 1_000_000, "gemini-2.0-flash-exp", "gemini")
-        assert cost == 0.0
+        # gemini-2.5-flash: input=0.30, output=2.50
+        cost = calculate_cost(1_000_000, 1_000_000, "gemini-2.5-flash", "gemini")
+        assert cost == pytest.approx(2.80)
 
     def test_perplexity_sonar(self):
         # sonar: input=1.00, output=1.00

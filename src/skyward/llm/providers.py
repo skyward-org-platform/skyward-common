@@ -550,11 +550,7 @@ OPENAI_MODELS = {
 }
 
 GEMINI_MODELS = {
-    # Gemini 1.x family
-    "gemini-1.5-pro": "gemini-1.5-pro",
-    "gemini-1.5-flash": "gemini-1.5-flash",
     # Gemini 2.x family
-    "gemini-2.0-flash": "gemini-2.0-flash-exp",
     "gemini-2.5-flash": "gemini-2.5-flash",
     "gemini-2.5-pro": "gemini-2.5-pro",
     # Gemini 3.x family

@@ -27,12 +27,7 @@ OPENAI_COSTS: Dict[str, Tuple[float, float]] = {
 
 # Google Gemini pricing (per 1M tokens)
 GEMINI_COSTS: Dict[str, Tuple[float, float]] = {
-    # Gemini 1.x family
-    "gemini-1.5-pro": (1.25, 5.00),
-    "gemini-1.5-flash": (0.075, 0.30),
     # Gemini 2.x family
-    "gemini-2.0-flash-exp": (0.00, 0.00),  # Free during preview
-    "gemini-2.0-flash": (0.075, 0.30),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-pro": (1.25, 10.00),
     # Gemini 3.x family (preview)
@@ -90,7 +85,7 @@ def calculate_cost(
     if provider == "openai":
         costs = OPENAI_COSTS.get(model, (2.50, 10.00))  # Default to gpt-4o
     elif provider == "gemini":
-        costs = GEMINI_COSTS.get(model, (0.075, 0.30))  # Default to flash
+        costs = GEMINI_COSTS.get(model, (0.30, 2.50))  # Default to 2.5-flash
     elif provider == "perplexity":
         costs = PERPLEXITY_COSTS.get(model, (1.00, 1.00))  # Default to sonar
     elif provider == "anthropic":
