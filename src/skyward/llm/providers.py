@@ -260,6 +260,14 @@ class GeminiProvider(LLMProvider):
             elif msg["role"] == "assistant":
                 contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
 
+        if response_model is not None:
+            schema_str = json.dumps(response_model.model_json_schema(), indent=2)
+            schema_instruction = (
+                "\n\nIMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
+                + schema_str
+            )
+            system_prompt = (system_prompt or "") + schema_instruction
+
         config_kwargs: Dict[str, Any] = {
             "system_instruction": system_prompt,
         }
@@ -423,6 +431,8 @@ class GrokProvider(LLMProvider):
     def call(self, messages, model="grok-3", *, response_model=None,
              max_retries=DEFAULT_MAX_RETRIES, retry_delay=DEFAULT_RETRY_DELAY, **kwargs):
         import json
+        if response_model is not None:
+            messages = self._inject_json_schema(messages, response_model)
         for attempt in range(1, max_retries + 1):
             try:
                 response = self._client.chat.completions.create(model=model, messages=messages, **kwargs)
@@ -441,6 +451,25 @@ class GrokProvider(LLMProvider):
                         f"Grok call failed after {max_retries} attempts"
                     ) from e
         raise RuntimeError(f"Grok call failed after {max_retries} attempts")
+
+    @staticmethod
+    def _inject_json_schema(messages, response_model):
+        import json
+        schema_str = json.dumps(response_model.model_json_schema(), indent=2)
+        modified = []
+        for msg in messages:
+            if msg["role"] == "system":
+                modified.append({
+                    "role": "system",
+                    "content": (
+                        f"{msg['content']}\n\n"
+                        f"IMPORTANT: Respond ONLY with valid JSON matching this schema:\n"
+                        f"{schema_str}"
+                    ),
+                })
+            else:
+                modified.append(msg)
+        return modified
 
 
 class AnthropicProvider(LLMProvider):
@@ -469,9 +498,18 @@ class AnthropicProvider(LLMProvider):
         for attempt in range(1, max_retries + 1):
             try:
                 if response_model is not None:
-                    args["response_model"] = response_model
-                    response = self._client.messages.parse(**args)
-                    return response.parsed, response.usage.input_tokens, response.usage.output_tokens
+                    schema = response_model.model_json_schema()
+                    tool_name = response_model.__name__
+                    args["tools"] = [{
+                        "name": tool_name,
+                        "description": f"Provide {tool_name} data",
+                        "input_schema": schema,
+                    }]
+                    args["tool_choice"] = {"type": "tool", "name": tool_name}
+                    response = self._client.messages.create(**args)
+                    tool_input = response.content[0].input
+                    parsed = response_model.model_validate(tool_input)
+                    return parsed, response.usage.input_tokens, response.usage.output_tokens
                 response = self._client.messages.create(**args)
                 return response.content[0].text, response.usage.input_tokens, response.usage.output_tokens
             except Exception as e:
@@ -572,32 +610,20 @@ def get_provider(
         Provider instance
     """
     if provider_name == "openai":
-        if api_key is not None:
-            return OpenAIProvider(api_key=api_key)
-        if openai_client is None:
-            raise ValueError("openai_client required for OpenAI provider")
-        return OpenAIProvider(client=openai_client)
+        if openai_client is not None:
+            return OpenAIProvider(client=openai_client)
+        return OpenAIProvider(api_key=api_key)
 
     elif provider_name == "gemini":
-        resolved = api_key or gemini_api_key
-        if resolved is None:
-            raise ValueError("api_key required for Gemini provider")
-        return GeminiProvider(api_key=resolved)
+        return GeminiProvider(api_key=api_key or gemini_api_key)
 
     elif provider_name == "perplexity":
-        resolved = api_key or perplexity_api_key
-        if resolved is None:
-            raise ValueError("api_key required for Perplexity provider")
-        return PerplexityProvider(api_key=resolved)
+        return PerplexityProvider(api_key=api_key or perplexity_api_key)
 
     elif provider_name == "anthropic":
-        if api_key is None:
-            raise ValueError("api_key required for Anthropic provider")
         return AnthropicProvider(api_key=api_key)
 
     elif provider_name == "grok":
-        if api_key is None:
-            raise ValueError("api_key required for Grok provider")
         return GrokProvider(api_key=api_key)
 
     else:

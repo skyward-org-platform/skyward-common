@@ -318,6 +318,26 @@ class TestGeminiProvider:
             config = call_kwargs["config"]
             assert config.system_instruction == "You are helpful."
 
+    def test_structured_injects_schema_into_system(self):
+        """Gemini should inject JSON schema into system_instruction for structured output."""
+        with patch("skyward.llm.providers.genai") as mock_genai:
+            import json
+            provider, mock_client = self._make_provider(mock_genai)
+            response_json = json.dumps({"answer": "yes", "confidence": 0.9})
+            mock_client.models.generate_content.return_value = self._make_mock_response(text=response_json)
+            provider.call(
+                messages=[
+                    {"role": "system", "content": "Be helpful."},
+                    {"role": "user", "content": "question"},
+                ],
+                model="gemini-2.5-flash",
+                response_model=SampleResponse,
+            )
+            call_kwargs = mock_client.models.generate_content.call_args[1]
+            system_inst = call_kwargs["config"].system_instruction
+            assert "JSON" in system_inst, f"Should contain JSON schema instruction, got: {system_inst}"
+            assert "answer" in system_inst, "Should contain field names from schema"
+
     def test_retries_on_transient_error(self):
         with patch("skyward.llm.providers.genai") as mock_genai:
             provider, mock_client = self._make_provider(mock_genai)
@@ -521,12 +541,11 @@ class TestAnthropicProvider:
 
     def test_call_structured_returns_pydantic_model(self):
         provider, mock_client = self._make_provider()
-        parsed = SampleResponse(answer="yes", confidence=0.95)
-        response = MagicMock()
-        response.parsed = parsed
-        response.usage.input_tokens = 200
-        response.usage.output_tokens = 100
-        mock_client.messages.parse.return_value = response
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(type="tool_use", input={"answer": "yes", "confidence": 0.95})]
+        mock_response.usage.input_tokens = 200
+        mock_response.usage.output_tokens = 100
+        mock_client.messages.create.return_value = mock_response
         result, in_tok, out_tok = provider.call(
             messages=[{"role": "user", "content": "question"}],
             model="claude-sonnet-4-20250514",
@@ -536,6 +555,25 @@ class TestAnthropicProvider:
         assert result.answer == "yes"
         assert in_tok == 200
         assert out_tok == 100
+
+    def test_call_structured_uses_tools(self):
+        """Anthropic structured output uses tools with tool_choice, not messages.parse."""
+        provider, mock_client = self._make_provider()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(type="tool_use", input={"answer": "yes", "confidence": 0.95})]
+        mock_response.usage.input_tokens = 200
+        mock_response.usage.output_tokens = 100
+        mock_client.messages.create.return_value = mock_response
+        result, in_tok, out_tok = provider.call(
+            messages=[{"role": "user", "content": "question"}],
+            model="claude-sonnet-4-20250514",
+            response_model=SampleResponse,
+        )
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert "tools" in call_kwargs, f"Expected tools, got keys: {list(call_kwargs.keys())}"
+        assert call_kwargs["tool_choice"]["type"] == "tool"
+        assert isinstance(result, SampleResponse)
+        assert result.answer == "yes"
 
     def test_provider_kwargs_forwarded(self):
         provider, mock_client = self._make_provider()
@@ -657,6 +695,26 @@ class TestGrokProvider:
         assert in_tok == 200
         assert out_tok == 100
 
+    def test_structured_injects_json_schema_into_system(self):
+        """Grok should inject JSON schema into system message for structured output."""
+        import json
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        response_json = json.dumps({"answer": "yes", "confidence": 0.9})
+        mock_client.chat.completions.create.return_value = MockChatCompletion(response_json, usage)
+        provider.call(
+            messages=[
+                {"role": "system", "content": "Be helpful."},
+                {"role": "user", "content": "question"},
+            ],
+            model="grok-3",
+            response_model=SampleResponse,
+        )
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        system_msg = [m for m in call_kwargs["messages"] if m["role"] == "system"][0]
+        assert "JSON" in system_msg["content"], "System message should contain JSON schema instruction"
+        assert "answer" in system_msg["content"], "System message should contain field names from schema"
+
     def test_uses_xai_base_url(self):
         from skyward.llm.providers import GrokProvider
         with patch("skyward.llm.providers.OpenAI") as mock_openai_cls:
@@ -769,6 +827,15 @@ class TestGetProvider:
         mock_client = MagicMock()
         provider = get_provider("openai", openai_client=mock_client)
         assert isinstance(provider, OpenAIProvider)
+
+    def test_get_provider_falls_back_to_env_var(self):
+        """get_provider() with no api_key should let constructor use env var."""
+        from skyward.llm.providers import get_provider, OpenAIProvider
+        with patch("skyward.llm.providers.OpenAI") as mock_cls, \
+             patch.dict("os.environ", {"OPENAI_API_KEY": "sk-from-env"}):
+            mock_cls.return_value = MagicMock()
+            provider = get_provider("openai")
+            assert isinstance(provider, OpenAIProvider)
 
 
 class TestModelMappings:
