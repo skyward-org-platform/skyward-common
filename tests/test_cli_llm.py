@@ -40,6 +40,21 @@ def test_llm_chat_has_all_options():
     assert "--summarize-tokens" in result.output
 
 
+@patch("dotenv.load_dotenv")
+@patch("skyward.llm.get_provider")
+@patch("skyward.llm.calculate_cost", return_value=0.0)
+@patch("skyward.llm.format_cost", return_value="$0.00")
+def test_llm_call_loads_dotenv(mock_fmt, mock_cost, mock_get_provider, mock_dotenv):
+    """CLI should call load_dotenv so .env API keys are available."""
+    fake_provider = MagicMock()
+    fake_provider.call.return_value = ("ok", 1, 1)
+    mock_get_provider.return_value = fake_provider
+
+    runner = CliRunner()
+    runner.invoke(cli, ["llm", "call", "--provider", "openai", "--model", "m", "--message", "hi"])
+    mock_dotenv.assert_called()
+
+
 @patch("skyward.llm.get_provider")
 @patch("skyward.llm.calculate_cost", return_value=0.0042)
 @patch("skyward.llm.format_cost", return_value="$0.0042")

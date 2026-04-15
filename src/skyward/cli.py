@@ -253,6 +253,8 @@ def llm():
 @click.option("--api-key", default=None, help="API key (overrides env var).")
 def llm_call(provider, model, message, system, temperature, max_tokens, api_key):
     """Make a single LLM call and print the response."""
+    from dotenv import load_dotenv
+    load_dotenv(override=False)
     from skyward.llm import get_provider, calculate_cost, format_cost
 
     p = get_provider(provider, api_key=api_key)
@@ -282,6 +284,8 @@ def llm_call(provider, model, message, system, temperature, max_tokens, api_key)
 @click.option("--summarize-tokens", default=50000, type=int, help="Summarize after N tokens (0 to disable).")
 def llm_chat(provider, model, system, api_key, summarize_tokens):
     """Start an interactive chat session. Type 'quit' to exit."""
+    from dotenv import load_dotenv
+    load_dotenv(override=False)
     from skyward.llm import get_provider
     from skyward.llm.session import LLMSession
 
