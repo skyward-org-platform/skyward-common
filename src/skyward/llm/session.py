@@ -7,7 +7,8 @@ from pydantic import BaseModel
 
 class LLMSession:
     def __init__(self, provider, *, system_prompt=None, summarize_after_tokens=None,
-                 summarize_after_messages=None, summarize_fn=None, summarizer_provider=None):
+                 summarize_after_messages=None, summarize_fn=None, summarizer_provider=None,
+                 summarizer_model="gemini-2.5-flash"):
         self.provider = provider
         self.system_prompt = system_prompt
         self._messages = []
@@ -17,6 +18,7 @@ class LLMSession:
         self._summarize_after_messages = summarize_after_messages
         self._summarize_fn = summarize_fn
         self._summarizer_provider = summarizer_provider
+        self._summarizer_model = summarizer_model
 
     @property
     def total_input_tokens(self):
@@ -86,7 +88,7 @@ class LLMSession:
                 )},
                 {"role": "user", "content": conversation_text},
             ],
-            model="gemini-2.5-flash",
+            model=self._summarizer_model,
         )
         self._messages[:] = [
             {"role": "assistant", "content": f"[Summary of prior conversation]\n{summary_result}"}

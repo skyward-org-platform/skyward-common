@@ -130,10 +130,33 @@ class TestTokenSummarization:
     def test_default_summarizer_uses_gemini_2_5_flash(self):
         """Default summarizer model should be gemini-2.5-flash, not deprecated 2.0."""
         from skyward.llm.session import LLMSession
-        import inspect
-        source = inspect.getsource(LLMSession._summarize)
-        assert "gemini-2.5-flash" in source, "Default summarizer should use gemini-2.5-flash"
-        assert "gemini-2.0-flash" not in source, "Should not reference deprecated gemini-2.0-flash"
+        session = LLMSession(FakeProvider(), summarize_after_tokens=None)
+        assert session._summarizer_model == "gemini-2.5-flash"
+
+    def test_summarizer_model_can_be_customized(self):
+        """When using a custom summarizer_provider, the model should be configurable."""
+        from skyward.llm.session import LLMSession
+
+        provider = FakeProvider()
+        summarizer = FakeProvider()
+        summarizer.next_response = ("summary", 10, 5)
+
+        session = LLMSession(
+            provider,
+            summarize_after_messages=4,
+            summarize_after_tokens=None,
+            summarizer_provider=summarizer,
+            summarizer_model="claude-sonnet-4-20250514",
+        )
+
+        provider.next_response = ("a", 10, 5)
+        session.send("1", model="m")
+        provider.next_response = ("b", 10, 5)
+        session.send("2", model="m")  # triggers
+
+        # Summarizer should have been called with the custom model
+        assert len(summarizer.calls) == 1
+        assert summarizer.calls[0]["model"] == "claude-sonnet-4-20250514"
 
     def test_summarization_triggers_after_token_threshold(self):
         from skyward.llm.session import LLMSession
