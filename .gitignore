@@ -36,3 +36,6 @@ uv.lock
 
 # Worktrees
 .worktrees/
+
+# Local docs (plans, specs)
+docs/
