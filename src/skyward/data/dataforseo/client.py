@@ -90,6 +90,11 @@ class ClientConfig:
     batch_size: int = 10
     batch_delay: float = 1.0
     debug: bool = False
+    # Task-mode (POST/GET) timeouts — Phase 1 default 2h. Phase 2 will change
+    # timeout behavior from "raise" to "hand off to detached mode"; these
+    # fields are likely to remain.
+    task_total_timeout: int = 7200  # 2 hours in seconds
+    task_poll_interval: int = 30  # seconds between tasks_ready polls
 
 
 # =============================================================================
@@ -134,6 +139,7 @@ class DataForSEOClient:
         # Lazy-initialized endpoint instances (imported on first property access)
         self._backlinks_backlinks = None
         self._backlinks_bulk_pages_summary = None
+        self._backlinks_summary = None
         self._serp_google_organic = None
         self._dataforseo_labs_google_keyword_suggestions = None
         self._dataforseo_labs_google_related_keywords = None
@@ -368,6 +374,14 @@ class DataForSEOClient:
             from skyward.data.dataforseo.endpoints.backlinks_bulk_pages_summary import BacklinksBulkPagesSummary
             self._backlinks_bulk_pages_summary = BacklinksBulkPagesSummary(self)
         return self._backlinks_bulk_pages_summary
+
+    @property
+    def backlinks_summary(self):
+        """Access the backlinks/summary/live endpoint."""
+        if self._backlinks_summary is None:
+            from skyward.data.dataforseo.endpoints.backlinks_summary import BacklinksSummary
+            self._backlinks_summary = BacklinksSummary(self)
+        return self._backlinks_summary
 
     @property
     def serp_google_organic(self):
