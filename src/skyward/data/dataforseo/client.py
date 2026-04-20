@@ -113,6 +113,7 @@ class DataForSEOClient:
         username: str,
         password: str,
         config: ClientConfig | None = None,
+        bq_client: "BigQueryClient | None" = None,
     ):
         if not username or not password:
             raise RuntimeError(
@@ -124,6 +125,8 @@ class DataForSEOClient:
         self._password = password
         self._auth = HTTPBasicAuth(username, password)
         self.config = config or ClientConfig()
+        self.bq_client = bq_client
+        self._meta_client = None
 
         # Create default session with retry logic
         self._session = self._create_session()
@@ -139,6 +142,15 @@ class DataForSEOClient:
         self._dataforseo_labs_google_search_intent: DataforseoLabsGoogleSearchIntent | None = None
         self._dataforseo_labs_google_domain_rank_overview: DataforseoLabsGoogleDomainRankOverview | None = None
         self._keywords_data_google_ads_search_volume: KeywordsDataGoogleAdsSearchVolume | None = None
+
+    @property
+    def meta_client(self):
+        if self.bq_client is None:
+            return None
+        if self._meta_client is None:
+            from skyward.data.meta import MetaClient
+            self._meta_client = MetaClient(self.bq_client)
+        return self._meta_client
 
     # -------------------------------------------------------------------------
     # Low-level HTTP methods
