@@ -131,17 +131,17 @@ class DataForSEOClient:
         # Create default session with retry logic
         self._session = self._create_session()
 
-        # Lazy-initialized endpoint instances
-        self._backlinks_backlinks: BacklinksBacklinks | None = None
-        self._backlinks_bulk_pages_summary: BacklinksBulkPagesSummary | None = None
-        self._serp_google_organic: SerpGoogleOrganic | None = None
-        self._dataforseo_labs_google_keyword_suggestions: DataforseoLabsGoogleKeywordSuggestions | None = None
-        self._dataforseo_labs_google_related_keywords: DataforseoLabsGoogleRelatedKeywords | None = None
-        self._dataforseo_labs_google_ranked_keywords: DataforseoLabsGoogleRankedKeywords | None = None
-        self._dataforseo_labs_google_keyword_overview: DataforseoLabsGoogleKeywordOverview | None = None
-        self._dataforseo_labs_google_search_intent: DataforseoLabsGoogleSearchIntent | None = None
-        self._dataforseo_labs_google_domain_rank_overview: DataforseoLabsGoogleDomainRankOverview | None = None
-        self._keywords_data_google_ads_search_volume: KeywordsDataGoogleAdsSearchVolume | None = None
+        # Lazy-initialized endpoint instances (imported on first property access)
+        self._backlinks_backlinks = None
+        self._backlinks_bulk_pages_summary = None
+        self._serp_google_organic = None
+        self._dataforseo_labs_google_keyword_suggestions = None
+        self._dataforseo_labs_google_related_keywords = None
+        self._dataforseo_labs_google_ranked_keywords = None
+        self._dataforseo_labs_google_keyword_overview = None
+        self._dataforseo_labs_google_search_intent = None
+        self._dataforseo_labs_google_domain_rank_overview = None
+        self._keywords_data_google_ads_search_volume = None
 
     @property
     def meta_client(self):
@@ -354,72 +354,82 @@ class DataForSEOClient:
     # -------------------------------------------------------------------------
 
     @property
-    def backlinks_backlinks(self) -> BacklinksBacklinks:
+    def backlinks_backlinks(self):
         """Access the backlinks/backlinks/live endpoint."""
         if self._backlinks_backlinks is None:
+            from skyward.data.dataforseo.endpoints.backlinks_backlinks import BacklinksBacklinks
             self._backlinks_backlinks = BacklinksBacklinks(self)
         return self._backlinks_backlinks
 
     @property
-    def backlinks_bulk_pages_summary(self) -> BacklinksBulkPagesSummary:
+    def backlinks_bulk_pages_summary(self):
         """Access the backlinks/bulk_pages_summary/live endpoint."""
         if self._backlinks_bulk_pages_summary is None:
+            from skyward.data.dataforseo.endpoints.backlinks_bulk_pages_summary import BacklinksBulkPagesSummary
             self._backlinks_bulk_pages_summary = BacklinksBulkPagesSummary(self)
         return self._backlinks_bulk_pages_summary
 
     @property
-    def serp_google_organic(self) -> SerpGoogleOrganic:
+    def serp_google_organic(self):
         """Access the serp/google/organic endpoint (live and POST/GET)."""
         if self._serp_google_organic is None:
+            from skyward.data.dataforseo.endpoints.serp_google_organic import SerpGoogleOrganic
             self._serp_google_organic = SerpGoogleOrganic(self)
         return self._serp_google_organic
 
     @property
-    def dataforseo_labs_google_keyword_suggestions(self) -> DataforseoLabsGoogleKeywordSuggestions:
+    def dataforseo_labs_google_keyword_suggestions(self):
         """Access the dataforseo_labs/google/keyword_suggestions/live endpoint."""
         if self._dataforseo_labs_google_keyword_suggestions is None:
+            from skyward.data.dataforseo.endpoints.dataforseo_labs_google_keyword_suggestions import DataforseoLabsGoogleKeywordSuggestions
             self._dataforseo_labs_google_keyword_suggestions = DataforseoLabsGoogleKeywordSuggestions(self)
         return self._dataforseo_labs_google_keyword_suggestions
 
     @property
-    def dataforseo_labs_google_related_keywords(self) -> DataforseoLabsGoogleRelatedKeywords:
+    def dataforseo_labs_google_related_keywords(self):
         """Access the dataforseo_labs/google/related_keywords/live endpoint."""
         if self._dataforseo_labs_google_related_keywords is None:
+            from skyward.data.dataforseo.endpoints.dataforseo_labs_google_related_keywords import DataforseoLabsGoogleRelatedKeywords
             self._dataforseo_labs_google_related_keywords = DataforseoLabsGoogleRelatedKeywords(self)
         return self._dataforseo_labs_google_related_keywords
 
     @property
-    def dataforseo_labs_google_ranked_keywords(self) -> DataforseoLabsGoogleRankedKeywords:
+    def dataforseo_labs_google_ranked_keywords(self):
         """Access the dataforseo_labs/google/ranked_keywords/live endpoint."""
         if self._dataforseo_labs_google_ranked_keywords is None:
+            from skyward.data.dataforseo.endpoints.dataforseo_labs_google_ranked_keywords import DataforseoLabsGoogleRankedKeywords
             self._dataforseo_labs_google_ranked_keywords = DataforseoLabsGoogleRankedKeywords(self)
         return self._dataforseo_labs_google_ranked_keywords
 
     @property
-    def dataforseo_labs_google_keyword_overview(self) -> DataforseoLabsGoogleKeywordOverview:
+    def dataforseo_labs_google_keyword_overview(self):
         """Access the dataforseo_labs/google/keyword_overview/live endpoint."""
         if self._dataforseo_labs_google_keyword_overview is None:
+            from skyward.data.dataforseo.endpoints.dataforseo_labs_google_keyword_overview import DataforseoLabsGoogleKeywordOverview
             self._dataforseo_labs_google_keyword_overview = DataforseoLabsGoogleKeywordOverview(self)
         return self._dataforseo_labs_google_keyword_overview
 
     @property
-    def dataforseo_labs_google_search_intent(self) -> DataforseoLabsGoogleSearchIntent:
+    def dataforseo_labs_google_search_intent(self):
         """Access the dataforseo_labs/google/search_intent/live endpoint."""
         if self._dataforseo_labs_google_search_intent is None:
+            from skyward.data.dataforseo.endpoints.dataforseo_labs_google_search_intent import DataforseoLabsGoogleSearchIntent
             self._dataforseo_labs_google_search_intent = DataforseoLabsGoogleSearchIntent(self)
         return self._dataforseo_labs_google_search_intent
 
     @property
-    def dataforseo_labs_google_domain_rank_overview(self) -> DataforseoLabsGoogleDomainRankOverview:
+    def dataforseo_labs_google_domain_rank_overview(self):
         """Access the dataforseo_labs/google/domain_rank_overview/live endpoint."""
         if self._dataforseo_labs_google_domain_rank_overview is None:
+            from skyward.data.dataforseo.endpoints.dataforseo_labs_google_domain_rank_overview import DataforseoLabsGoogleDomainRankOverview
             self._dataforseo_labs_google_domain_rank_overview = DataforseoLabsGoogleDomainRankOverview(self)
         return self._dataforseo_labs_google_domain_rank_overview
 
     @property
-    def keywords_data_google_ads_search_volume(self) -> KeywordsDataGoogleAdsSearchVolume:
+    def keywords_data_google_ads_search_volume(self):
         """Access the keywords_data/google_ads/search_volume/live endpoint."""
         if self._keywords_data_google_ads_search_volume is None:
+            from skyward.data.dataforseo.endpoints.keywords_data_google_ads_search_volume import KeywordsDataGoogleAdsSearchVolume
             self._keywords_data_google_ads_search_volume = KeywordsDataGoogleAdsSearchVolume(self)
         return self._keywords_data_google_ads_search_volume
 
