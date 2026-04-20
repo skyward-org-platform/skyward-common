@@ -147,25 +147,247 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         return pd.DataFrame(columns=self._get_schema() + ["task_id"])
 
     # -------------------------------------------------------------------------
-    # POST/GET workflow methods (to be implemented)
+    # POST/GET workflow methods
     # -------------------------------------------------------------------------
 
-    def _task_post(self, keywords: list[str], location_code: int, debug: bool = False) -> list[dict]:
-        """POST keywords to task_post endpoint. TODO: Implement."""
-        raise NotImplementedError("POST/GET workflow not yet implemented")
+    def _task_post(
+        self,
+        keywords: list[str],
+        location_code: int | None = None,
+        language_name: str = "English",
+        debug: bool = False,
+        tag: str | None = None,
+    ) -> list[str]:
+        """Submit a batch of keywords for async processing.
+
+        Returns the list of DataForSEO task_ids created.
+        """
+        cfg = self.config
+        location_code = location_code or cfg.location_code
+
+        url = f"{self._client.BASE_URL}/{self.POST_URL}"
+        payload = [{
+            "keywords": keywords,
+            "language_name": language_name,
+            "location_code": location_code,
+        }]
+        if tag is not None:
+            payload[0]["tag"] = tag
+
+        resp = self._client._post(url, payload)
+        if not resp:
+            if debug:
+                print("[search_volume] task_post returned empty response")
+            return []
+
+        task_ids = []
+        for task in resp.get("tasks", []) or []:
+            tid = task.get("id")
+            if tid:
+                task_ids.append(tid)
+        if debug:
+            print(f"[search_volume] submitted {len(task_ids)} tasks: {task_ids}")
+        return task_ids
 
     def _tasks_ready(self, debug: bool = False) -> list[str]:
-        """Check which tasks are ready. TODO: Implement."""
-        raise NotImplementedError("POST/GET workflow not yet implemented")
+        """Poll DataForSEO for completed task_ids."""
+        url = f"{self._client.BASE_URL}/{self.READY_URL}"
+        resp = self._client._get(url)
+        if not resp:
+            return []
+        ready = []
+        for task in resp.get("tasks", []) or []:
+            for entry in task.get("result") or []:
+                tid = entry.get("id")
+                if tid:
+                    ready.append(tid)
+        if debug:
+            print(f"[search_volume] {len(ready)} tasks ready")
+        return ready
 
     def _task_get(self, task_id: str, debug: bool = False) -> pd.DataFrame:
-        """GET results for a completed task. TODO: Implement."""
-        raise NotImplementedError("POST/GET workflow not yet implemented")
+        """Retrieve a completed task by id. Reuses _parse_response so task_id is stamped per row."""
+        url = f"{self._client.BASE_URL}/{self.GET_URL}/{task_id}"
+        resp = self._client._get(url)
+        if not resp:
+            if debug:
+                print(f"[search_volume] task_get({task_id}) returned empty")
+            return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        return self._parse_response(resp, target=None)
 
-    def post(self, target: str | list[str], **kwargs) -> pd.DataFrame:
-        """Submit keywords using POST/GET workflow. TODO: Implement."""
-        raise NotImplementedError("POST/GET workflow not yet implemented")
+    def post(
+        self,
+        target,
+        *,
+        domain=None,
+        domain_id=None,
+        job_id: str,
+        interactive: bool = False,
+        upload: bool = True,
+        location_code: int | None = None,
+        language_name: str = "English",
+        **kwargs,
+    ) -> pd.DataFrame:
+        """Single-batch POST/GET workflow. Raises IncompleteTaskError on 2h timeout."""
+        import time as _time
+        from skyward.data.dataforseo.base import _UNSET
+        from skyward.data.dataforseo.exceptions import IncompleteTaskError
+        from skyward.functions import _validate_job_id
 
-    async def post_all(self, targets: list[str], **kwargs) -> pd.DataFrame:
-        """Submit keywords using POST/GET workflow. TODO: Implement."""
-        raise NotImplementedError("POST/GET workflow not yet implemented")
+        _validate_job_id(job_id)
+
+        # Resolve domain (mutually exclusive domain/domain_id; both None = opt out)
+        if domain is not None and domain_id is not None:
+            raise ValueError("Must pass exactly one of `domain=` or `domain_id=`, not both.")
+        if domain is None and domain_id is None:
+            resolved = None
+        elif domain is not None:
+            resolved = self._resolve_domain(domain, _UNSET, interactive)
+        else:
+            resolved = self._resolve_domain(_UNSET, domain_id, interactive)
+
+        keywords = [target] if isinstance(target, str) else list(target)
+
+        # 1. Submit
+        task_ids = self._task_post(
+            keywords=keywords,
+            location_code=location_code,
+            language_name=language_name,
+            debug=self.config.debug,
+            tag=kwargs.get("tag"),
+        )
+        if not task_ids:
+            print("No task_ids returned from task_post. Skipping upload.")
+            return pd.DataFrame(columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"])
+
+        # 2. Poll until all complete or timeout
+        pending = set(task_ids)
+        deadline = _time.monotonic() + self.config.task_total_timeout
+        while pending and _time.monotonic() < deadline:
+            ready = set(self._tasks_ready(debug=self.config.debug))
+            complete = pending & ready
+            pending -= complete
+            if not pending:
+                break
+            _time.sleep(self.config.task_poll_interval)
+
+        if pending:
+            raise IncompleteTaskError(
+                f"{len(pending)} of {len(task_ids)} tasks did not complete within "
+                f"{self.config.task_total_timeout} seconds",
+                task_ids=sorted(pending),
+            )
+
+        # 3. Retrieve
+        frames = []
+        for tid in task_ids:
+            df_part = self._task_get(tid, debug=self.config.debug)
+            if not df_part.empty:
+                frames.append(df_part)
+
+        if not frames:
+            print("All tasks completed but returned no rows. Skipping upload.")
+            return pd.DataFrame(columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"])
+
+        df = pd.concat(frames, ignore_index=True)
+        df = self._stamp_fetch_metadata(df, resolved, endpoint_mode="standard")
+
+        if upload:
+            self.upload(self._client.bq_client, df, job_id=job_id)
+
+        return df
+
+    async def post_all(
+        self,
+        targets: list[str],
+        *,
+        domain=None,
+        domain_id=None,
+        job_id: str,
+        interactive: bool = False,
+        upload: bool = True,
+        location_code: int | None = None,
+        language_name: str = "English",
+        keywords_per_task: int = 1000,
+        **kwargs,
+    ) -> pd.DataFrame:
+        """Multi-batch POST/GET. Chunks targets, submits all, polls, retrieves in parallel."""
+        import asyncio as _asyncio
+        import time as _time
+        from skyward.data.dataforseo.base import _UNSET
+        from skyward.data.dataforseo.exceptions import IncompleteTaskError
+        from skyward.functions import _validate_job_id
+
+        _validate_job_id(job_id)
+
+        # Resolve domain
+        if domain is not None and domain_id is not None:
+            raise ValueError("Must pass exactly one of `domain=` or `domain_id=`, not both.")
+        if domain is None and domain_id is None:
+            resolved = None
+        elif domain is not None:
+            resolved = self._resolve_domain(domain, _UNSET, interactive)
+        else:
+            resolved = self._resolve_domain(_UNSET, domain_id, interactive)
+
+        # 1. Chunk + submit
+        chunks = [targets[i : i + keywords_per_task] for i in range(0, len(targets), keywords_per_task)]
+        all_task_ids: list[str] = []
+
+        loop = _asyncio.get_running_loop()
+        submit_tasks = [
+            loop.run_in_executor(
+                None,
+                lambda c=chunk: self._task_post(
+                    keywords=c,
+                    location_code=location_code,
+                    language_name=language_name,
+                    debug=self.config.debug,
+                ),
+            )
+            for chunk in chunks
+        ]
+        submit_results = await _asyncio.gather(*submit_tasks)
+        for tids in submit_results:
+            all_task_ids.extend(tids)
+
+        if not all_task_ids:
+            print("No task_ids returned from task_post. Skipping upload.")
+            return pd.DataFrame(columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"])
+
+        # 2. Poll
+        pending = set(all_task_ids)
+        deadline = _time.monotonic() + self.config.task_total_timeout
+        while pending and _time.monotonic() < deadline:
+            ready = set(self._tasks_ready(debug=self.config.debug))
+            pending -= ready
+            if not pending:
+                break
+            await _asyncio.sleep(self.config.task_poll_interval)
+
+        if pending:
+            raise IncompleteTaskError(
+                f"{len(pending)} of {len(all_task_ids)} tasks did not complete within "
+                f"{self.config.task_total_timeout} seconds",
+                task_ids=sorted(pending),
+            )
+
+        # 3. Retrieve in parallel
+        retrieve_tasks = [
+            loop.run_in_executor(None, lambda tid=tid: self._task_get(tid, debug=self.config.debug))
+            for tid in all_task_ids
+        ]
+        retrieved = await _asyncio.gather(*retrieve_tasks)
+        frames = [df for df in retrieved if not df.empty]
+
+        if not frames:
+            print("All tasks completed but returned no rows. Skipping upload.")
+            return pd.DataFrame(columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"])
+
+        df = pd.concat(frames, ignore_index=True)
+        df = self._stamp_fetch_metadata(df, resolved, endpoint_mode="standard")
+
+        if upload:
+            self.upload(self._client.bq_client, df, job_id=job_id)
+
+        return df
