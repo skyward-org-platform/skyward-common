@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from skyward.functions import generate_job_id, generate_upload_id
+from skyward.functions import generate_job_id, generate_upload_id, _validate_job_id
 
 
 def test_generate_job_id_returns_valid_uuid4_string():
@@ -25,3 +25,13 @@ def test_generate_upload_id_returns_valid_uuid4_string():
 
 def test_generate_upload_id_is_unique_per_call():
     assert generate_upload_id() != generate_upload_id()
+
+
+def test_validate_job_id_accepts_uuid4_string():
+    job_id = generate_job_id()
+    _validate_job_id(job_id)
+
+
+def test_validate_job_id_rejects_plain_string():
+    with pytest.raises(ValueError, match="not a valid UUID"):
+        _validate_job_id("test123")
