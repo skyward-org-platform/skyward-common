@@ -335,3 +335,22 @@ def prompt_period_length():
             return custom
         except ValueError as exc:
             print(f"Invalid number ({exc}). Try again.")
+
+
+
+# ---------------------------------------------------------------------------
+# UUID helpers for BQ job/upload tracking
+# ---------------------------------------------------------------------------
+
+import uuid as _uuid
+
+
+def generate_job_id() -> str:
+    """Return a new UUID4 string suitable for use as a `job_id`."""
+    return str(_uuid.uuid4())
+
+
+
+def generate_upload_id() -> str:
+    """Return a new UUID4 string suitable for use as an `upload_id`."""
+    return str(_uuid.uuid4())
