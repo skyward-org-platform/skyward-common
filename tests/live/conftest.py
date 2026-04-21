@@ -132,3 +132,74 @@ def seeded_domain(dfs_client_live):
         added = meta.add_domains([SEEDED_TEST_DOMAIN])
         return added[0]["domain_id"]
     return existing["domain_id"]
+
+
+# ---------------------------------------------------------------------------
+# Auto-capture: every HTTP response the live client sees gets dumped to disk
+# ---------------------------------------------------------------------------
+
+def _endpoint_slug_from_url(url: str) -> str:
+    """Pull a compact endpoint label out of a DataForSEO URL.
+
+    'https://api.dataforseo.com/v3/backlinks/backlinks/live' → 'backlinks-backlinks-live'
+    """
+    after_v3 = url.split("/v3/", 1)[-1]
+    # Strip trailing task_id suffix for GET endpoints like /task_get/<id>
+    parts = [p for p in after_v3.split("/") if p]
+    # Keep the path segments, drop anything that looks like a UUID (task IDs)
+    kept = []
+    for p in parts:
+        # simple UUID-ish detection: 36 chars with dashes
+        if len(p) == 36 and p.count("-") == 4:
+            break
+        kept.append(p)
+    return "-".join(kept) or "unknown"
+
+
+@pytest.fixture(autouse=True)
+def _capture_responses(request, monkeypatch):
+    """Wrap DataForSEOClient._post/_get to dump every response JSON.
+
+    Activates for any test marked `live`. File per HTTP call:
+        tests/live/responses/<test_name>__<endpoint_slug>__<timestamp>.json
+    """
+    if "live" not in request.keywords:
+        yield
+        return
+
+    # dfs_client_live may or may not be used by this test — resolve lazily.
+    # If the test doesn't request it, there's nothing to wrap.
+    if "dfs_client_live" not in request.fixturenames:
+        yield
+        return
+
+    client = request.getfixturevalue("dfs_client_live")
+    test_name = request.node.name
+    counter = {"n": 0}
+
+    orig_post = client._post
+    orig_get = client._get
+
+    def _dump(method: str, url: str, resp: dict | None) -> None:
+        if resp is None:
+            return
+        counter["n"] += 1
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        slug = _endpoint_slug_from_url(url)
+        fn = f"{test_name}__{slug}__{ts}_{counter['n']:03d}.json"
+        (RESPONSES_DIR / fn).write_text(json.dumps(resp, indent=2, default=str))
+
+    def wrapped_post(endpoint, payload, *args, **kwargs):
+        resp = orig_post(endpoint, payload, *args, **kwargs)
+        _dump("POST", endpoint, resp)
+        return resp
+
+    def wrapped_get(endpoint, *args, **kwargs):
+        resp = orig_get(endpoint, *args, **kwargs)
+        _dump("GET", endpoint, resp)
+        return resp
+
+    monkeypatch.setattr(client, "_post", wrapped_post)
+    monkeypatch.setattr(client, "_get", wrapped_get)
+
+    yield
