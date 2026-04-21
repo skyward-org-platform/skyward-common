@@ -11,6 +11,7 @@ import time
 import pandas as pd
 
 from skyward.data.dataforseo.base import BaseEndpoint
+from skyward.functions import generate_job_id
 
 
 class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
@@ -182,7 +183,6 @@ class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
         Returns:
             Total number of ranked keywords, or -1 on failure
         """
-        from skyward.functions import generate_job_id
         job_id = job_id or generate_job_id()
         df = self.live(domain, domain=None, job_id=job_id, location_code=location_code, upload=False)
         if df.empty:

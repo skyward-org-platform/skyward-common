@@ -13,7 +13,9 @@ import time
 
 import pandas as pd
 
-from skyward.data.dataforseo.base import BaseEndpoint
+from skyward.data.dataforseo.base import BaseEndpoint, _UNSET
+from skyward.data.dataforseo.exceptions import IncompleteTaskError
+from skyward.functions import _validate_job_id
 
 
 class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
@@ -229,11 +231,6 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         **kwargs,
     ) -> pd.DataFrame:
         """Single-batch POST/GET workflow. Raises IncompleteTaskError on 2h timeout."""
-        import time as _time
-        from skyward.data.dataforseo.base import _UNSET
-        from skyward.data.dataforseo.exceptions import IncompleteTaskError
-        from skyward.functions import _validate_job_id
-
         _validate_job_id(job_id)
 
         # Resolve domain (mutually exclusive domain/domain_id; both None = opt out)
@@ -262,14 +259,14 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
 
         # 2. Poll until all complete or timeout
         pending = set(task_ids)
-        deadline = _time.monotonic() + self.config.task_total_timeout
-        while pending and _time.monotonic() < deadline:
+        deadline = time.monotonic() + self.config.task_total_timeout
+        while pending and time.monotonic() < deadline:
             ready = set(self._tasks_ready(debug=self.config.debug))
             complete = pending & ready
             pending -= complete
             if not pending:
                 break
-            _time.sleep(self.config.task_poll_interval)
+            time.sleep(self.config.task_poll_interval)
 
         if pending:
             raise IncompleteTaskError(
@@ -312,12 +309,6 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         **kwargs,
     ) -> pd.DataFrame:
         """Multi-batch POST/GET. Chunks targets, submits all, polls, retrieves in parallel."""
-        import asyncio as _asyncio
-        import time as _time
-        from skyward.data.dataforseo.base import _UNSET
-        from skyward.data.dataforseo.exceptions import IncompleteTaskError
-        from skyward.functions import _validate_job_id
-
         _validate_job_id(job_id)
 
         # Resolve domain
@@ -334,7 +325,7 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         chunks = [targets[i : i + keywords_per_task] for i in range(0, len(targets), keywords_per_task)]
         all_task_ids: list[str] = []
 
-        loop = _asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
         submit_tasks = [
             loop.run_in_executor(
                 None,
@@ -347,7 +338,7 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
             )
             for chunk in chunks
         ]
-        submit_results = await _asyncio.gather(*submit_tasks)
+        submit_results = await asyncio.gather(*submit_tasks)
         for tids in submit_results:
             all_task_ids.extend(tids)
 
@@ -357,13 +348,13 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
 
         # 2. Poll
         pending = set(all_task_ids)
-        deadline = _time.monotonic() + self.config.task_total_timeout
-        while pending and _time.monotonic() < deadline:
+        deadline = time.monotonic() + self.config.task_total_timeout
+        while pending and time.monotonic() < deadline:
             ready = set(self._tasks_ready(debug=self.config.debug))
             pending -= ready
             if not pending:
                 break
-            await _asyncio.sleep(self.config.task_poll_interval)
+            await asyncio.sleep(self.config.task_poll_interval)
 
         if pending:
             raise IncompleteTaskError(
@@ -377,7 +368,7 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
             loop.run_in_executor(None, lambda tid=tid: self._task_get(tid, debug=self.config.debug))
             for tid in all_task_ids
         ]
-        retrieved = await _asyncio.gather(*retrieve_tasks)
+        retrieved = await asyncio.gather(*retrieve_tasks)
         frames = [df for df in retrieved if not df.empty]
 
         if not frames:
