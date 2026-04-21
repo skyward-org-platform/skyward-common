@@ -14,10 +14,12 @@ import asyncio
 import math
 import re
 import time
+from typing import Any
 
 import pandas as pd
 
-from skyward.data.dataforseo.base import BaseEndpoint
+from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.functions import _validate_job_id
 
 
 class BacklinksBulkPagesSummary(BaseEndpoint):
@@ -244,28 +246,19 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         self,
         targets: list[str],
         *,
-        batch_size: int = 1000,
+        domain: Any = _UNSET,
+        domain_id: Any = _UNSET,
+        job_id: str,
+        interactive: bool = False,
+        upload: bool = True,
+        batch_size: int | None = None,
         batch_delay: float | None = None,
-        domain: str | None = None,
         **kwargs,
     ) -> pd.DataFrame:
-        """
-        Fetch bulk pages summary for multiple targets.
+        _validate_job_id(job_id)
+        resolved = self._resolve_domain(domain, domain_id, interactive)
 
-        Unlike the base live_all() which makes one API call per target,
-        this batches up to 1000 targets per API call (the API limit).
-
-        Args:
-            targets: List of URLs to query
-            batch_size: Targets per API call (max 1000, default 1000)
-            batch_delay: Delay between batches in seconds
-            domain: Optional domain name to tag results with
-            **kwargs: Additional parameters
-
-        Returns:
-            Combined DataFrame of all results
-        """
-        batch_size = min(batch_size, 1000)  # API max is 1000
+        batch_size = min(batch_size or 1000, 1000)
         batch_delay = batch_delay if batch_delay is not None else self.config.batch_delay
         max_retries = kwargs.pop("max_retries", None) or self.config.max_retries
         retry_delay = kwargs.pop("retry_delay", None) or self.config.retry_delay
@@ -295,9 +288,14 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
             if idx < total_batches:
                 await asyncio.sleep(batch_delay)
 
-        if df_list:
-            result = pd.concat(df_list, ignore_index=True)
-            if domain:
-                result["domain"] = domain
-            return result
-        return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        if not df_list:
+            print("No rows returned. Skipping upload.")
+            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
+
+        combined = pd.concat(df_list, ignore_index=True)
+        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
+
+        if upload:
+            self.upload(self._client.bq_client, combined, job_id=job_id)
+
+        return combined
