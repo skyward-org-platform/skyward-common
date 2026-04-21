@@ -39,3 +39,6 @@ uv.lock
 
 # Local docs (plans, specs)
 docs/
+
+# DataForSEO live test raw responses (for Layer B fidelity audit only)
+tests/live/responses/

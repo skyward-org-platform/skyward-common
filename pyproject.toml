@@ -42,3 +42,6 @@ packages = ["src/skyward"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 tdd_guard_project_root = "/mnt/d/Skyward/skyward-common"
+markers = [
+    "live: real DataForSEO API calls (costs money, requires --run-live flag)",
+]
