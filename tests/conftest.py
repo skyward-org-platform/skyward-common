@@ -68,6 +68,7 @@ class FakeBigQueryClient:
 
     def __init__(self):
         self.client = FakeBQClient()
+        self.project_id = "data-hub-468216"
 
 
 @pytest.fixture
