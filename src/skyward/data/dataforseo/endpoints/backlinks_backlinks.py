@@ -38,16 +38,16 @@ class BacklinksBacklinks(BaseEndpoint):
             ranked_kw_info = item.get("ranked_keywords_info", {}) or {}
             rows.append({
                 "url": target,
-                "domain": item.get("domain_to"),
                 "type": item.get("type"),
                 "item_type": item.get("item_type"),
                 "attributes": item.get("attributes"),
+                "original": item.get("original"),
                 "domain_from": item.get("domain_from"),
                 "url_from": item.get("url_from"),
                 "url_from_https": item.get("url_from_https"),
                 "tld_from": item.get("tld_from"),
                 "domain_from_rank": item.get("domain_from_rank"),
-                "domain_from_platform_type": json.dumps(item.get("domain_from_platform_type")),
+                "domain_from_platform_type": item.get("domain_from_platform_type"),
                 "domain_from_is_ip": item.get("domain_from_is_ip"),
                 "domain_from_ip": item.get("domain_from_ip"),
                 "domain_from_country": item.get("domain_from_country"),
@@ -61,7 +61,7 @@ class BacklinksBacklinks(BaseEndpoint):
                 "backlink_spam_score": item.get("backlink_spam_score"),
                 "is_broken": item.get("is_broken"),
                 "is_indirect_link": item.get("is_indirect_link"),
-                "indirect_link_path": json.dumps(item.get("indirect_link_path")),
+                "indirect_link_path": item.get("indirect_link_path"),
                 "anchor": item.get("anchor"),
                 "alt": item.get("alt"),
                 "image_url": item.get("image_url"),
@@ -94,7 +94,7 @@ class BacklinksBacklinks(BaseEndpoint):
 
     def _get_schema(self) -> list[str]:
         return [
-            "url", "domain", "type", "item_type", "attributes",
+            "url", "type", "item_type", "attributes", "original",
             "domain_from", "url_from", "url_from_https", "tld_from",
             "domain_from_rank", "domain_from_platform_type", "domain_from_is_ip",
             "domain_from_ip", "domain_from_country", "domain_to",
@@ -128,6 +128,7 @@ class BacklinksBacklinks(BaseEndpoint):
         bool_cols = [
             "url_from_https", "domain_from_is_ip", "backlink_to_https",
             "dofollow", "is_broken", "is_indirect_link", "is_new", "is_lost",
+            "original",
         ]
         ts_cols = ["first_seen", "prev_seen", "last_seen"]
 

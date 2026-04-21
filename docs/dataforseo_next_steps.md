@@ -47,6 +47,22 @@ This doc is your punch list. Check items off as you go. Anything with ⚠️ is 
 
 ---
 
+## Phase E-prerequisite — Add column descriptions to the migration manifest ⚠️
+
+**New scope:** every column in every new BQ table should carry a `description` pulled from DataForSEO's own API docs, so that BQ's Schema UI / Looker / manual querying surfaces what each field means. Right now the manifest's `*_COLS` constants only have `name TYPE`; they need `name TYPE OPTIONS(description="...")`.
+
+- [ ] **For each of the 11 endpoints**, pull field descriptions from the DataForSEO v3 API docs (e.g., `https://docs.dataforseo.com/v3/backlinks/backlinks/live/`). Extract the short description per field.
+- [ ] **Extend the `*_COLS` constants** in `scripts/migrate_dataforseo_manifest.py` from `col_name TYPE,` to `col_name TYPE OPTIONS(description="..."),`.
+- [ ] **Also add descriptions to the metadata block** (`METADATA_BLOCK_SQL`): job_id, upload_id, ingest_timestamp, domain_id, domain, task_id, endpoint_mode — one-line each.
+- [ ] **Dry-run the migration** and audit that every column in every `CREATE TABLE` has a description.
+- [ ] **Update the Layer B fidelity audit workflow** (`docs/dataforseo_qa_checklist.md`) to also verify the column descriptions read correctly in the BQ Schema UI after migration.
+
+Scope estimate: ~300 column descriptions across 11 endpoints. Mechanical but tedious. Can be parallelized across multiple subagents (one per endpoint's `*_COLS` constant).
+
+**Why this is blocking Phase E:** column descriptions are baked in at CREATE TABLE time. Adding them after-the-fact requires ALTER TABLE for every column on every table — much more annoying than getting them right the first time.
+
+---
+
 ## Phase E — BigQuery migration ⚠️ (you, by hand, after merge)
 
 This is where BigQuery actually changes. Do it carefully; run dry-run first.
