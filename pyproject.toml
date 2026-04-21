@@ -31,6 +31,7 @@ dependencies = [
 dev = [
     "pytest>=9.0.0",
     "tdd-guard-pytest>=0.1.2",
+    "pytest-asyncio>=0.23.0",
 ]
 
 [project.scripts]
@@ -42,6 +43,7 @@ packages = ["src/skyward"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 tdd_guard_project_root = "/mnt/d/Skyward/skyward-common"
+asyncio_mode = "strict"
 markers = [
     "live: real DataForSEO API calls (costs money, requires --run-live flag)",
 ]
