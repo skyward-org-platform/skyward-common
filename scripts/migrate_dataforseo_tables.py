@@ -43,7 +43,7 @@ def _get_bq(project_override: str | None):
     from skyward.config import load_config
     from skyward.data.bigquery import BigQueryClient
     cfg = load_config()
-    project = project_override or cfg.gcp_project_id
+    project = project_override or cfg.datahub_project_id
     return BigQueryClient(project_id=project)
 
 

@@ -101,7 +101,7 @@ This is where BigQuery actually changes. Do it carefully; run dry-run first.
   from skyward.data.bigquery import BigQueryClient
   from skyward.data.meta import MetaClient
   cfg = load_config()
-  bq = BigQueryClient(project_id=cfg.gcp_project_id)
+  bq = BigQueryClient(project_id=cfg.datahub_project_id)
   meta = MetaClient(bq)
   if meta.get_domain('example.com') is None:
       print(meta.add_domains(['example.com']))

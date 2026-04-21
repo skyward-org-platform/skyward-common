@@ -94,7 +94,7 @@ def dfs_client_live():
     if not cfg.dataforseo_username or not cfg.dataforseo_password:
         pytest.skip("DATAFORSEO_API_LOGIN/PASSWORD not set")
 
-    bq = BigQueryClient(project_id=cfg.gcp_project_id)
+    bq = BigQueryClient(project_id=cfg.datahub_project_id)
     return DataForSEOClient(
         username=cfg.dataforseo_username,
         password=cfg.dataforseo_password,
