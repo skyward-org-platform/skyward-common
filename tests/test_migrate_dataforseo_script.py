@@ -50,18 +50,77 @@ def test_phase_migrate_dry_run_prints_copy_and_drop(fake_bq):
         mod._bq_override = None
 
 
-def test_phase_backfill_dry_run_replaces_sentinel_placeholder(fake_bq):
-    """Phase 3 step 3a must UPDATE rows where job_id/upload_id equal the
-    'pending-backfill' sentinel stamped by phase 2 (not NULL anymore)."""
+def test_phase_backfill_dry_run_groups_by_hour_and_logs_per_upload_id(fake_bq):
+    """Phase 3 dry-run prints a preview query + MERGE template, uses HOUR
+    truncation, and emits one log per synthetic upload_id."""
     mod._bq_override = fake_bq
     try:
         runner = CliRunner()
         result = runner.invoke(mod.cli, ["--phase=backfill", "--dry-run"])
         assert result.exit_code == 0, result.output
+        # HOUR-truncation grouping
+        assert "TIMESTAMP_TRUNC(ingest_timestamp, HOUR)" in result.output
+        # Sentinel-based filtering
         assert "pending-backfill" in result.output
-        assert "WHERE job_id = 'pending-backfill' OR upload_id = 'pending-backfill'" in result.output
+        # Two distinct paths are exercised
+        assert "both job_id + upload_id sentinels" in result.output
+        assert "upload_id sentinel only" in result.output
+        # Per-column IF() preserves real values
+        assert "IF(t.job_id    = 'pending-backfill', m.synth_job,    t.job_id)" in result.output \
+            or "IF(t.job_id = 'pending-backfill', m.synth_job, t.job_id)" in result.output \
+            or "IF(" in result.output
+        # Ranked_keywords is the upload-only case
+        assert "dataforseo_labs-google-ranked_keywords" in result.output
+        # backlinks-summary and serp are the both-sentinel case
+        assert "backlinks-summary" in result.output
+        assert "serp-google-organic" in result.output
     finally:
         mod._bq_override = None
+
+
+def test_phase_backfill_does_not_include_domain_merge_anymore(fake_bq):
+    """Phase 3 no longer auto-MERGEs against Meta.domains — domain backfill
+    is now a separate manual-mapping flow."""
+    mod._bq_override = fake_bq
+    try:
+        runner = CliRunner()
+        result = runner.invoke(mod.cli, ["--phase=backfill", "--dry-run"])
+        assert result.exit_code == 0
+        assert "Meta.domains" not in result.output
+        assert "MERGE domain_id" not in result.output
+    finally:
+        mod._bq_override = None
+
+
+def test_build_merge_both_ids_uses_per_column_if_to_preserve_real_values():
+    """When building the MERGE for tables with both-column sentinels, per-column
+    IF ensures real (non-sentinel) values survive."""
+    mapping = [{"hour_bucket": "2024-12-17 14:00:00+00:00",
+                "synth_job": "job-uuid-1",
+                "synth_upload": "upload-uuid-1",
+                "row_count": 100}]
+    sql = mod._build_merge_both_ids("proj", "backlinks-summary", mapping)
+    assert "IF(t.job_id    = 'pending-backfill', m.synth_job,    t.job_id)" in sql
+    assert "IF(t.upload_id = 'pending-backfill', m.synth_upload, t.upload_id)" in sql
+    assert "TIMESTAMP '2024-12-17 14:00:00+00:00'" in sql
+    assert "TIMESTAMP_TRUNC(t.ingest_timestamp, HOUR)" in sql
+
+
+def test_build_merge_upload_only_never_modifies_real_job_id():
+    """For ranked_keywords, real job_id must be preserved. Only upload_id is
+    modified, and the MERGE key includes job_id so each (job_id, hour) is distinct."""
+    mapping = [{"job_id": "real-job-abc",
+                "hour_bucket": "2024-12-17 14:00:00+00:00",
+                "synth_upload": "upload-uuid-1",
+                "row_count": 200}]
+    sql = mod._build_merge_upload_only("proj", "dataforseo_labs-google-ranked_keywords", mapping)
+    # UPDATE touches only upload_id, never job_id
+    assert "UPDATE SET upload_id = m.synth_upload;" in sql
+    assert "SET job_id" not in sql
+    assert "SET\n  job_id" not in sql
+    # Join key includes job_id
+    assert "t.job_id = m.job_id" in sql
+    assert "real-job-abc" in sql
 
 
 def test_build_copy_sql_uses_coalesce_sentinel_for_notnull_metadata(fake_bq):
@@ -86,23 +145,9 @@ def test_build_copy_sql_uses_coalesce_sentinel_for_notnull_metadata(fake_bq):
     assert "COALESCE(ingest_timestamp, CURRENT_TIMESTAMP()) AS ingest_timestamp" in sql
 
 
-def test_phase_backfill_dry_run_includes_synthetic_ids_and_domain_merge(fake_bq):
-    mod._bq_override = fake_bq
-    try:
-        runner = CliRunner()
-        result = runner.invoke(mod.cli, ["--phase=backfill", "--dry-run"])
-        assert result.exit_code == 0, result.output
-        # Step 3a: synthetic IDs replace the phase-2 sentinel placeholder.
-        assert "BACKFILL IDs" in result.output
-        assert "UPDATE" in result.output
-        assert "pending-backfill" in result.output
-        # Step 3b: domain merge
-        assert "MERGE" in result.output
-        assert "Meta.domains" in result.output
-        # Non-preserved-domain migrations should be skipped in step 3b.
-        assert "SKIP" in result.output
-    finally:
-        mod._bq_override = None
+# Old test replaced by test_phase_backfill_dry_run_groups_by_hour_and_logs_per_upload_id
+# (phase 3 no longer auto-MERGEs against Meta.domains; domain backfill is now
+# a separate manual-mapping flow).
 
 
 def test_build_copy_sql_drops_domain_when_preserve_is_false(fake_bq):

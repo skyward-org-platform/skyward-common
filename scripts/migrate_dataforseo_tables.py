@@ -419,58 +419,115 @@ def _do_migrate(bq, migrations: list[Migration], project: str, dry_run: bool) ->
 
 
 # ---------------------------------------------------------------------------
-# PHASE 3: BACKFILL — synthetic IDs + domain_id lookup.
+# PHASE 3: BACKFILL — synthetic IDs only.
+#
+# Domain backfill is handled separately per the manual-mapping plan
+# (scripts/inventory_migrated_domains.py + scripts/apply_domain_mapping.py —
+# TBD, not in phase 3).
 # ---------------------------------------------------------------------------
-
-_NORMALIZE_SQL = r"""
-LOWER(
-  REGEXP_REPLACE(
-    REGEXP_REPLACE(
-      REGEXP_REPLACE({col}, r'^(https?://)?(www\.)?', ''),
-      r'/+$', ''
-    ),
-    r'\s+', ''
-  )
-)
-""".strip()
-
 
 _BACKFILL_SENTINEL = "pending-backfill"
 
+# Rows get a synthetic (job_id, upload_id) per hour-truncated ingest_timestamp.
+# Microsecond precision in prod makes per-row timestamps unique, so we need
+# to coarsen to get meaningful "upload window" groupings.
+_ID_GROUP_TRUNC = "HOUR"
 
-def _backfill_ids_sql(project: str, new_table: str, job_id: str, upload_id: str) -> str:
-    """Replace the sentinel placeholder value stamped during phase 2 with a
-    real per-table synthetic UUID. Matches on the sentinel so we only touch
-    rows that came in without a real job_id/upload_id from the source."""
+# Tables we sentinel-backfill and the rule for each.
+#   both: sentinel lives in BOTH job_id and upload_id → replace both,
+#         grouped by hour-truncated ingest_timestamp.
+#   upload_only: only upload_id is sentinel; real job_id is preserved →
+#                replace only upload_id, grouped by (real job_id, hour).
+_SENTINEL_BOTH_TABLES = ["backlinks-summary", "serp-google-organic"]
+_SENTINEL_UPLOAD_ONLY_TABLES = ["dataforseo_labs-google-ranked_keywords"]
+
+
+def _query_hour_groups_both(project: str, table: str) -> str:
     return (
-        f"UPDATE `{project}.{SOURCE_DATASET}.{new_table}`\n"
-        f"SET\n"
-        f"  job_id = '{job_id}',\n"
-        f"  upload_id = '{upload_id}'\n"
-        f"WHERE job_id = '{_BACKFILL_SENTINEL}' OR upload_id = '{_BACKFILL_SENTINEL}';"
+        f"SELECT TIMESTAMP_TRUNC(ingest_timestamp, {_ID_GROUP_TRUNC}) AS hour_bucket,\n"
+        f"       COUNT(*) AS row_count\n"
+        f"FROM `{project}.{SOURCE_DATASET}.{table}`\n"
+        f"WHERE job_id = '{_BACKFILL_SENTINEL}' OR upload_id = '{_BACKFILL_SENTINEL}'\n"
+        f"GROUP BY hour_bucket\n"
+        f"ORDER BY hour_bucket;"
     )
 
 
-def _backfill_domain_sql(project: str, new_table: str) -> str:
-    t = f"{project}.{SOURCE_DATASET}.{new_table}"
-    meta = f"{project}.Meta.domains"
-    norm_t = _NORMALIZE_SQL.format(col="t.domain")
-    norm_m = _NORMALIZE_SQL.format(col="m.domain")
+def _query_hour_groups_upload_only(project: str, table: str) -> str:
     return (
-        f"MERGE `{t}` t\n"
+        f"SELECT job_id,\n"
+        f"       TIMESTAMP_TRUNC(ingest_timestamp, {_ID_GROUP_TRUNC}) AS hour_bucket,\n"
+        f"       COUNT(*) AS row_count\n"
+        f"FROM `{project}.{SOURCE_DATASET}.{table}`\n"
+        f"WHERE upload_id = '{_BACKFILL_SENTINEL}'\n"
+        f"GROUP BY job_id, hour_bucket\n"
+        f"ORDER BY hour_bucket;"
+    )
+
+
+def _build_merge_both_ids(project: str, table: str, mapping: list[dict]) -> str:
+    """MERGE: replace sentinel job_id + upload_id, grouped by hour bucket.
+
+    Uses per-column IF() so real (non-sentinel) values are preserved on the
+    rare row where only one of the two was sentinel.
+    """
+    values = ",\n    ".join(
+        f"STRUCT(TIMESTAMP '{m['hour_bucket']}' AS hour_bucket, "
+        f"'{m['synth_job']}' AS synth_job, '{m['synth_upload']}' AS synth_upload)"
+        for m in mapping
+    )
+    return (
+        f"MERGE `{project}.{SOURCE_DATASET}.{table}` t\n"
         f"USING (\n"
-        f"  SELECT domain_id, domain, {norm_m} AS _norm\n"
-        f"  FROM `{meta}` m\n"
+        f"  SELECT hour_bucket, synth_job, synth_upload\n"
+        f"  FROM UNNEST([\n"
+        f"    {values}\n"
+        f"  ])\n"
         f") m\n"
-        f"ON {norm_t} = m._norm\n"
-        f"WHEN MATCHED AND t.domain_id IS NULL THEN\n"
-        f"  UPDATE SET domain_id = m.domain_id, domain = m.domain;"
+        f"ON TIMESTAMP_TRUNC(t.ingest_timestamp, {_ID_GROUP_TRUNC}) = m.hour_bucket\n"
+        f"WHEN MATCHED\n"
+        f"  AND (t.job_id = '{_BACKFILL_SENTINEL}' OR t.upload_id = '{_BACKFILL_SENTINEL}') THEN\n"
+        f"UPDATE SET\n"
+        f"  job_id    = IF(t.job_id    = '{_BACKFILL_SENTINEL}', m.synth_job,    t.job_id),\n"
+        f"  upload_id = IF(t.upload_id = '{_BACKFILL_SENTINEL}', m.synth_upload, t.upload_id);"
     )
 
 
-def _log_synthetic_upload_event(bq, project: str, *, job_id, upload_id, table, row_count):
+def _build_merge_upload_only(project: str, table: str, mapping: list[dict]) -> str:
+    """MERGE: replace ONLY sentinel upload_id, grouped by (real job_id, hour).
+
+    Real job_ids are never modified.
+    """
+    values = ",\n    ".join(
+        f"STRUCT('{m['job_id']}' AS job_id, TIMESTAMP '{m['hour_bucket']}' AS hour_bucket, "
+        f"'{m['synth_upload']}' AS synth_upload)"
+        for m in mapping
+    )
+    return (
+        f"MERGE `{project}.{SOURCE_DATASET}.{table}` t\n"
+        f"USING (\n"
+        f"  SELECT job_id, hour_bucket, synth_upload\n"
+        f"  FROM UNNEST([\n"
+        f"    {values}\n"
+        f"  ])\n"
+        f") m\n"
+        f"ON t.job_id = m.job_id\n"
+        f"   AND TIMESTAMP_TRUNC(t.ingest_timestamp, {_ID_GROUP_TRUNC}) = m.hour_bucket\n"
+        f"WHEN MATCHED AND t.upload_id = '{_BACKFILL_SENTINEL}' THEN\n"
+        f"UPDATE SET upload_id = m.synth_upload;"
+    )
+
+
+def _log_sentinel_backfill_event(bq, project: str, table: str, *,
+                                  job_id: str, upload_id: str,
+                                  row_count: int, hour_bucket) -> None:
+    """Insert one Logs.upload_events row per synthetic upload_id."""
     import datetime as _dt
     log_table = f"{project}.Logs.upload_events"
+    try:
+        hour_str = hour_bucket.strftime("%Y-%m-%d %H:00 UTC")
+    except AttributeError:
+        hour_str = str(hour_bucket)
     entry = [{
         "job_id": job_id,
         "upload_id": upload_id,
@@ -482,67 +539,111 @@ def _log_synthetic_upload_event(bq, project: str, *, job_id, upload_id, table, r
         "ingest_timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "client_id": None,
         "project_id": None,
-        "notes": "historical migration backfill 2026-04-22: synthetic IDs for rows that predate job_id/upload_id tracking",
+        "notes": (
+            f"historical migration sentinel backfill 2026-04-22: "
+            f"rows with ingest_timestamp in the {hour_str} hour bucket"
+        ),
     }]
     errors = bq.client.insert_rows_json(log_table, entry)
     if errors:
-        click.echo(f"WARNING: upload_events log failed for {table}: {errors}", err=True)
+        click.echo(f"WARNING: upload_events log failed for {table} @ {hour_str}: {errors}", err=True)
 
 
 def _do_backfill(bq, migrations: list[Migration], project: str, dry_run: bool) -> int:
-    click.echo(f"\n=== PHASE 3: BACKFILL ===")
-    click.echo("Step 3a: synthetic job_id + upload_id for rows where either is NULL.")
-    click.echo("Step 3b: domain_id lookup via Meta.domains (normalized) for rows that have a `domain` string.\n")
+    click.echo(f"\n=== PHASE 3: BACKFILL (sentinel IDs only) ===")
+    click.echo(
+        "Replaces the 'pending-backfill' sentinel stamped during phase 2 with\n"
+        "synthetic UUIDs, grouped by hour-truncated ingest_timestamp.\n"
+        "One Logs.upload_events row is inserted per synthetic upload_id.\n"
+        "Domain backfill is handled separately via the manual-mapping flow.\n"
+    )
 
-    # 3a: synthetic IDs per table.
-    click.echo("--- Step 3a: synthesize missing job_id / upload_id ---")
-    for m in migrations:
-        if m.old_name is None:
-            continue
-        new_id = f"{project}.{SOURCE_DATASET}.{m.new_name}"
-        synth_job = str(uuid.uuid4())
-        synth_upload = str(uuid.uuid4())
-        sql = _backfill_ids_sql(project, m.new_name, synth_job, synth_upload)
-        _execute_or_print(bq, sql, dry_run=dry_run,
-                          label=f"BACKFILL IDs on {m.new_name}")
-
-        if not dry_run:
-            # How many rows got the synthetic stamp?
-            count_sql = (
-                f"SELECT COUNT(*) AS n FROM `{new_id}` "
-                f"WHERE job_id = '{synth_job}'"
+    # Path 1: tables where both job_id and upload_id are sentinel.
+    for table in _SENTINEL_BOTH_TABLES:
+        click.echo(f"\n--- {table} (both job_id + upload_id sentinels, group by hour) ---")
+        query = _query_hour_groups_both(project, table)
+        if dry_run:
+            click.echo("\n[dry-run] Would query distinct hour buckets:")
+            click.echo(query)
+            click.echo(
+                "\n[dry-run] Would then emit a MERGE that UNNESTs an array of "
+                "(hour_bucket, synth_job_uuid, synth_upload_uuid) structs — "
+                "one entry per bucket found — and UPDATEs rows matched by "
+                "TIMESTAMP_TRUNC(..., HOUR)."
             )
-            try:
-                n = int(bq.client.query(count_sql).result().to_dataframe()["n"].iloc[0])
-            except Exception:
-                n = 0
-            if n > 0:
-                _log_synthetic_upload_event(
-                    bq, project,
-                    job_id=synth_job, upload_id=synth_upload,
-                    table=m.new_name, row_count=n,
-                )
-                click.echo(f"  stamped {n:,} rows with synthetic job_id={synth_job}")
-            else:
-                click.echo(f"  no rows needed synthetic IDs")
+            click.echo(
+                "[dry-run] Per-column IF() preserves any real (non-sentinel) "
+                "job_id / upload_id that might coexist with a sentinel in the "
+                "other column."
+            )
+            continue
 
-    # 3b: domain_id lookup via Meta.domains.
-    click.echo("\n--- Step 3b: resolve domain_id via Meta.domains lookup ---")
-    for m in migrations:
-        if m.old_name is None:
+        rows = list(bq.client.query(query).result())
+        if not rows:
+            click.echo(f"  no sentinel rows — skipping")
             continue
-        if not m.preserve_domain_column:
-            click.echo(f"  SKIP {m.new_name} — `domain` was not preserved in migration (phase 2)")
+        mapping = [
+            {"hour_bucket": r.hour_bucket,
+             "synth_job": str(uuid.uuid4()),
+             "synth_upload": str(uuid.uuid4()),
+             "row_count": r.row_count}
+            for r in rows
+        ]
+        merge_sql = _build_merge_both_ids(project, table, mapping)
+        _execute_or_print(bq, merge_sql, dry_run=False, label=f"MERGE {table}")
+        for m in mapping:
+            _log_sentinel_backfill_event(
+                bq, project, table,
+                job_id=m["synth_job"], upload_id=m["synth_upload"],
+                row_count=m["row_count"], hour_bucket=m["hour_bucket"],
+            )
+        click.echo(
+            f"  {table}: stamped {sum(m['row_count'] for m in mapping):,} rows "
+            f"across {len(mapping)} hour bucket(s); logged {len(mapping)} upload_events."
+        )
+
+    # Path 2: ranked_keywords — real job_id preserved, only upload_id is sentinel.
+    for table in _SENTINEL_UPLOAD_ONLY_TABLES:
+        click.echo(f"\n--- {table} (upload_id sentinel only, group by job_id + hour) ---")
+        query = _query_hour_groups_upload_only(project, table)
+        if dry_run:
+            click.echo("\n[dry-run] Would query distinct (job_id, hour) groups:")
+            click.echo(query)
+            click.echo(
+                "\n[dry-run] Would then MERGE by (job_id, TIMESTAMP_TRUNC(..., HOUR)), "
+                "setting a new synth_upload_id per group. Real job_id is never modified."
+            )
             continue
-        _execute_or_print(
-            bq, _backfill_domain_sql(project, m.new_name), dry_run=dry_run,
-            label=f"MERGE domain_id on {m.new_name}",
+
+        rows = list(bq.client.query(query).result())
+        if not rows:
+            click.echo(f"  no sentinel rows — skipping")
+            continue
+        mapping = [
+            {"job_id": r.job_id,
+             "hour_bucket": r.hour_bucket,
+             "synth_upload": str(uuid.uuid4()),
+             "row_count": r.row_count}
+            for r in rows
+        ]
+        merge_sql = _build_merge_upload_only(project, table, mapping)
+        _execute_or_print(bq, merge_sql, dry_run=False, label=f"MERGE {table}")
+        for m in mapping:
+            _log_sentinel_backfill_event(
+                bq, project, table,
+                job_id=m["job_id"],  # real job_id, not synthetic
+                upload_id=m["synth_upload"],
+                row_count=m["row_count"], hour_bucket=m["hour_bucket"],
+            )
+        click.echo(
+            f"  {table}: stamped {sum(m['row_count'] for m in mapping):,} rows "
+            f"across {len(mapping)} (job_id, hour) group(s); logged {len(mapping)} upload_events."
         )
 
     click.echo("\n=== Phase 3 complete. ===")
     click.echo(
-        "Orphan review: run `scripts/inventory_dataforseo_domains.py --source=DataForSEO` "
-        "to see how many rows still have a `domain` but NULL `domain_id`."
+        "Domain backfill (manual mapping flow) is separate — "
+        "run scripts/inventory_migrated_domains.py when ready."
     )
     return 0
 
