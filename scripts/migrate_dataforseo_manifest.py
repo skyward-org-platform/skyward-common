@@ -91,8 +91,10 @@ BACKLINKS_BULK_PAGES_SUMMARY_COLS = """\
 
 BACKLINKS_SUMMARY_COLS = """\
   target STRING, rank INT64, backlinks INT64, backlinks_spam_score INT64,
+  target_spam_score INT64, crawled_pages INT64,
   referring_domains INT64, referring_domains_nofollow INT64,
-  referring_main_domains INT64, referring_ips INT64, referring_subnets INT64,
+  referring_main_domains INT64, referring_main_domains_nofollow INT64,
+  referring_ips INT64, referring_subnets INT64,
   referring_pages INT64, referring_pages_nofollow INT64,
   referring_links_tld STRING, referring_links_types STRING,
   referring_links_attributes STRING, referring_links_platform_types STRING,

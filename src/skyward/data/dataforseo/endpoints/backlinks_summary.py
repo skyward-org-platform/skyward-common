@@ -36,24 +36,28 @@ class BacklinksSummary(BaseEndpoint):
 
         rows = []
         for result in result_list:
+            info = result.get("info") or {}
             rows.append({
                 "target": result.get("target") or target,
                 "rank": result.get("rank"),
                 "backlinks": result.get("backlinks"),
                 "backlinks_spam_score": result.get("backlinks_spam_score"),
+                "target_spam_score": info.get("target_spam_score"),
+                "crawled_pages": result.get("crawled_pages"),
                 "referring_domains": result.get("referring_domains"),
                 "referring_domains_nofollow": result.get("referring_domains_nofollow"),
                 "referring_main_domains": result.get("referring_main_domains"),
+                "referring_main_domains_nofollow": result.get("referring_main_domains_nofollow"),
                 "referring_ips": result.get("referring_ips"),
                 "referring_subnets": result.get("referring_subnets"),
                 "referring_pages": result.get("referring_pages"),
                 "referring_pages_nofollow": result.get("referring_pages_nofollow"),
-                "referring_links_tld": json.dumps(result.get("referring_links_tld")),
-                "referring_links_types": json.dumps(result.get("referring_links_types")),
-                "referring_links_attributes": json.dumps(result.get("referring_links_attributes")),
-                "referring_links_platform_types": json.dumps(result.get("referring_links_platform_types")),
-                "referring_links_semantic_locations": json.dumps(result.get("referring_links_semantic_locations")),
-                "referring_links_countries": json.dumps(result.get("referring_links_countries")),
+                "referring_links_tld": result.get("referring_links_tld"),
+                "referring_links_types": result.get("referring_links_types"),
+                "referring_links_attributes": result.get("referring_links_attributes"),
+                "referring_links_platform_types": result.get("referring_links_platform_types"),
+                "referring_links_semantic_locations": result.get("referring_links_semantic_locations"),
+                "referring_links_countries": result.get("referring_links_countries"),
                 "internal_links_count": result.get("internal_links_count"),
                 "external_links_count": result.get("external_links_count"),
                 "broken_backlinks": result.get("broken_backlinks"),
@@ -68,8 +72,10 @@ class BacklinksSummary(BaseEndpoint):
     def _get_schema(self) -> list[str]:
         return [
             "target", "rank", "backlinks", "backlinks_spam_score",
+            "target_spam_score", "crawled_pages",
             "referring_domains", "referring_domains_nofollow",
-            "referring_main_domains", "referring_ips", "referring_subnets",
+            "referring_main_domains", "referring_main_domains_nofollow",
+            "referring_ips", "referring_subnets",
             "referring_pages", "referring_pages_nofollow",
             "referring_links_tld", "referring_links_types",
             "referring_links_attributes", "referring_links_platform_types",
@@ -85,13 +91,20 @@ class BacklinksSummary(BaseEndpoint):
     def _cast_types(self, df: pd.DataFrame) -> pd.DataFrame:
         int_cols = [
             "rank", "backlinks", "backlinks_spam_score",
+            "target_spam_score", "crawled_pages",
             "referring_domains", "referring_domains_nofollow",
-            "referring_main_domains", "referring_ips", "referring_subnets",
+            "referring_main_domains", "referring_main_domains_nofollow",
+            "referring_ips", "referring_subnets",
             "referring_pages", "referring_pages_nofollow",
             "internal_links_count", "external_links_count",
             "broken_backlinks", "broken_pages",
         ]
         ts_cols = ["first_seen", "lost_date"]
+        stringify_cols = [
+            "referring_links_tld", "referring_links_types",
+            "referring_links_attributes", "referring_links_platform_types",
+            "referring_links_semantic_locations", "referring_links_countries",
+        ]
 
         for col in int_cols:
             if col in df.columns:
@@ -99,6 +112,11 @@ class BacklinksSummary(BaseEndpoint):
         for col in ts_cols:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+        for col in stringify_cols:
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda v: json.dumps(v) if isinstance(v, (list, dict)) else v
+                )
         return df
 
     def _fetch_live(self, target: str, **kwargs) -> pd.DataFrame:
