@@ -11,6 +11,7 @@ groups of up to 1000 per API call.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import re
 import time
@@ -57,19 +58,25 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
                 "url": item.get("url"),
                 "backlinks": item.get("backlinks"),
                 "referring_domains": item.get("referring_domains"),
+                "referring_domains_nofollow": item.get("referring_domains_nofollow"),
                 "referring_main_domains": item.get("referring_main_domains"),
+                "referring_main_domains_nofollow": item.get("referring_main_domains_nofollow"),
                 "rank": item.get("rank"),
                 "main_domain_rank": item.get("main_domain_rank"),
                 "spam_score": item.get("backlinks_spam_score"),
                 "referring_ips": item.get("referring_ips"),
                 "referring_subnets": item.get("referring_subnets"),
                 "referring_pages": item.get("referring_pages"),
+                "referring_pages_nofollow": item.get("referring_pages_nofollow"),
                 "dofollow": (item.get("backlinks") or 0) - (
                     (item.get("referring_links_attributes") or {}).get("nofollow", 0)
                 ),
                 "nofollow": (item.get("referring_links_attributes") or {}).get("nofollow", 0),
+                "referring_links_attributes": item.get("referring_links_attributes"),
                 "broken_backlinks": item.get("broken_backlinks"),
                 "broken_pages": item.get("broken_pages"),
+                "first_seen": item.get("first_seen"),
+                "lost_date": item.get("lost_date"),
                 "task_id": task_id,
             })
 
@@ -77,10 +84,15 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
 
     def _get_schema(self) -> list[str]:
         return [
-            "url", "backlinks", "referring_domains", "referring_main_domains",
+            "url", "backlinks",
+            "referring_domains", "referring_domains_nofollow",
+            "referring_main_domains", "referring_main_domains_nofollow",
             "rank", "main_domain_rank", "spam_score",
-            "referring_ips", "referring_subnets", "referring_pages",
-            "dofollow", "nofollow", "broken_backlinks", "broken_pages",
+            "referring_ips", "referring_subnets",
+            "referring_pages", "referring_pages_nofollow",
+            "dofollow", "nofollow", "referring_links_attributes",
+            "broken_backlinks", "broken_pages",
+            "first_seen", "lost_date",
         ]
 
     async def _fetch_batch_with_fallback(
@@ -210,13 +222,17 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
 
     def _cast_types(self, df: pd.DataFrame) -> pd.DataFrame:
         int_cols = [
-            "backlinks", "referring_domains", "referring_main_domains",
+            "backlinks",
+            "referring_domains", "referring_domains_nofollow",
+            "referring_main_domains", "referring_main_domains_nofollow",
             "rank", "main_domain_rank", "referring_ips", "referring_subnets",
-            "referring_pages", "dofollow", "nofollow",
+            "referring_pages", "referring_pages_nofollow",
+            "dofollow", "nofollow",
             "broken_backlinks", "broken_pages",
         ]
         float_cols = ["spam_score"]
-        bool_cols: list[str] = []
+        ts_cols = ["first_seen", "lost_date"]
+        stringify_cols = ["referring_links_attributes"]
 
         for col in int_cols:
             if col in df.columns:
@@ -224,9 +240,14 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         for col in float_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-        for col in bool_cols:
+        for col in ts_cols:
             if col in df.columns:
-                df[col] = df[col].astype("boolean")
+                df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+        for col in stringify_cols:
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda v: json.dumps(v) if isinstance(v, (list, dict)) else v
+                )
 
         return df
 

@@ -78,11 +78,15 @@ BACKLINKS_BACKLINKS_COLS = """\
 """
 
 BACKLINKS_BULK_PAGES_SUMMARY_COLS = """\
-  url STRING, backlinks INT64, referring_domains INT64,
-  referring_main_domains INT64, rank INT64, main_domain_rank INT64,
+  url STRING, backlinks INT64,
+  referring_domains INT64, referring_domains_nofollow INT64,
+  referring_main_domains INT64, referring_main_domains_nofollow INT64,
+  rank INT64, main_domain_rank INT64,
   spam_score FLOAT64, referring_ips INT64, referring_subnets INT64,
-  referring_pages INT64, dofollow INT64, nofollow INT64,
-  broken_backlinks INT64, broken_pages INT64
+  referring_pages INT64, referring_pages_nofollow INT64,
+  dofollow INT64, nofollow INT64, referring_links_attributes STRING,
+  broken_backlinks INT64, broken_pages INT64,
+  first_seen TIMESTAMP, lost_date TIMESTAMP
 """
 
 BACKLINKS_SUMMARY_COLS = """\
