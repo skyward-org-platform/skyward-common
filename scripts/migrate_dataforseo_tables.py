@@ -168,11 +168,18 @@ def _do_setup(bq, migrations: list[Migration], project: str, dry_run: bool) -> i
 # PHASE 2: MIGRATE — copy data with column mapping + verify + drop old.
 # ---------------------------------------------------------------------------
 
-def _get_old_columns(bq, old_name: str, project: str, dataset: str) -> list[str]:
-    """Introspect a table's columns via INFORMATION_SCHEMA."""
+def _get_old_columns(bq, old_name: str, project: str, dataset: str) -> dict[str, str]:
+    """Introspect a table's columns via INFORMATION_SCHEMA.
+
+    Returns dict of column_name -> data_type (uppercased). The type is the full
+    BQ declaration — scalar (`STRING`, `INT64`) or complex (`ARRAY<INT64>`,
+    `STRUCT<...>`). Needed so the copy SQL can TO_JSON_STRING() ARRAY/STRUCT
+    source columns when the new target is STRING (e.g. `categories`,
+    `monthly_searches`).
+    """
     from google.cloud import bigquery as _bq
     sql = f"""
-        SELECT column_name
+        SELECT column_name, data_type
         FROM `{project}.{dataset}.INFORMATION_SCHEMA.COLUMNS`
         WHERE table_name = @t
         ORDER BY ordinal_position
@@ -181,7 +188,29 @@ def _get_old_columns(bq, old_name: str, project: str, dataset: str) -> list[str]
         query_parameters=[_bq.ScalarQueryParameter("t", "STRING", old_name)]
     )
     df = bq.client.query(sql, job_config=job_config).result().to_dataframe()
-    return df["column_name"].tolist() if not df.empty else []
+    if df.empty:
+        return {}
+    return {row["column_name"]: row["data_type"].upper() for _, row in df.iterrows()}
+
+
+def _source_to_target_expr(col: str, src_type: str, target_type: str) -> str:
+    """Return the SELECT expression to copy `col` from source to target.
+
+    Handles type transformations:
+      - ARRAY<*> or STRUCT<...> source + STRING target: TO_JSON_STRING(col)
+      - scalar type mismatches: SAFE_CAST(col AS target_type)
+      - types match: pass through unchanged
+    """
+    src_kind = src_type.split("<", 1)[0].strip()  # "ARRAY<INT64>" -> "ARRAY"
+    is_complex = src_kind in {"ARRAY", "STRUCT"}
+
+    if src_type == target_type:
+        return col
+    if is_complex and target_type == "STRING":
+        return f"TO_JSON_STRING({col}) AS {col}"
+    # Scalar mismatch — use SAFE_CAST so non-convertible values become NULL
+    # rather than erroring the whole migration.
+    return f"SAFE_CAST({col} AS {target_type}) AS {col}"
 
 
 def _parse_endpoint_columns(new_schema: str) -> list[tuple[str, str]]:
@@ -239,7 +268,8 @@ def _build_copy_sql(bq, migration: Migration, project: str) -> str | None:
     if migration.old_name is None:
         return None  # pure-new table — no rows to copy
 
-    old_cols = set(_get_old_columns(bq, migration.old_name, project, BACKUP_DATASET))
+    old_cols_map = _get_old_columns(bq, migration.old_name, project, BACKUP_DATASET)
+    old_cols = set(old_cols_map.keys())
     endpoint_pairs = _parse_endpoint_columns(migration.new_schema)
 
     # NOT NULL metadata columns need a placeholder when the source is NULL
@@ -274,16 +304,19 @@ def _build_copy_sql(bq, migration: Migration, project: str) -> str | None:
     else:
         select_exprs.append("CAST(NULL AS STRING) AS task_id")
     select_exprs.append("'live' AS endpoint_mode")
-    # Endpoint-specific columns — use the target column's declared type for
-    # the fallback NULL cast (inserting STRING-NULL into BOOL/INT64/TIMESTAMP
-    # columns is a BQ type error).
-    for col, col_type in endpoint_pairs:
+    # Endpoint-specific columns. Each target column gets one of:
+    #   - If absent from source: typed NULL cast (BOOL/INT64/TIMESTAMP/STRING/...).
+    #   - If present with type mismatch: TO_JSON_STRING for ARRAY/STRUCT→STRING,
+    #     SAFE_CAST for scalar mismatches.
+    #   - If types match: pass through unchanged.
+    for col, target_type in endpoint_pairs:
         if col == "domain":
             continue  # already handled above
         if col in old_cols:
-            select_exprs.append(col)
+            src_type = old_cols_map[col]
+            select_exprs.append(_source_to_target_expr(col, src_type, target_type))
         else:
-            select_exprs.append(f"CAST(NULL AS {col_type}) AS {col}")
+            select_exprs.append(f"CAST(NULL AS {target_type}) AS {col}")
 
     select_clause = ",\n  ".join(select_exprs)
     insert_cols = _METADATA_COLUMNS + [c for c, _ in endpoint_pairs if c != "domain"]

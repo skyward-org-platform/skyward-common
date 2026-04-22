@@ -69,10 +69,10 @@ def test_build_copy_sql_uses_coalesce_sentinel_for_notnull_metadata(fake_bq):
     tolerate NULL values in the source via COALESCE — bulk_pages_summary
     had NULL ingest_timestamps in prod, which broke the original migrate."""
     old_cols = pd.DataFrame([
-        {"column_name": "job_id"},
-        {"column_name": "upload_id"},
-        {"column_name": "ingest_timestamp"},
-        {"column_name": "url"},
+        {"column_name": "job_id", "data_type": "STRING"},
+        {"column_name": "upload_id", "data_type": "STRING"},
+        {"column_name": "ingest_timestamp", "data_type": "TIMESTAMP"},
+        {"column_name": "url", "data_type": "STRING"},
     ])
     fake_bq.client.queue_result(old_cols)
 
@@ -109,11 +109,11 @@ def test_build_copy_sql_drops_domain_when_preserve_is_false(fake_bq):
     """For the 3 endpoints where old `domain` was not caller-context, the copy
     must force new `domain` to NULL regardless of the source column."""
     old_cols = pd.DataFrame([
-        {"column_name": "job_id"},
-        {"column_name": "upload_id"},
-        {"column_name": "ingest_timestamp"},
-        {"column_name": "domain"},      # present in source
-        {"column_name": "url"},
+        {"column_name": "job_id", "data_type": "STRING"},
+        {"column_name": "upload_id", "data_type": "STRING"},
+        {"column_name": "ingest_timestamp", "data_type": "TIMESTAMP"},
+        {"column_name": "domain", "data_type": "STRING"},
+        {"column_name": "url", "data_type": "STRING"},
     ])
     fake_bq.client.queue_result(old_cols)
 
@@ -135,11 +135,11 @@ def test_build_copy_sql_preserves_domain_when_flag_is_true(fake_bq):
     """For caller-context-valid endpoints (ranked_keywords), preserve the old
     `domain` column verbatim."""
     old_cols = pd.DataFrame([
-        {"column_name": "job_id"},
-        {"column_name": "upload_id"},
-        {"column_name": "ingest_timestamp"},
-        {"column_name": "domain"},
-        {"column_name": "keyword"},
+        {"column_name": "job_id", "data_type": "STRING"},
+        {"column_name": "upload_id", "data_type": "STRING"},
+        {"column_name": "ingest_timestamp", "data_type": "TIMESTAMP"},
+        {"column_name": "domain", "data_type": "STRING"},
+        {"column_name": "keyword", "data_type": "STRING"},
     ])
     fake_bq.client.queue_result(old_cols)
 
@@ -159,8 +159,8 @@ def test_build_copy_sql_preserves_domain_when_flag_is_true(fake_bq):
 
 def test_build_copy_sql_copy_source_is_backup_dataset(fake_bq):
     old_cols = pd.DataFrame([
-        {"column_name": "job_id"},
-        {"column_name": "url"},
+        {"column_name": "job_id", "data_type": "STRING"},
+        {"column_name": "url", "data_type": "STRING"},
     ])
     fake_bq.client.queue_result(old_cols)
 
@@ -215,8 +215,8 @@ def test_build_copy_sql_uses_typed_null_for_missing_columns(fake_bq):
     # Old table is missing `original` (BOOL) and `first_seen` (TIMESTAMP);
     # has url and task_id.
     old_cols = pd.DataFrame([
-        {"column_name": "url"},
-        {"column_name": "task_id"},
+        {"column_name": "url", "data_type": "STRING"},
+        {"column_name": "task_id", "data_type": "STRING"},
     ])
     fake_bq.client.queue_result(old_cols)
 
@@ -232,6 +232,40 @@ def test_build_copy_sql_uses_typed_null_for_missing_columns(fake_bq):
     assert "CAST(NULL AS TIMESTAMP) AS first_seen" in sql
     # INT64 and FLOAT64 fallbacks get typed correctly.
     assert "CAST(NULL AS INT64) AS rank" in sql
+
+
+def test_build_copy_sql_json_serializes_array_when_target_is_string(fake_bq):
+    """When the source column is ARRAY<INT64> but the new schema declares
+    STRING (JSON), wrap in TO_JSON_STRING. Caught a real migration failure on
+    `categories` in keyword_suggestions."""
+    old_cols = pd.DataFrame([
+        {"column_name": "job_id", "data_type": "STRING"},
+        {"column_name": "seed_keyword", "data_type": "STRING"},
+        {"column_name": "keyword", "data_type": "STRING"},
+        {"column_name": "categories", "data_type": "ARRAY<INT64>"},
+    ])
+    fake_bq.client.queue_result(old_cols)
+
+    from scripts.migrate_dataforseo_manifest import MIGRATIONS
+    m = next(mm for mm in MIGRATIONS if mm.new_name == "dataforseo_labs-google-keyword_suggestions")
+    sql = mod._build_copy_sql(fake_bq, m, "proj")
+
+    assert sql is not None
+    assert "TO_JSON_STRING(categories) AS categories" in sql
+    # Should not use a raw STRING cast that would break on the type mismatch.
+    assert "SAFE_CAST(categories" not in sql
+
+
+def test_source_to_target_expr_handles_scalar_and_complex_types():
+    """Direct test of the per-column type-transformation logic."""
+    # Matching types pass through
+    assert mod._source_to_target_expr("foo", "STRING", "STRING") == "foo"
+    assert mod._source_to_target_expr("foo", "INT64", "INT64") == "foo"
+    # ARRAY/STRUCT to STRING uses TO_JSON_STRING
+    assert mod._source_to_target_expr("cats", "ARRAY<INT64>", "STRING") == "TO_JSON_STRING(cats) AS cats"
+    assert mod._source_to_target_expr("data", "STRUCT<a INT64>", "STRING") == "TO_JSON_STRING(data) AS data"
+    # Scalar mismatches use SAFE_CAST
+    assert mod._source_to_target_expr("n", "INT64", "FLOAT64") == "SAFE_CAST(n AS FLOAT64) AS n"
 
 
 def test_manifest_has_three_domain_drop_endpoints():
