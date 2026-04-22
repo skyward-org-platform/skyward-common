@@ -9,91 +9,120 @@ from click.testing import CliRunner
 from scripts import migrate_dataforseo_tables as mod
 
 
-def test_phase_backup_dry_run_prints_snapshot_sql(fake_bq):
+def test_phase_setup_dry_run_prints_schema_snapshot_and_create(fake_bq):
     mod._bq_override = fake_bq
     try:
         runner = CliRunner()
-        result = runner.invoke(mod.cli, ["--phase=backup", "--dry-run"])
+        result = runner.invoke(mod.cli, ["--phase=setup", "--dry-run"])
         assert result.exit_code == 0, result.output
         assert "CREATE SCHEMA" in result.output
         assert "DataForSEO_backup_04_20_2026" in result.output
         assert "SNAPSHOT" in result.output
-        # 11 endpoint tables + 1 extra legacy table should show up in output.
-        assert "backlinks_backlinks_live" in result.output
+        assert "CREATE NEW" in result.output
+        assert "PARTITION BY DATE(ingest_timestamp)" in result.output
+        assert "CLUSTER BY domain_id, job_id" in result.output
+        # Legacy non-endpoint backup gets snapshotted too
         assert "serp_google_organic_live_advanced_backup" in result.output
-        assert "[dry-run]" in result.output
+        # In-place migration (ranked_keywords) gets a drop-first step
+        assert "DROP OLD (in-place)" in result.output
     finally:
         mod._bq_override = None
 
 
-def test_phase_migrate_dry_run_prints_create_and_copy(fake_bq):
+def test_phase_migrate_dry_run_prints_copy_and_drop(fake_bq):
     mod._bq_override = fake_bq
     try:
         runner = CliRunner()
         result = runner.invoke(mod.cli, ["--phase=migrate", "--dry-run"])
         assert result.exit_code == 0, result.output
-        assert "CREATE TABLE" in result.output
-        assert "CREATE NEW" in result.output
-        assert "COPY FROM BACKUP" in result.output
-        assert "PARTITION BY DATE(ingest_timestamp)" in result.output
-        assert "CLUSTER BY domain_id, job_id" in result.output
-        # Copy source should reference backup dataset
+        assert "COPY DATA" in result.output
+        # Copy always sources from the backup dataset.
         assert "DataForSEO_backup_04_20_2026" in result.output
+        # Domain-preservation notes should appear per endpoint.
+        assert "domain preserved from source" in result.output
+        assert "domain=NULL (old column dropped per semantic review)" in result.output
+        # Drops old sources + legacy backup.
+        assert "DROP OLD" in result.output
+        assert "DROP LEGACY" in result.output
     finally:
         mod._bq_override = None
 
 
-def test_phase_drop_old_dry_run_references_backup_for_verification(fake_bq):
+def test_phase_backfill_dry_run_includes_synthetic_ids_and_domain_merge(fake_bq):
     mod._bq_override = fake_bq
     try:
         runner = CliRunner()
-        result = runner.invoke(mod.cli, ["--phase=drop-old", "--dry-run"])
+        result = runner.invoke(mod.cli, ["--phase=backfill", "--dry-run"])
         assert result.exit_code == 0, result.output
-        assert "DROP-OLD" in result.output
-        assert "DataForSEO_backup_04_20_2026" in result.output
-        # Also handles the extra legacy table
-        assert "serp_google_organic_live_advanced_backup" in result.output
-    finally:
-        mod._bq_override = None
-
-
-def test_phase_backfill_ids_dry_run_produces_update_statements(fake_bq):
-    mod._bq_override = fake_bq
-    try:
-        runner = CliRunner()
-        result = runner.invoke(mod.cli, ["--phase=backfill-ids", "--dry-run"])
-        assert result.exit_code == 0, result.output
+        # Step 3a: synthetic IDs
+        assert "BACKFILL IDs" in result.output
         assert "UPDATE" in result.output
-        assert "job_id" in result.output and "upload_id" in result.output
         assert "WHERE job_id IS NULL OR upload_id IS NULL" in result.output
-    finally:
-        mod._bq_override = None
-
-
-def test_phase_backfill_domains_dry_run_produces_merge_from_meta(fake_bq):
-    mod._bq_override = fake_bq
-    try:
-        runner = CliRunner()
-        result = runner.invoke(mod.cli, ["--phase=backfill-domains", "--dry-run"])
-        assert result.exit_code == 0, result.output
+        # Step 3b: domain merge
         assert "MERGE" in result.output
         assert "Meta.domains" in result.output
-        assert "WHEN MATCHED AND t.domain_id IS NULL THEN" in result.output
+        # Non-preserved-domain migrations should be skipped in step 3b.
+        assert "SKIP" in result.output
     finally:
         mod._bq_override = None
 
 
-def test_build_copy_sql_introspects_old_columns(fake_bq):
-    """Real _build_copy_sql queries INFORMATION_SCHEMA (on the backup dataset)
-    and builds an INSERT."""
+def test_build_copy_sql_drops_domain_when_preserve_is_false(fake_bq):
+    """For the 3 endpoints where old `domain` was not caller-context, the copy
+    must force new `domain` to NULL regardless of the source column."""
+    old_cols = pd.DataFrame([
+        {"column_name": "job_id"},
+        {"column_name": "upload_id"},
+        {"column_name": "ingest_timestamp"},
+        {"column_name": "domain"},      # present in source
+        {"column_name": "url"},
+    ])
+    fake_bq.client.queue_result(old_cols)
+
+    from scripts.migrate_dataforseo_manifest import MIGRATIONS
+    # backlinks_bulk_pages_summary has preserve_domain_column=False.
+    m = next(mm for mm in MIGRATIONS if mm.new_name == "backlinks-bulk_pages_summary")
+    assert m.preserve_domain_column is False
+    sql = mod._build_copy_sql(fake_bq, m, "proj")
+
+    assert sql is not None
+    # Despite `domain` being present in old_cols, it should NOT be carried forward.
+    assert "CAST(NULL AS STRING) AS domain" in sql
+    # But the rest of the metadata block is preserved.
+    assert "job_id" in sql
+    assert "upload_id" in sql
+
+
+def test_build_copy_sql_preserves_domain_when_flag_is_true(fake_bq):
+    """For caller-context-valid endpoints (ranked_keywords), preserve the old
+    `domain` column verbatim."""
     old_cols = pd.DataFrame([
         {"column_name": "job_id"},
         {"column_name": "upload_id"},
         {"column_name": "ingest_timestamp"},
         {"column_name": "domain"},
-        {"column_name": "project_id"},  # should be dropped
+        {"column_name": "keyword"},
+    ])
+    fake_bq.client.queue_result(old_cols)
+
+    from scripts.migrate_dataforseo_manifest import MIGRATIONS
+    m = next(mm for mm in MIGRATIONS if mm.new_name == "backlinks-backlinks")
+    assert m.preserve_domain_column is True
+    sql = mod._build_copy_sql(fake_bq, m, "proj")
+
+    assert sql is not None
+    # Should carry the source `domain` column directly, not default to NULL.
+    # Check via exact tokens to avoid matching `domain_from`, `domain_to`, etc.
+    assert "CAST(NULL AS STRING) AS domain\n" not in sql
+    assert "CAST(NULL AS STRING) AS domain," not in sql
+    lines = [ln.strip().rstrip(",") for ln in sql.splitlines()]
+    assert "domain" in lines, sql
+
+
+def test_build_copy_sql_copy_source_is_backup_dataset(fake_bq):
+    old_cols = pd.DataFrame([
+        {"column_name": "job_id"},
         {"column_name": "url"},
-        {"column_name": "rank"},
     ])
     fake_bq.client.queue_result(old_cols)
 
@@ -102,18 +131,6 @@ def test_build_copy_sql_introspects_old_columns(fake_bq):
     sql = mod._build_copy_sql(fake_bq, m, "proj")
 
     assert sql is not None
-    assert "job_id" in sql
-    assert "upload_id" in sql
-    assert "domain" in sql
-    assert "url" in sql
-    assert "rank" in sql
-    # Dropped column
-    assert "project_id" not in sql
-    # Historical defaults
-    assert "CAST(NULL AS INT64) AS domain_id" in sql
-    assert "CAST(NULL AS STRING) AS task_id" in sql
-    assert "'live' AS endpoint_mode" in sql
-    # Copy reads from the backup dataset, writes to the source dataset
     assert "FROM `proj.DataForSEO_backup_04_20_2026.backlinks_backlinks_live`" in sql
     assert "INTO `proj.DataForSEO.backlinks-backlinks`" in sql
 
@@ -127,7 +144,7 @@ def test_only_filter_limits_a_phase_to_single_migration(fake_bq):
         )
         assert result.exit_code == 0
         assert "backlinks-backlinks" in result.output
-        # Other migrations should not be present in the phase body
+        # Other migrations should not run in the body.
         assert "--- serp-google-organic ---" not in result.output
     finally:
         mod._bq_override = None
@@ -135,7 +152,7 @@ def test_only_filter_limits_a_phase_to_single_migration(fake_bq):
 
 def test_parse_endpoint_columns_handles_options_description_clauses():
     """The new *_COLS constants include OPTIONS(description=...) — the parser
-    must still extract clean column names, ignoring commas inside parentheses."""
+    must extract clean column names, ignoring commas inside parentheses."""
     sql = """
       url STRING OPTIONS(description="foo, bar, baz"),
       rank INT64 OPTIONS(description="sample"),
@@ -143,3 +160,15 @@ def test_parse_endpoint_columns_handles_options_description_clauses():
     """
     names = mod._parse_endpoint_columns(sql)
     assert names == ["url", "rank", "dofollow"]
+
+
+def test_manifest_has_three_domain_drop_endpoints():
+    """Sanity: the 3 endpoints we identified as semantic-mismatch must have
+    preserve_domain_column=False; the rest default to True."""
+    from scripts.migrate_dataforseo_manifest import MIGRATIONS
+    drop_domain = {m.new_name for m in MIGRATIONS if not m.preserve_domain_column}
+    assert drop_domain == {
+        "backlinks-bulk_pages_summary",
+        "backlinks-summary",
+        "serp-google-organic",
+    }

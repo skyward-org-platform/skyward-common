@@ -416,18 +416,29 @@ MIGRATIONS: list[Migration] = [
         new_name="backlinks-bulk_pages_summary",
         new_schema=METADATA_BLOCK_SQL + BACKLINKS_BULK_PAGES_SUMMARY_COLS,
         drop_project_id=True,
+        # Old `domain` column stored the per-row target URL's domain, not the
+        # caller context that the new metadata block expects. Drop to keep
+        # semantics clean; info is derivable from `url` at query time.
+        preserve_domain_column=False,
     ),
     Migration(
         old_name="backlinks_summary_live",
         new_name="backlinks-summary",
         new_schema=METADATA_BLOCK_SQL + BACKLINKS_SUMMARY_COLS,
         drop_project_id=True,
+        # Same reason as bulk_pages_summary — old `domain` was target-derived.
+        preserve_domain_column=False,
     ),
     Migration(
         old_name="serp_google_organic_live_advanced",
         new_name="serp-google-organic",
         new_schema=METADATA_BLOCK_SQL + SERP_GOOGLE_ORGANIC_COLS,
         drop_project_id=True,
+        # Confirmed via cross-table job_id analysis: every historical SERP
+        # job has many thousands of distinct `domain` values because the old
+        # parser stamped each SERP item's result URL domain. Not caller
+        # context. Info is derivable from per-row `url` column.
+        preserve_domain_column=False,
     ),
     Migration(
         old_name="google_keyword-suggestions_live",
