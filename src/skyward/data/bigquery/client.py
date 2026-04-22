@@ -211,65 +211,6 @@ class BigQueryClient:
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         return self.client.query(query, job_config=job_config).result().to_dataframe()
 
-    def get_client_domains(self, client_id: str) -> List[str]:
-        """
-        Get all domains associated with a client.
-
-        Args:
-            client_id: The client identifier
-
-        Returns:
-            List of domain strings
-        """
-        query = """
-            SELECT cd.domain
-            FROM `data-hub-468216.Meta.companies` c
-            JOIN `data-hub-468216.Meta.company_domains` cd ON c.company_id = cd.company_id
-            WHERE c.client_id = @client_id
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("client_id", "STRING", client_id)
-            ]
-        )
-        result = self.client.query(query, job_config=job_config).result()
-        return [row.domain for row in result]
-
-    def get_project_domains(
-        self,
-        project_id: str,
-        role: Optional[str] = None,
-    ) -> pd.DataFrame:
-        """
-        Get domains linked to a project with optional role filter.
-
-        Args:
-            project_id: The project identifier
-            role: Optional filter ("client" or "competitor")
-
-        Returns:
-            DataFrame with columns: company_id, domain, role, is_primary
-        """
-        params = [
-            bigquery.ScalarQueryParameter("project_id", "STRING", project_id)
-        ]
-
-        role_filter = ""
-        if role is not None:
-            role_filter = "AND pc.role = @role"
-            params.append(bigquery.ScalarQueryParameter("role", "STRING", role))
-
-        query = f"""
-            SELECT pc.company_id, cd.domain, pc.role, cd.is_primary
-            FROM `data-hub-468216.Meta.project_companies` pc
-            JOIN `data-hub-468216.Meta.company_domains` cd ON pc.company_id = cd.company_id
-            WHERE pc.project_id = @project_id
-            {role_filter}
-        """
-
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        return self.client.query(query, job_config=job_config).result().to_dataframe()
-
     def get_client_job_ids(
         self,
         client_id: str,

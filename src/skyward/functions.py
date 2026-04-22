@@ -335,3 +335,32 @@ def prompt_period_length():
             return custom
         except ValueError as exc:
             print(f"Invalid number ({exc}). Try again.")
+
+
+
+# ---------------------------------------------------------------------------
+# UUID helpers for BQ job/upload tracking
+# ---------------------------------------------------------------------------
+
+import uuid as _uuid
+
+
+def generate_job_id() -> str:
+    """Return a new UUID4 string suitable for use as a `job_id`."""
+    return str(_uuid.uuid4())
+
+
+
+def generate_upload_id() -> str:
+    """Return a new UUID4 string suitable for use as an `upload_id`."""
+    return str(_uuid.uuid4())
+
+
+def _validate_job_id(value):
+    try:
+        _uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError) as e:
+        raise ValueError(
+            f"job_id {value!r} is not a valid UUID. "
+            f"Use skyward.functions.generate_job_id()."
+        ) from e

@@ -37,5 +37,8 @@ uv.lock
 # Worktrees
 .worktrees/
 
-# Local docs (plans, specs)
-docs/
+# Local docs — plans and specs stay local; other docs/ files are tracked
+docs/superpowers/
+
+# DataForSEO live test raw responses (for Layer B fidelity audit only)
+tests/live/responses/

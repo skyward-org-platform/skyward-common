@@ -13,7 +13,7 @@ from pathlib import Path
 import os
 import json
 import warnings
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 
 @dataclass
@@ -53,10 +53,16 @@ class Settings:
 def load_config() -> Settings:
     """Load configuration from environment variables.
 
-    Automatically loads a .env file if found (python-dotenv searches cwd and parents).
+    Automatically loads a .env file if found, searching upward from the
+    CURRENT WORKING DIRECTORY (not from this file's location). This matters
+    in editable-install setups: without `usecwd=True`, python-dotenv would
+    walk up from settings.py's own path and load skyward-common's own .env
+    instead of the consumer repo's .env.
+
+    Existing environment variables win over .env (override=False).
     Does NOT change the working directory.
     """
-    load_dotenv(override=False)
+    load_dotenv(find_dotenv(usecwd=True), override=False)
 
     def _load_json_credential(env_var: str) -> dict | None:
         """Load a JSON credential file from a path in an env var. Returns None for ADC."""
