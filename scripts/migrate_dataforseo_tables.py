@@ -242,18 +242,25 @@ def _build_copy_sql(bq, migration: Migration, project: str) -> str | None:
     old_cols = set(_get_old_columns(bq, migration.old_name, project, BACKUP_DATASET))
     endpoint_pairs = _parse_endpoint_columns(migration.new_schema)
 
+    # NOT NULL metadata columns need a placeholder when the source is NULL
+    # (we've seen bulk_pages_summary rows with NULL ingest_timestamp, etc.).
+    # Phase 3 step 3a rewrites these sentinel values with real synthetic UUIDs
+    # and logs them to Logs.upload_events.
+    BACKFILL_SENTINEL = "pending-backfill"
+
     select_exprs: list[str] = []
     # Metadata block (preserve where present, default otherwise).
+    # job_id, upload_id, ingest_timestamp are NOT NULL — always COALESCE.
     if "job_id" in old_cols:
-        select_exprs.append("job_id")
+        select_exprs.append(f"COALESCE(job_id, '{BACKFILL_SENTINEL}') AS job_id")
     else:
-        select_exprs.append("CAST(NULL AS STRING) AS job_id")
+        select_exprs.append(f"'{BACKFILL_SENTINEL}' AS job_id")
     if "upload_id" in old_cols:
-        select_exprs.append("upload_id")
+        select_exprs.append(f"COALESCE(upload_id, '{BACKFILL_SENTINEL}') AS upload_id")
     else:
-        select_exprs.append("CAST(NULL AS STRING) AS upload_id")
+        select_exprs.append(f"'{BACKFILL_SENTINEL}' AS upload_id")
     if "ingest_timestamp" in old_cols:
-        select_exprs.append("ingest_timestamp")
+        select_exprs.append("COALESCE(ingest_timestamp, CURRENT_TIMESTAMP()) AS ingest_timestamp")
     else:
         select_exprs.append("CURRENT_TIMESTAMP() AS ingest_timestamp")
     select_exprs.append("CAST(NULL AS INT64) AS domain_id")
@@ -331,6 +338,10 @@ def _do_migrate(bq, migrations: list[Migration], project: str, dry_run: bool) ->
 
     for m in migrations:
         click.echo(f"\n--- {m.new_name} ---")
+        # TRUNCATE first so phase 2 is idempotent — safe to re-run after a
+        # partial-success abort. Empty tables are a cheap no-op for TRUNCATE.
+        truncate_sql = f"TRUNCATE TABLE `{project}.{SOURCE_DATASET}.{m.new_name}`;"
+        _execute_or_print(bq, truncate_sql, dry_run=dry_run, label="TRUNCATE TARGET")
         if dry_run:
             copy_sql = _build_copy_sql_preview(m, project)
         else:
@@ -391,13 +402,19 @@ LOWER(
 """.strip()
 
 
+_BACKFILL_SENTINEL = "pending-backfill"
+
+
 def _backfill_ids_sql(project: str, new_table: str, job_id: str, upload_id: str) -> str:
+    """Replace the sentinel placeholder value stamped during phase 2 with a
+    real per-table synthetic UUID. Matches on the sentinel so we only touch
+    rows that came in without a real job_id/upload_id from the source."""
     return (
         f"UPDATE `{project}.{SOURCE_DATASET}.{new_table}`\n"
         f"SET\n"
-        f"  job_id = COALESCE(job_id, '{job_id}'),\n"
-        f"  upload_id = COALESCE(upload_id, '{upload_id}')\n"
-        f"WHERE job_id IS NULL OR upload_id IS NULL;"
+        f"  job_id = '{job_id}',\n"
+        f"  upload_id = '{upload_id}'\n"
+        f"WHERE job_id = '{_BACKFILL_SENTINEL}' OR upload_id = '{_BACKFILL_SENTINEL}';"
     )
 
 

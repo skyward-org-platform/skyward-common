@@ -35,6 +35,8 @@ def test_phase_migrate_dry_run_prints_copy_and_drop(fake_bq):
         runner = CliRunner()
         result = runner.invoke(mod.cli, ["--phase=migrate", "--dry-run"])
         assert result.exit_code == 0, result.output
+        # TRUNCATE before INSERT makes phase 2 idempotent.
+        assert "TRUNCATE TABLE" in result.output
         assert "COPY DATA" in result.output
         # Copy always sources from the backup dataset.
         assert "DataForSEO_backup_04_20_2026" in result.output
@@ -48,16 +50,52 @@ def test_phase_migrate_dry_run_prints_copy_and_drop(fake_bq):
         mod._bq_override = None
 
 
+def test_phase_backfill_dry_run_replaces_sentinel_placeholder(fake_bq):
+    """Phase 3 step 3a must UPDATE rows where job_id/upload_id equal the
+    'pending-backfill' sentinel stamped by phase 2 (not NULL anymore)."""
+    mod._bq_override = fake_bq
+    try:
+        runner = CliRunner()
+        result = runner.invoke(mod.cli, ["--phase=backfill", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "pending-backfill" in result.output
+        assert "WHERE job_id = 'pending-backfill' OR upload_id = 'pending-backfill'" in result.output
+    finally:
+        mod._bq_override = None
+
+
+def test_build_copy_sql_uses_coalesce_sentinel_for_notnull_metadata(fake_bq):
+    """NOT NULL metadata columns (job_id, upload_id, ingest_timestamp) must
+    tolerate NULL values in the source via COALESCE — bulk_pages_summary
+    had NULL ingest_timestamps in prod, which broke the original migrate."""
+    old_cols = pd.DataFrame([
+        {"column_name": "job_id"},
+        {"column_name": "upload_id"},
+        {"column_name": "ingest_timestamp"},
+        {"column_name": "url"},
+    ])
+    fake_bq.client.queue_result(old_cols)
+
+    from scripts.migrate_dataforseo_manifest import MIGRATIONS
+    m = next(mm for mm in MIGRATIONS if mm.new_name == "backlinks-backlinks")
+    sql = mod._build_copy_sql(fake_bq, m, "proj")
+
+    assert sql is not None
+    assert "COALESCE(job_id, 'pending-backfill') AS job_id" in sql
+    assert "COALESCE(upload_id, 'pending-backfill') AS upload_id" in sql
+    assert "COALESCE(ingest_timestamp, CURRENT_TIMESTAMP()) AS ingest_timestamp" in sql
+
+
 def test_phase_backfill_dry_run_includes_synthetic_ids_and_domain_merge(fake_bq):
     mod._bq_override = fake_bq
     try:
         runner = CliRunner()
         result = runner.invoke(mod.cli, ["--phase=backfill", "--dry-run"])
         assert result.exit_code == 0, result.output
-        # Step 3a: synthetic IDs
+        # Step 3a: synthetic IDs replace the phase-2 sentinel placeholder.
         assert "BACKFILL IDs" in result.output
         assert "UPDATE" in result.output
-        assert "WHERE job_id IS NULL OR upload_id IS NULL" in result.output
+        assert "pending-backfill" in result.output
         # Step 3b: domain merge
         assert "MERGE" in result.output
         assert "Meta.domains" in result.output
