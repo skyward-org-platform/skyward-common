@@ -184,16 +184,34 @@ def _get_old_columns(bq, old_name: str, project: str, dataset: str) -> list[str]
     return df["column_name"].tolist() if not df.empty else []
 
 
-def _parse_endpoint_columns(new_schema: str) -> list[str]:
-    """Extract endpoint column names from new_schema, ignoring metadata cols.
+def _parse_endpoint_columns(new_schema: str) -> list[tuple[str, str]]:
+    """Extract endpoint (name, type) pairs from new_schema, ignoring metadata.
 
     Handles both plain form (`name TYPE,`) and annotated form
     (`name TYPE OPTIONS(description="..."),`) by splitting on top-level commas
     only (commas inside parentheses are part of a single column definition).
+
+    Types are returned uppercase (e.g. 'STRING', 'INT64', 'BOOL', 'TIMESTAMP',
+    'FLOAT64'). Needed so the copy-SQL fallback for missing columns emits
+    the right typed NULL — inserting CAST(NULL AS STRING) into a BOOL column
+    is a BQ type error.
     """
-    names: list[str] = []
+    pairs: list[tuple[str, str]] = []
     depth = 0
     tok: list[str] = []
+
+    def _extract(definition: str) -> tuple[str, str] | None:
+        parts = definition.split()
+        if len(parts) < 2:
+            return None
+        name = parts[0].strip()
+        if not name or name in _METADATA_COLUMNS:
+            return None
+        # Column type is always the second whitespace-separated token,
+        # before any NOT NULL / OPTIONS(...) suffix.
+        col_type = parts[1].strip().upper()
+        return name, col_type
+
     for ch in new_schema:
         if ch == "(":
             depth += 1
@@ -203,19 +221,17 @@ def _parse_endpoint_columns(new_schema: str) -> list[str]:
             tok.append(ch)
         elif ch == "," and depth == 0:
             s = "".join(tok).strip()
-            if s:
-                name = s.split()[0].strip()
-                if name and name not in _METADATA_COLUMNS:
-                    names.append(name)
+            pair = _extract(s) if s else None
+            if pair:
+                pairs.append(pair)
             tok = []
         else:
             tok.append(ch)
     tail = "".join(tok).strip()
-    if tail:
-        name = tail.split()[0].strip()
-        if name and name not in _METADATA_COLUMNS:
-            names.append(name)
-    return names
+    pair = _extract(tail) if tail else None
+    if pair:
+        pairs.append(pair)
+    return pairs
 
 
 def _build_copy_sql(bq, migration: Migration, project: str) -> str | None:
@@ -224,7 +240,7 @@ def _build_copy_sql(bq, migration: Migration, project: str) -> str | None:
         return None  # pure-new table — no rows to copy
 
     old_cols = set(_get_old_columns(bq, migration.old_name, project, BACKUP_DATASET))
-    endpoint_cols = _parse_endpoint_columns(migration.new_schema)
+    endpoint_pairs = _parse_endpoint_columns(migration.new_schema)
 
     select_exprs: list[str] = []
     # Metadata block (preserve where present, default otherwise).
@@ -251,17 +267,19 @@ def _build_copy_sql(bq, migration: Migration, project: str) -> str | None:
     else:
         select_exprs.append("CAST(NULL AS STRING) AS task_id")
     select_exprs.append("'live' AS endpoint_mode")
-    # Endpoint-specific columns.
-    for col in endpoint_cols:
+    # Endpoint-specific columns — use the target column's declared type for
+    # the fallback NULL cast (inserting STRING-NULL into BOOL/INT64/TIMESTAMP
+    # columns is a BQ type error).
+    for col, col_type in endpoint_pairs:
         if col == "domain":
             continue  # already handled above
         if col in old_cols:
             select_exprs.append(col)
         else:
-            select_exprs.append(f"CAST(NULL AS STRING) AS {col}")
+            select_exprs.append(f"CAST(NULL AS {col_type}) AS {col}")
 
     select_clause = ",\n  ".join(select_exprs)
-    insert_cols = _METADATA_COLUMNS + [c for c in endpoint_cols if c != "domain"]
+    insert_cols = _METADATA_COLUMNS + [c for c, _ in endpoint_pairs if c != "domain"]
     insert_cols_clause = ", ".join(insert_cols)
 
     return (
@@ -275,8 +293,8 @@ def _build_copy_sql_preview(migration: Migration, project: str) -> str | None:
     """Preview SQL for dry-run — doesn't introspect INFORMATION_SCHEMA."""
     if migration.old_name is None:
         return None
-    endpoint_cols = _parse_endpoint_columns(migration.new_schema)
-    all_cols = _METADATA_COLUMNS + [c for c in endpoint_cols if c != "domain"]
+    endpoint_pairs = _parse_endpoint_columns(migration.new_schema)
+    all_cols = _METADATA_COLUMNS + [c for c, _ in endpoint_pairs if c != "domain"]
     cols_joined = ", ".join(all_cols)
     domain_note = (
         "domain preserved from source"

@@ -150,16 +150,50 @@ def test_only_filter_limits_a_phase_to_single_migration(fake_bq):
         mod._bq_override = None
 
 
-def test_parse_endpoint_columns_handles_options_description_clauses():
-    """The new *_COLS constants include OPTIONS(description=...) — the parser
-    must extract clean column names, ignoring commas inside parentheses."""
+def test_parse_endpoint_columns_returns_name_and_type_pairs():
+    """The parser must extract (name, type) pairs, ignoring commas inside
+    OPTIONS(description="...") clauses. Types are needed to emit the right
+    NULL cast for columns missing from the source table."""
     sql = """
       url STRING OPTIONS(description="foo, bar, baz"),
       rank INT64 OPTIONS(description="sample"),
-      dofollow BOOL
+      dofollow BOOL,
+      first_seen TIMESTAMP,
+      cpc FLOAT64 OPTIONS(description="cost per click")
     """
-    names = mod._parse_endpoint_columns(sql)
-    assert names == ["url", "rank", "dofollow"]
+    pairs = mod._parse_endpoint_columns(sql)
+    assert pairs == [
+        ("url", "STRING"),
+        ("rank", "INT64"),
+        ("dofollow", "BOOL"),
+        ("first_seen", "TIMESTAMP"),
+        ("cpc", "FLOAT64"),
+    ]
+
+
+def test_build_copy_sql_uses_typed_null_for_missing_columns(fake_bq):
+    """For columns absent from the source table, the fallback NULL must use
+    the target column's declared type — not STRING."""
+    # Old table is missing `original` (BOOL) and `first_seen` (TIMESTAMP);
+    # has url and task_id.
+    old_cols = pd.DataFrame([
+        {"column_name": "url"},
+        {"column_name": "task_id"},
+    ])
+    fake_bq.client.queue_result(old_cols)
+
+    from scripts.migrate_dataforseo_manifest import MIGRATIONS
+    m = next(mm for mm in MIGRATIONS if mm.new_name == "backlinks-backlinks")
+    sql = mod._build_copy_sql(fake_bq, m, "proj")
+
+    assert sql is not None
+    # `original` is BOOL — must cast NULL to BOOL, not STRING.
+    assert "CAST(NULL AS BOOL) AS original" in sql
+    assert "CAST(NULL AS STRING) AS original" not in sql
+    # TIMESTAMP fallbacks too.
+    assert "CAST(NULL AS TIMESTAMP) AS first_seen" in sql
+    # INT64 and FLOAT64 fallbacks get typed correctly.
+    assert "CAST(NULL AS INT64) AS rank" in sql
 
 
 def test_manifest_has_three_domain_drop_endpoints():
