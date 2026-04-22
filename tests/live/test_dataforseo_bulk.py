@@ -209,6 +209,66 @@ async def test_backlinks_bulk_pages_summary_multi_batch(
 
 
 # ---------------------------------------------------------------------------
+# List-input endpoints with live_all chunking (keyword_overview, search_intent,
+# search_volume). Each takes a keyword list and chunks it into batches of up
+# to batch_size per API call.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.live
+def test_dataforseo_labs_keyword_overview_bulk_multi_batch(
+    dfs_client_live, cost_tracker, seeded_domain
+):
+    """In-call batching: 6 keywords, batch_size=2 → 3 API calls with 2 kw each."""
+    ep = dfs_client_live.dataforseo_labs_google_keyword_overview
+    df = ep.live_all(
+        keywords=KEYWORD_TARGETS_6,
+        domain=SEEDED_TEST_DOMAIN,
+        job_id=generate_job_id(),
+        batch_size=2,
+        upload=False,
+    )
+    # 6 keywords → 6 rows (one per keyword), 3 API calls → 3 unique task_ids
+    _assert_fan_out_result(df, expected_rows_min=6, expected_task_ids=3)
+
+
+@pytest.mark.live
+def test_dataforseo_labs_search_intent_bulk_multi_batch(
+    dfs_client_live, cost_tracker, seeded_domain
+):
+    """In-call batching: 6 keywords, batch_size=2 → 3 API calls."""
+    ep = dfs_client_live.dataforseo_labs_google_search_intent
+    df = ep.live_all(
+        keywords=KEYWORD_TARGETS_6,
+        domain=SEEDED_TEST_DOMAIN,
+        job_id=generate_job_id(),
+        batch_size=2,
+        upload=False,
+    )
+    _assert_fan_out_result(df, expected_rows_min=6, expected_task_ids=3)
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_keywords_data_search_volume_live_all_multi_batch(
+    dfs_client_live, cost_tracker, seeded_domain
+):
+    """In-call batching: 6 keywords, batch_size=2 → 3 API calls.
+
+    Distinct from `post_all` which uses `keywords_per_task` — `live_all` uses
+    `batch_size`. See comment in test_keywords_data_search_volume_post_all_multi_batch
+    re: the naming inconsistency."""
+    ep = dfs_client_live.keywords_data_google_ads_search_volume
+    df = await ep.live_all(
+        targets=KEYWORD_TARGETS_6,
+        domain=SEEDED_TEST_DOMAIN,
+        job_id=generate_job_id(),
+        batch_size=2,
+        upload=False,
+    )
+    _assert_fan_out_result(df, expected_rows_min=6, expected_task_ids=3)
+
+
+# ---------------------------------------------------------------------------
 # POST/GET worker-pool endpoints
 # ---------------------------------------------------------------------------
 

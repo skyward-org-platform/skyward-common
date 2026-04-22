@@ -9,10 +9,12 @@ from __future__ import annotations
 import json
 import math
 import time
+from typing import Any
 
 import pandas as pd
 
-from skyward.data.dataforseo.base import BaseEndpoint
+from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.functions import _validate_job_id
 
 
 class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
@@ -133,25 +135,22 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
         self,
         keywords: list[str],
         *,
+        domain: Any = _UNSET,
+        domain_id: Any = _UNSET,
+        job_id: str,
+        interactive: bool = False,
+        upload: bool = True,
         batch_size: int = 1000,
         batch_delay: float = 0.2,
         **kwargs,
     ) -> pd.DataFrame:
-        """
-        Fetch search intent data for an arbitrary number of keywords.
+        """Chunks the keyword list into batches of up to 1000 and calls _fetch_live()
+        for each batch sequentially. Honors the BaseEndpoint contract: validates
+        job_id, resolves domain, stamps fetch metadata, and uploads unless
+        upload=False."""
+        _validate_job_id(job_id)
+        resolved = self._resolve_domain(domain, domain_id, interactive)
 
-        Chunks the keyword list into batches of up to 1000 and calls _fetch_live()
-        for each batch sequentially.
-
-        Args:
-            keywords: Full list of keywords
-            batch_size: Keywords per API call (max 1000)
-            batch_delay: Delay in seconds between batches
-            **kwargs: Passed to _fetch_live()
-
-        Returns:
-            Combined DataFrame of all results
-        """
         batch_size = min(batch_size, 1000)
         total_batches = math.ceil(len(keywords) / batch_size)
         df_list: list[pd.DataFrame] = []
@@ -170,6 +169,14 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
             if idx < total_batches:
                 time.sleep(batch_delay)
 
-        if df_list:
-            return pd.concat(df_list, ignore_index=True)
-        return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        if not df_list:
+            print("No rows returned. Skipping upload.")
+            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
+
+        combined = pd.concat(df_list, ignore_index=True)
+        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
+
+        if upload:
+            self.upload(self._client.bq_client, combined, job_id=job_id)
+
+        return combined
