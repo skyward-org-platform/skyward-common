@@ -58,7 +58,7 @@ METADATA_BLOCK_SQL = """\
 # -----------------------------------------------------------------------------
 
 BACKLINKS_BACKLINKS_COLS = """\
-  url STRING, domain STRING, type STRING, item_type STRING, attributes STRING,
+  url STRING, type STRING, item_type STRING, attributes STRING, original BOOL,
   domain_from STRING, url_from STRING, url_from_https BOOL, tld_from STRING,
   domain_from_rank INT64, domain_from_platform_type STRING, domain_from_is_ip BOOL,
   domain_from_ip STRING, domain_from_country STRING, domain_to STRING,

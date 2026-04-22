@@ -35,6 +35,12 @@ def pytest_addoption(parser):
         default=False,
         help="Run tests marked with @pytest.mark.live (real API calls, costs money).",
     )
+    parser.addoption(
+        "--keep-test-dataset",
+        action="store_true",
+        default=False,
+        help="Skip teardown of the ephemeral test BQ dataset (for manual inspection).",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
