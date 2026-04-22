@@ -119,12 +119,19 @@ DATAFORSEO_LABS_KEYWORD_SUGGESTIONS_COLS = """\
   location_code INT64, language_code STRING,
   search_volume INT64, competition FLOAT64, competition_level STRING,
   cpc FLOAT64, low_top_of_page_bid FLOAT64, high_top_of_page_bid FLOAT64,
-  categories STRING, keyword_difficulty INT64,
-  detected_language STRING, is_another_language STRING, words_count INT64,
+  categories STRING, monthly_searches STRING,
+  search_volume_trend_monthly FLOAT64, search_volume_trend_quarterly FLOAT64,
+  search_volume_trend_yearly FLOAT64,
+  keyword_info_last_updated_time TIMESTAMP,
+  core_keyword STRING,
+  keyword_difficulty INT64,
+  detected_language STRING, is_another_language BOOL, words_count INT64,
   main_intent STRING, foreign_intent STRING,
+  search_intent_last_updated_time TIMESTAMP,
   avg_backlinks FLOAT64, avg_dofollow FLOAT64, avg_referring_pages FLOAT64,
   avg_referring_domains FLOAT64, avg_referring_main_domains FLOAT64,
-  avg_rank FLOAT64, avg_main_domain_rank FLOAT64
+  avg_rank FLOAT64, avg_main_domain_rank FLOAT64,
+  avg_backlinks_last_updated_time TIMESTAMP
 """
 
 DATAFORSEO_LABS_RELATED_KEYWORDS_COLS = """\
