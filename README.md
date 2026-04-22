@@ -213,6 +213,5 @@ Tests use mock BQ fixtures — no real credentials needed. Live LLM tests are ga
 
 ## Used By
 
-- **skyward-seo** — SEO Pipeline, PAA Downloader, KGA, WQA
-- **skyward-ai-faqs** — AI FAQ generation system
-- **skyward-data-hub-admin** — Internal portal (FastAPI + Next.js)
+- **skyward-seo-pipeline** — SEO Pipeline, PAA Downloader, KGA, WQA
+- **skyward-platform** — Internal portal (FastAPI + Next.js)
