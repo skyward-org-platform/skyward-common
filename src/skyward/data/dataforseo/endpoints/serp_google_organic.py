@@ -49,6 +49,9 @@ class SerpGoogleOrganic(BaseEndpoint):
         serp_datetime = result.get("datetime")
         se_domain = result.get("se_domain")
         se_results_count = result.get("se_results_count")
+        check_url = result.get("check_url")
+        item_types = result.get("item_types")
+        refinement_chips = result.get("refinement_chips")
 
         data_dict = task.get("data", {})
         location_code_val = data_dict.get("location_code")
@@ -68,6 +71,9 @@ class SerpGoogleOrganic(BaseEndpoint):
                 "device": device,
                 "os": os_val,
                 "se_results_count": se_results_count,
+                "check_url": check_url,
+                "item_types": item_types,
+                "refinement_chips": refinement_chips,
                 "item_type": item.get("type"),
                 "rank_group": item.get("rank_group"),
                 "rank_absolute": item.get("rank_absolute"),
@@ -83,12 +89,13 @@ class SerpGoogleOrganic(BaseEndpoint):
         return [
             "task_id", "keyword", "serp_datetime", "se_domain",
             "location_code", "language_code", "device", "os",
-            "se_results_count", "item_type", "rank_group", "rank_absolute",
+            "se_results_count", "check_url", "item_types", "refinement_chips",
+            "item_type", "rank_group", "rank_absolute",
             "page", "position", "data", "item",
         ]
 
     def _get_dedupe_keys(self) -> list[str]:
-        return ["task_id", "rank_absolute"]
+        return ["task_id", "rank_absolute", "item_type"]
 
     def _cast_types(self, df: pd.DataFrame) -> pd.DataFrame:
         int_cols = ["location_code", "se_results_count", "rank_group", "rank_absolute", "page"]
@@ -99,7 +106,7 @@ class SerpGoogleOrganic(BaseEndpoint):
         if "serp_datetime" in df.columns:
             df["serp_datetime"] = pd.to_datetime(df["serp_datetime"], utc=True)
 
-        for col in ["data", "item"]:
+        for col in ["data", "item", "item_types", "refinement_chips"]:
             if col in df.columns:
                 df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
 

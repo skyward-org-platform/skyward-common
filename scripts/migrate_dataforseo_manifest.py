@@ -107,7 +107,9 @@ BACKLINKS_SUMMARY_COLS = """\
 SERP_GOOGLE_ORGANIC_COLS = """\
   keyword STRING, serp_datetime TIMESTAMP, se_domain STRING,
   location_code INT64, language_code STRING, device STRING, os STRING,
-  se_results_count INT64, item_type STRING, rank_group INT64,
+  se_results_count INT64, check_url STRING,
+  item_types STRING, refinement_chips STRING,
+  item_type STRING, rank_group INT64,
   rank_absolute INT64, page INT64, position STRING,
   data STRING, item STRING
 """
