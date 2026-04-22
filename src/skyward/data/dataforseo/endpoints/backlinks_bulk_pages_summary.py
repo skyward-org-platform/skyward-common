@@ -152,7 +152,8 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
                 task = resp.get("tasks", [{}])[0]
                 task_status = task.get("status_code", 0)
 
-                # 40501: Invalid target — remove and retry
+                # 40501: Invalid target — remove the bad URL if we can parse it,
+                # otherwise halve the batch to isolate it via binary search.
                 if task_status == 40501:
                     msg = task.get("status_message", "")
                     invalid_url = self._extract_invalid_target(msg)
@@ -163,9 +164,24 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
                         if not current_batch:
                             return pd.DataFrame()
                         continue
+                    # Can't extract the bad URL from the error message (DFS
+                    # sometimes returns just "Invalid Field: 'targets'" with no
+                    # URL). Halve the batch to isolate it.
+                    if len(current_batch) > 1:
+                        if debug:
+                            print(f"{indent}40501 with no extractable URL. Splitting batch of {len(current_batch)} in half (depth {_depth + 1})...")
+                        mid = len(current_batch) // 2
+                        left = await self._fetch_batch_with_fallback(
+                            current_batch[:mid], max_retries, retry_delay, debug, _depth + 1
+                        )
+                        right = await self._fetch_batch_with_fallback(
+                            current_batch[mid:], max_retries, retry_delay, debug, _depth + 1
+                        )
+                        parts = [df for df in [left, right] if df is not None and not df.empty]
+                        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
                     if debug:
-                        print(f"{indent}API error 40501: {msg}")
-                    continue
+                        print(f"{indent}40501 on single URL. Skipping: {current_batch[0][:80]}")
+                    return pd.DataFrame()
 
                 # 500xx: Server error — split immediately (deterministic, retrying won't help)
                 if task_status >= 50000:

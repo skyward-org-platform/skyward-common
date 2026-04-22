@@ -208,6 +208,50 @@ async def test_backlinks_bulk_pages_summary_multi_batch(
     _assert_fan_out_result(df, expected_rows_min=6, expected_task_ids=3)
 
 
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_backlinks_bulk_pages_summary_40501_fallback(
+    dfs_client_live, cost_tracker, seeded_domain
+):
+    """Fallback path: mix of valid + intentionally-malformed URLs.
+
+    The endpoint's `_fetch_batch_with_fallback` handles 40501 "Invalid Field"
+    errors by extracting the bad URL from the error message, removing it from
+    the current batch, and retrying. This test hands the endpoint a batch with
+    one malformed URL that DFS should reject — valid URLs should come back,
+    the bad one dropped gracefully (no exception).
+    """
+    ep = dfs_client_live.backlinks_bulk_pages_summary
+    # Mix of 4 valid URLs + 2 malformed. Malformed ones may trigger 40501,
+    # or may silently return 0 rows — either behavior is acceptable as long
+    # as the valid URLs come back.
+    targets = [
+        "https://example.com",
+        "not-a-valid-url(",
+        "https://example.org",
+        "https://iana.org",
+        "https://example-nonexistent-xyz-1234567890.invalid",
+        "https://w3.org",
+    ]
+    df = await ep.live_all(
+        targets=targets,
+        domain=SEEDED_TEST_DOMAIN,
+        job_id=generate_job_id(),
+        batch_size=3,
+        upload=False,
+    )
+    # At minimum, the 4 valid URLs should come back. Malformed URLs may or
+    # may not produce rows depending on how DFS decides to respond.
+    # DFS normalizes URLs (adds trailing slash) so compare via substring.
+    urls_returned = df["url"].tolist() if not df.empty else []
+    for host in ["example.com", "example.org", "iana.org", "w3.org"]:
+        assert any(host in u for u in urls_returned), (
+            f"expected {host} in results, got {urls_returned}"
+        )
+    assert "endpoint_mode" in df.columns
+    assert (df["endpoint_mode"] == "live").all()
+
+
 # ---------------------------------------------------------------------------
 # List-input endpoints with live_all chunking (keyword_overview, search_intent,
 # search_volume). Each takes a keyword list and chunks it into batches of up
