@@ -106,12 +106,15 @@ def test_serp_google_organic_standard_post(dfs_client_live, cost_tracker, seeded
     ep = dfs_client_live.serp_google_organic
     df = ep.post(
         target="pizza",
+        domain=SEEDED_TEST_DOMAIN,
+        job_id=generate_job_id(),
         location_code=2840,
         max_wait=120,
+        upload=False,
     )
-    # post() in current impl doesn't stamp endpoint_mode — that's a Phase-2 follow-up.
-    # For now, just verify we got data back.
     assert df is not None
+    assert "endpoint_mode" in df.columns
+    assert (df["endpoint_mode"] == "standard").all()
 
 
 # ---------------------------------------------------------------------------

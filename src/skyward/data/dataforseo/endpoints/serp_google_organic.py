@@ -9,11 +9,13 @@ import json
 import time
 from queue import Queue, Empty
 from threading import Thread, Lock
+from typing import Any
 
 import pandas as pd
 import requests
 
-from skyward.data.dataforseo.base import BaseEndpoint
+from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.functions import _validate_job_id
 
 
 class SerpGoogleOrganic(BaseEndpoint):
@@ -207,21 +209,31 @@ class SerpGoogleOrganic(BaseEndpoint):
         self,
         target,
         *,
+        domain: Any = _UNSET,
+        domain_id: Any = _UNSET,
+        job_id: str,
+        interactive: bool = False,
+        upload: bool = True,
         location_code: int | None = None,
         language_code: str | None = None,
         max_wait: int = 300,
         debug: bool | None = None,
     ) -> pd.DataFrame:
         """POST/GET workflow for ≤100 keywords."""
+        _validate_job_id(job_id)
+        resolved = self._resolve_domain(domain, domain_id, interactive)
+
         keywords = [target] if isinstance(target, str) else list(target)
         if len(keywords) > 100:
             raise ValueError("Maximum 100 keywords. Use post_all() for larger batches.")
 
         debug = debug if debug is not None else self.config.debug
 
+        empty_cols = self._get_schema() + ["domain_id", "domain", "endpoint_mode"]
+
         tasks = self._task_post(keywords, location_code, language_code, debug)
         if not tasks:
-            return pd.DataFrame(columns=self._get_schema())
+            return pd.DataFrame(columns=empty_cols)
 
         task_map = {t["id"]: t["keyword"] for t in tasks}
         pending = set(task_map.keys())
@@ -247,14 +259,26 @@ class SerpGoogleOrganic(BaseEndpoint):
         if pending and debug:
             print(f"Warning: {len(pending)} tasks did not complete within {max_wait}s")
 
-        if results:
-            return pd.concat(results, ignore_index=True)
-        return pd.DataFrame(columns=self._get_schema())
+        if not results:
+            return pd.DataFrame(columns=empty_cols)
+
+        combined = pd.concat(results, ignore_index=True)
+        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="standard")
+
+        if upload:
+            self.upload(self._client.bq_client, combined, job_id=job_id)
+
+        return combined
 
     def post_all(
         self,
         targets: list[str],
         *,
+        domain: Any = _UNSET,
+        domain_id: Any = _UNSET,
+        job_id: str,
+        interactive: bool = False,
+        upload: bool = True,
         batch_size: int = 100,
         num_workers: int = 10,
         max_wait: int = 18000,
@@ -264,10 +288,15 @@ class SerpGoogleOrganic(BaseEndpoint):
         debug: bool | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """High-volume POST/GET. Returns (results_df, failed_df)."""
+        _validate_job_id(job_id)
+        resolved = self._resolve_domain(domain, domain_id, interactive)
+
         if batch_size > 100:
             batch_size = 100
 
         debug = debug if debug is not None else self.config.debug
+
+        empty_cols = self._get_schema() + ["domain_id", "domain", "endpoint_mode"]
 
         task_queue: Queue = Queue()
         results: list[pd.DataFrame] = []
@@ -301,7 +330,7 @@ class SerpGoogleOrganic(BaseEndpoint):
 
         if not task_id_to_keyword:
             print("ERROR: No tasks submitted")
-            return pd.DataFrame(columns=self._get_schema()), pd.DataFrame(columns=["keyword", "task_id", "reason"])
+            return pd.DataFrame(columns=empty_cols), pd.DataFrame(columns=["keyword", "task_id", "reason"])
 
         total_tasks = len(task_id_to_keyword)
 
@@ -487,6 +516,7 @@ class SerpGoogleOrganic(BaseEndpoint):
 
         if results:
             results_df = pd.concat(results, ignore_index=True)
+            results_df = self._stamp_fetch_metadata(results_df, resolved, endpoint_mode="standard")
             elapsed = (time.time() - stats["start_time"]) / 60
             if debug:
                 print(f"Done. {len(results_df):,} rows for {stats['collected']:,} keywords in {elapsed:.1f}min")
@@ -494,9 +524,11 @@ class SerpGoogleOrganic(BaseEndpoint):
                 print(f"Not-ready cycles: {stats['not_ready_cycles']:,}")
                 if elapsed > 0:
                     print(f"Effective rate: {stats['collected'] / elapsed:.0f}/min")
+            if upload:
+                self.upload(self._client.bq_client, results_df, job_id=job_id)
             return results_df, failed_df
 
-        return pd.DataFrame(columns=self._get_schema()), failed_df
+        return pd.DataFrame(columns=empty_cols), failed_df
 
     def extract_paa(self, df: pd.DataFrame) -> pd.DataFrame:
         if df.empty or "item_type" not in df.columns:
