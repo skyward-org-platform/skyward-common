@@ -37,8 +37,14 @@ class BacklinksSummary(BaseEndpoint):
         rows = []
         for result in result_list:
             info = result.get("info") or {}
+            target_str = result.get("target") or target
+            # target_type: "url" if the target has a path component (e.g. example.com/page),
+            # "domain" otherwise. DFS doesn't return this; we derive it locally.
+            stripped = target_str.split("://", 1)[-1] if target_str else ""
+            target_type = "url" if "/" in stripped else "domain"
             rows.append({
-                "target": result.get("target") or target,
+                "target": target_str,
+                "target_type": target_type,
                 "rank": result.get("rank"),
                 "backlinks": result.get("backlinks"),
                 "backlinks_spam_score": result.get("backlinks_spam_score"),
@@ -71,7 +77,7 @@ class BacklinksSummary(BaseEndpoint):
 
     def _get_schema(self) -> list[str]:
         return [
-            "target", "rank", "backlinks", "backlinks_spam_score",
+            "target", "target_type", "rank", "backlinks", "backlinks_spam_score",
             "target_spam_score", "crawled_pages",
             "referring_domains", "referring_domains_nofollow",
             "referring_main_domains", "referring_main_domains_nofollow",

@@ -81,6 +81,9 @@ class SerpGoogleOrganic(BaseEndpoint):
                 "rank_absolute": item.get("rank_absolute"),
                 "page": item.get("page"),
                 "position": item.get("position"),
+                "url": item.get("url"),
+                "title": item.get("title"),
+                "description": item.get("description"),
                 "data": {k: v for k, v in result.items() if k != "items"},
                 "item": item,
             })
@@ -93,7 +96,7 @@ class SerpGoogleOrganic(BaseEndpoint):
             "location_code", "language_code", "device", "os",
             "se_results_count", "check_url", "item_types", "refinement_chips",
             "item_type", "rank_group", "rank_absolute",
-            "page", "position", "data", "item",
+            "page", "position", "url", "title", "description", "data", "item",
         ]
 
     def _get_dedupe_keys(self) -> list[str]:
