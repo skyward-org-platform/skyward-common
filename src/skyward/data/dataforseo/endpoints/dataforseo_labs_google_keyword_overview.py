@@ -2,7 +2,7 @@
 
 Fetches keyword overview data for up to 700 keywords per request.
 Includes search volume, CPC, competition, keyword difficulty,
-search intent, and impressions data.
+search intent, trend, and average backlinks info.
 """
 
 from __future__ import annotations
@@ -10,10 +10,12 @@ from __future__ import annotations
 import json
 import math
 import time
+from typing import Any
 
 import pandas as pd
 
-from skyward.data.dataforseo.base import BaseEndpoint
+from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.functions import _validate_job_id
 
 
 class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
@@ -49,51 +51,48 @@ class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
         except Exception:
             return pd.DataFrame(columns=self._get_schema() + ["task_id"])
 
+        result0 = results[0] or {}
+        language_code_val = result0.get("language_code")
+
         rows = []
         for item in items:
             keyword_info = item.get("keyword_info") or {}
             keyword_properties = item.get("keyword_properties") or {}
             search_intent_info = item.get("search_intent_info") or {}
-            impressions_info = item.get("impressions_info") or {}
-
-            # Serialize complex fields
-            categories = keyword_info.get("categories")
-            categories_str = json.dumps(categories) if categories else None
-
-            monthly_searches = keyword_info.get("monthly_searches")
-            monthly_searches_str = json.dumps(monthly_searches) if monthly_searches else None
-
-            foreign_intent = search_intent_info.get("foreign_intent")
-            if isinstance(foreign_intent, list):
-                foreign_intent_str = ",".join(str(x) for x in foreign_intent if x is not None)
-            else:
-                foreign_intent_str = foreign_intent
+            avg_backlinks_info = item.get("avg_backlinks_info") or {}
+            search_volume_trend = keyword_info.get("search_volume_trend") or {}
 
             rows.append({
                 "keyword": item.get("keyword"),
                 "location_code": item.get("location_code"),
+                "language_code": item.get("language_code", language_code_val),
                 "search_volume": keyword_info.get("search_volume"),
                 "competition": keyword_info.get("competition"),
                 "competition_level": keyword_info.get("competition_level"),
                 "cpc": keyword_info.get("cpc"),
                 "low_top_of_page_bid": keyword_info.get("low_top_of_page_bid"),
                 "high_top_of_page_bid": keyword_info.get("high_top_of_page_bid"),
-                "categories": categories_str,
-                "monthly_searches": monthly_searches_str,
+                "categories": keyword_info.get("categories"),
+                "monthly_searches": keyword_info.get("monthly_searches"),
+                "search_volume_trend_monthly": search_volume_trend.get("monthly"),
+                "search_volume_trend_quarterly": search_volume_trend.get("quarterly"),
+                "search_volume_trend_yearly": search_volume_trend.get("yearly"),
+                "keyword_info_last_updated_time": keyword_info.get("last_updated_time"),
+                "core_keyword": keyword_properties.get("core_keyword"),
                 "keyword_difficulty": keyword_properties.get("keyword_difficulty"),
                 "detected_language": keyword_properties.get("detected_language"),
                 "is_another_language": keyword_properties.get("is_another_language"),
                 "main_intent": search_intent_info.get("main_intent"),
-                "foreign_intent": foreign_intent_str,
-                "ad_position_min": impressions_info.get("ad_position_min"),
-                "ad_position_max": impressions_info.get("ad_position_max"),
-                "ad_position_average": impressions_info.get("ad_position_average"),
-                "cpc_min": impressions_info.get("cpc_min"),
-                "cpc_max": impressions_info.get("cpc_max"),
-                "cpc_average": impressions_info.get("cpc_average"),
-                "daily_impressions_min": impressions_info.get("daily_impressions_min"),
-                "daily_impressions_max": impressions_info.get("daily_impressions_max"),
-                "daily_impressions_average": impressions_info.get("daily_impressions_average"),
+                "foreign_intent": search_intent_info.get("foreign_intent"),
+                "search_intent_last_updated_time": search_intent_info.get("last_updated_time"),
+                "avg_backlinks": avg_backlinks_info.get("backlinks"),
+                "avg_dofollow": avg_backlinks_info.get("dofollow"),
+                "avg_referring_pages": avg_backlinks_info.get("referring_pages"),
+                "avg_referring_domains": avg_backlinks_info.get("referring_domains"),
+                "avg_referring_main_domains": avg_backlinks_info.get("referring_main_domains"),
+                "avg_rank": avg_backlinks_info.get("rank"),
+                "avg_main_domain_rank": avg_backlinks_info.get("main_domain_rank"),
+                "avg_backlinks_last_updated_time": avg_backlinks_info.get("last_updated_time"),
                 "task_id": task_id,
             })
 
@@ -101,29 +100,43 @@ class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
 
     def _get_schema(self) -> list[str]:
         return [
-            "keyword", "location_code",
+            "keyword", "location_code", "language_code",
             "search_volume", "competition", "competition_level", "cpc",
             "low_top_of_page_bid", "high_top_of_page_bid",
             "categories", "monthly_searches",
+            "search_volume_trend_monthly", "search_volume_trend_quarterly",
+            "search_volume_trend_yearly",
+            "keyword_info_last_updated_time",
+            "core_keyword",
             "keyword_difficulty", "detected_language", "is_another_language",
             "main_intent", "foreign_intent",
-            "ad_position_min", "ad_position_max", "ad_position_average",
-            "cpc_min", "cpc_max", "cpc_average",
-            "daily_impressions_min", "daily_impressions_max", "daily_impressions_average",
+            "search_intent_last_updated_time",
+            "avg_backlinks", "avg_dofollow", "avg_referring_pages",
+            "avg_referring_domains", "avg_referring_main_domains",
+            "avg_rank", "avg_main_domain_rank",
+            "avg_backlinks_last_updated_time",
         ]
 
     def _get_dedupe_keys(self) -> list[str]:
-        return ["keyword", "location_code"]
+        return ["keyword", "location_code", "language_code"]
 
     def _cast_types(self, df: pd.DataFrame) -> pd.DataFrame:
         int_cols = ["search_volume", "keyword_difficulty", "location_code"]
         float_cols = [
             "competition", "cpc", "low_top_of_page_bid", "high_top_of_page_bid",
-            "ad_position_min", "ad_position_max", "ad_position_average",
-            "cpc_min", "cpc_max", "cpc_average",
-            "daily_impressions_min", "daily_impressions_max", "daily_impressions_average",
+            "search_volume_trend_monthly", "search_volume_trend_quarterly",
+            "search_volume_trend_yearly",
+            "avg_backlinks", "avg_dofollow", "avg_referring_pages",
+            "avg_referring_domains", "avg_referring_main_domains",
+            "avg_rank", "avg_main_domain_rank",
         ]
         bool_cols = ["is_another_language"]
+        ts_cols = [
+            "keyword_info_last_updated_time",
+            "search_intent_last_updated_time",
+            "avg_backlinks_last_updated_time",
+        ]
+        stringify_cols = ["categories", "monthly_searches"]
 
         for col in int_cols:
             if col in df.columns:
@@ -137,9 +150,22 @@ class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
             if col in df.columns:
                 df[col] = df[col].astype("boolean")
 
-        for col in ["categories", "monthly_searches", "foreign_intent"]:
+        for col in ts_cols:
             if col in df.columns:
-                df[col] = df[col].astype("string")
+                df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+
+        for col in stringify_cols:
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda v: json.dumps(v) if isinstance(v, (list, dict)) else v
+                ).astype("string")
+
+        if "foreign_intent" in df.columns:
+            def _normalize(v):
+                if isinstance(v, list):
+                    return ",".join(str(x) for x in v if x is not None)
+                return v
+            df["foreign_intent"] = df["foreign_intent"].apply(_normalize).astype("string")
 
         return df
 
@@ -177,6 +203,11 @@ class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
         self,
         keywords: list[str],
         *,
+        domain: Any = _UNSET,
+        domain_id: Any = _UNSET,
+        job_id: str,
+        interactive: bool = False,
+        upload: bool = True,
         batch_size: int = 700,
         batch_delay: float = 0.2,
         **kwargs,
@@ -185,19 +216,28 @@ class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
         Fetch keyword overview data for an arbitrary number of keywords.
 
         Chunks the keyword list into batches of up to 700 and calls _fetch_live()
-        for each batch sequentially.
+        for each batch sequentially. Honors the BaseEndpoint contract: validates
+        job_id, resolves domain, stamps fetch metadata, and uploads unless
+        upload=False.
 
         Args:
             keywords: Full list of keywords
+            domain / domain_id: Exactly one must be provided (or domain=None to opt out)
+            job_id: Required job identifier
+            interactive: If True, prompt on unknown domain
+            upload: If True, append rows to BQ
             batch_size: Keywords per API call (max 700)
             batch_delay: Delay in seconds between batches
             **kwargs: Passed to _fetch_live()
 
         Returns:
-            Combined DataFrame of all results
+            Combined DataFrame with metadata columns stamped.
         """
+        _validate_job_id(job_id)
+        resolved = self._resolve_domain(domain, domain_id, interactive)
+
         batch_size = min(batch_size, 700)
-        total_batches = math.ceil(len(keywords) / batch_size)
+        total_batches = math.ceil(len(keywords) / batch_size) if keywords else 0
         df_list: list[pd.DataFrame] = []
 
         if self.config.debug:
@@ -214,6 +254,14 @@ class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
             if idx < total_batches:
                 time.sleep(batch_delay)
 
-        if df_list:
-            return pd.concat(df_list, ignore_index=True)
-        return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        if not df_list:
+            print("No rows returned. Skipping upload.")
+            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
+
+        combined = pd.concat(df_list, ignore_index=True)
+        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
+
+        if upload:
+            self.upload(self._client.bq_client, combined, job_id=job_id)
+
+        return combined

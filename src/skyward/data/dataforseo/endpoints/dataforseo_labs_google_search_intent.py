@@ -6,6 +6,7 @@ Returns intent label, probability, and secondary intents.
 
 from __future__ import annotations
 
+import json
 import math
 import time
 
@@ -51,16 +52,16 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
         rows = []
         for item in items:
             keyword_intent = item.get("keyword_intent") or {}
-            secondary = item.get("secondary_keyword_intents") or []
-            secondary_str = ",".join(
-                si.get("label", "") for si in secondary if si.get("label")
-            ) if secondary else None
+            # Preserve the full [{label, probability}, ...] structure so probability
+            # ranking — the primary analytic signal for intent-mapping workflows —
+            # isn't lost. Stringified to JSON in _cast_types. `None` passes through.
+            secondary_keyword_intents = item.get("secondary_keyword_intents")
 
             rows.append({
                 "keyword": item.get("keyword"),
                 "search_intent": keyword_intent.get("label"),
                 "intent_probability": keyword_intent.get("probability"),
-                "secondary_intents": secondary_str,
+                "secondary_keyword_intents": secondary_keyword_intents,
                 "language_code": item.get("language_code", language_code_val),
                 "task_id": task_id,
             })
@@ -70,7 +71,7 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
     def _get_schema(self) -> list[str]:
         return [
             "keyword", "search_intent", "intent_probability",
-            "secondary_intents", "language_code",
+            "secondary_keyword_intents", "language_code",
         ]
 
     def _get_dedupe_keys(self) -> list[str]:
@@ -80,7 +81,14 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
         if "intent_probability" in df.columns:
             df["intent_probability"] = pd.to_numeric(df["intent_probability"], errors="coerce")
 
-        for col in ["keyword", "search_intent", "secondary_intents", "language_code"]:
+        stringify_cols = ["secondary_keyword_intents"]
+        for col in stringify_cols:
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda v: json.dumps(v) if isinstance(v, (list, dict)) else v
+                )
+
+        for col in ["keyword", "search_intent", "secondary_keyword_intents", "language_code"]:
             if col in df.columns:
                 df[col] = df[col].astype("string")
 

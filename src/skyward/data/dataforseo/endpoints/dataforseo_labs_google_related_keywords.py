@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 import pandas as pd
@@ -53,12 +54,10 @@ class DataforseoLabsGoogleRelatedKeywords(BaseEndpoint):
             serp_info = kd.get("serp_info", {}) or {}
             backlinks_info = kd.get("avg_backlinks_info", {}) or {}
             intent_info = kd.get("search_intent_info", {}) or {}
+            search_volume_trend = kw_info.get("search_volume_trend") or {}
 
             related_keyword = kd.get("keyword") or item.get("keyword")
             depth = item.get("depth")
-
-            serp_item_types_list = serp_info.get("serp_item_types") or []
-            serp_item_types_str = ",".join(serp_item_types_list) if isinstance(serp_item_types_list, list) else None
 
             rows.append({
                 "task_id": task_id,
@@ -73,19 +72,32 @@ class DataforseoLabsGoogleRelatedKeywords(BaseEndpoint):
                 "competition_level": kw_info.get("competition_level"),
                 "low_top_of_page_bid": kw_info.get("low_top_of_page_bid"),
                 "high_top_of_page_bid": kw_info.get("high_top_of_page_bid"),
+                "monthly_searches": kw_info.get("monthly_searches"),
+                "search_volume_trend_monthly": search_volume_trend.get("monthly"),
+                "search_volume_trend_quarterly": search_volume_trend.get("quarterly"),
+                "search_volume_trend_yearly": search_volume_trend.get("yearly"),
+                "keyword_info_last_updated_time": kw_info.get("last_updated_time"),
+                "core_keyword": kw_props.get("core_keyword"),
                 "keyword_difficulty": kw_props.get("keyword_difficulty"),
                 "detected_language": kw_props.get("detected_language"),
                 "is_other_language": kw_props.get("is_another_language"),
-                "serp_item_types": serp_item_types_str,
+                "serp_item_types": serp_info.get("serp_item_types"),
                 "se_results_count": serp_info.get("se_results_count"),
                 "serp_last_updated_time": serp_info.get("last_updated_time"),
+                "serp_info_check_url": serp_info.get("check_url"),
+                "serp_info_previous_updated_time": serp_info.get("previous_updated_time"),
                 "backlinks": backlinks_info.get("backlinks"),
                 "dofollow": backlinks_info.get("dofollow"),
                 "referring_pages": backlinks_info.get("referring_pages"),
                 "referring_domains": backlinks_info.get("referring_domains"),
                 "referring_main_domains": backlinks_info.get("referring_main_domains"),
                 "main_domain_rank": backlinks_info.get("main_domain_rank"),
+                "avg_rank": backlinks_info.get("rank"),
+                "avg_backlinks_last_updated_time": backlinks_info.get("last_updated_time"),
                 "search_intent_main": intent_info.get("main_intent"),
+                "foreign_intent": intent_info.get("foreign_intent"),
+                "search_intent_last_updated_time": intent_info.get("last_updated_time"),
+                "related_keywords": item.get("related_keywords"),
             })
 
         return pd.DataFrame(rows)
@@ -95,12 +107,22 @@ class DataforseoLabsGoogleRelatedKeywords(BaseEndpoint):
             "task_id", "seed_keyword", "related_keyword", "depth",
             "location_code", "language_code",
             "search_volume", "cpc", "competition", "competition_level",
-            "low_top_of_page_bid", "high_top_of_page_bid", "keyword_difficulty",
+            "low_top_of_page_bid", "high_top_of_page_bid",
+            "monthly_searches",
+            "search_volume_trend_monthly", "search_volume_trend_quarterly", "search_volume_trend_yearly",
+            "keyword_info_last_updated_time",
+            "core_keyword",
+            "keyword_difficulty",
             "detected_language", "is_other_language",
             "serp_item_types", "se_results_count", "serp_last_updated_time",
+            "serp_info_check_url", "serp_info_previous_updated_time",
             "backlinks", "dofollow", "referring_pages",
             "referring_domains", "referring_main_domains", "main_domain_rank",
-            "search_intent_main",
+            "avg_rank",
+            "avg_backlinks_last_updated_time",
+            "search_intent_main", "foreign_intent",
+            "search_intent_last_updated_time",
+            "related_keywords",
         ]
 
     def _get_dedupe_keys(self) -> list[str]:
@@ -110,9 +132,20 @@ class DataforseoLabsGoogleRelatedKeywords(BaseEndpoint):
         int_cols = ["depth", "location_code", "search_volume", "se_results_count", "keyword_difficulty"]
         float_cols = [
             "cpc", "competition", "low_top_of_page_bid", "high_top_of_page_bid",
+            "search_volume_trend_monthly", "search_volume_trend_quarterly", "search_volume_trend_yearly",
             "backlinks", "dofollow", "referring_pages",
             "referring_domains", "referring_main_domains", "main_domain_rank",
+            "avg_rank",
         ]
+        bool_cols = ["is_other_language"]
+        ts_cols = [
+            "serp_last_updated_time",
+            "serp_info_previous_updated_time",
+            "keyword_info_last_updated_time",
+            "search_intent_last_updated_time",
+            "avg_backlinks_last_updated_time",
+        ]
+        stringify_cols = ["monthly_searches", "serp_item_types", "related_keywords"]
 
         for col in int_cols:
             if col in df.columns:
@@ -120,11 +153,24 @@ class DataforseoLabsGoogleRelatedKeywords(BaseEndpoint):
         for col in float_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
+        for col in bool_cols:
+            if col in df.columns:
+                df[col] = df[col].astype("boolean")
+        for col in ts_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+        for col in stringify_cols:
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda v: json.dumps(v) if isinstance(v, (list, dict)) else v
+                )
 
-        if "serp_last_updated_time" in df.columns:
-            df["serp_last_updated_time"] = pd.to_datetime(
-                df["serp_last_updated_time"], errors="coerce", utc=True
-            )
+        if "foreign_intent" in df.columns:
+            def _normalize(v):
+                if isinstance(v, list):
+                    return ",".join(str(x) for x in v if x is not None)
+                return v
+            df["foreign_intent"] = df["foreign_intent"].apply(_normalize).astype("string")
 
         return df
 

@@ -46,8 +46,6 @@ class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
             metrics = item.get("metrics", {}) or {}
             organic = metrics.get("organic", {}) or {}
             paid = metrics.get("paid", {}) or {}
-            local_pack = metrics.get("local_pack", {}) or {}
-            featured_snippet = metrics.get("featured_snippet", {}) or {}
 
             rows.append({
                 "target": target,
@@ -56,7 +54,6 @@ class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
                 # Organic metrics
                 "organic_count": organic.get("count"),
                 "organic_etv": organic.get("etv"),
-                "organic_impressions_etv": organic.get("impressions_etv"),
                 "organic_estimated_paid_traffic_cost": organic.get("estimated_paid_traffic_cost"),
                 "organic_is_new": organic.get("is_new"),
                 "organic_is_up": organic.get("is_up"),
@@ -77,18 +74,11 @@ class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
                 # Paid metrics
                 "paid_count": paid.get("count"),
                 "paid_etv": paid.get("etv"),
-                "paid_impressions_etv": paid.get("impressions_etv"),
                 "paid_estimated_paid_traffic_cost": paid.get("estimated_paid_traffic_cost"),
                 "paid_is_new": paid.get("is_new"),
                 "paid_is_up": paid.get("is_up"),
                 "paid_is_down": paid.get("is_down"),
                 "paid_is_lost": paid.get("is_lost"),
-                # Local pack metrics
-                "local_pack_count": local_pack.get("count"),
-                "local_pack_etv": local_pack.get("etv"),
-                # Featured snippet metrics
-                "featured_snippet_count": featured_snippet.get("count"),
-                "featured_snippet_etv": featured_snippet.get("etv"),
                 "task_id": task_id,
             })
 
@@ -97,18 +87,16 @@ class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
     def _get_schema(self) -> list[str]:
         return [
             "target", "location_code", "language_code",
-            "organic_count", "organic_etv", "organic_impressions_etv",
+            "organic_count", "organic_etv",
             "organic_estimated_paid_traffic_cost",
             "organic_is_new", "organic_is_up", "organic_is_down", "organic_is_lost",
             "organic_pos_1", "organic_pos_2_3", "organic_pos_4_10",
             "organic_pos_11_20", "organic_pos_21_30", "organic_pos_31_40",
             "organic_pos_41_50", "organic_pos_51_60", "organic_pos_61_70",
             "organic_pos_71_80", "organic_pos_81_90", "organic_pos_91_100",
-            "paid_count", "paid_etv", "paid_impressions_etv",
+            "paid_count", "paid_etv",
             "paid_estimated_paid_traffic_cost",
             "paid_is_new", "paid_is_up", "paid_is_down", "paid_is_lost",
-            "local_pack_count", "local_pack_etv",
-            "featured_snippet_count", "featured_snippet_etv",
         ]
 
     def _get_dedupe_keys(self) -> list[str]:
@@ -123,12 +111,10 @@ class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
             "organic_pos_41_50", "organic_pos_51_60", "organic_pos_61_70",
             "organic_pos_71_80", "organic_pos_81_90", "organic_pos_91_100",
             "paid_count", "paid_is_new", "paid_is_up", "paid_is_down", "paid_is_lost",
-            "local_pack_count", "featured_snippet_count",
         ]
         float_cols = [
-            "organic_etv", "organic_impressions_etv", "organic_estimated_paid_traffic_cost",
-            "paid_etv", "paid_impressions_etv", "paid_estimated_paid_traffic_cost",
-            "local_pack_etv", "featured_snippet_etv",
+            "organic_etv", "organic_estimated_paid_traffic_cost",
+            "paid_etv", "paid_estimated_paid_traffic_cost",
         ]
 
         for col in int_cols:
@@ -184,7 +170,10 @@ class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
             Total number of ranked keywords, or -1 on failure
         """
         job_id = job_id or generate_job_id()
-        df = self.live(domain, domain=None, job_id=job_id, location_code=location_code, upload=False)
+        kwargs: dict = {}
+        if location_code is not None:
+            kwargs["location_code"] = location_code
+        df = self.live(domain, domain=None, job_id=job_id, upload=False, **kwargs)
         if df.empty:
             return -1
         try:

@@ -9,7 +9,9 @@ prefer the POST/GET workflow via post_all().
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from typing import Any
 
 import pandas as pd
 
@@ -37,6 +39,8 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         try:
             task = response["tasks"][0]
             task_id = task.get("id", "")
+            task_data = task.get("data") or {}
+            task_location_code = task_data.get("location_code")
             items = task["result"]
             if not items:
                 return pd.DataFrame(columns=self._get_schema() + ["task_id"])
@@ -46,28 +50,61 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         rows = []
         for item in items:
             keyword = item.get("keyword")
-            search_volume = item.get("search_volume")
-            if keyword and search_volume is not None:
-                rows.append({
-                    "keyword": keyword,
-                    "local_search_volume": search_volume,
-                    "local_location_code": self.config.location_code,
-                    "task_id": task_id,
-                })
+            if not keyword:
+                continue
+            # Prefer per-row location_code from the API; fall back to the task-level echo
+            row_location_code = item.get("location_code")
+            if row_location_code is None:
+                row_location_code = task_location_code
 
-        return pd.DataFrame(rows)
+            monthly_searches = item.get("monthly_searches")
+            rows.append({
+                "keyword": keyword,
+                "search_volume": item.get("search_volume"),
+                "location_code": row_location_code,
+                "cpc": item.get("cpc"),
+                "competition": item.get("competition"),
+                "competition_index": item.get("competition_index"),
+                "low_top_of_page_bid": item.get("low_top_of_page_bid"),
+                "high_top_of_page_bid": item.get("high_top_of_page_bid"),
+                "monthly_searches": json.dumps(monthly_searches) if monthly_searches else None,
+                "task_id": task_id,
+            })
+
+        return pd.DataFrame(rows) if rows else pd.DataFrame(columns=self._get_schema() + ["task_id"])
 
     def _get_schema(self) -> list[str]:
-        return ["keyword", "local_search_volume", "local_location_code"]
+        return [
+            "keyword",
+            "search_volume",
+            "location_code",
+            "cpc",
+            "competition",
+            "competition_index",
+            "low_top_of_page_bid",
+            "high_top_of_page_bid",
+            "monthly_searches",
+        ]
 
     def _get_dedupe_keys(self) -> list[str]:
-        return ["keyword", "local_location_code"]
+        return ["keyword", "location_code"]
 
     def _cast_types(self, df: pd.DataFrame) -> pd.DataFrame:
-        if "local_search_volume" in df.columns:
-            df["local_search_volume"] = pd.to_numeric(df["local_search_volume"], errors="coerce").astype("Int64")
-        if "local_location_code" in df.columns:
-            df["local_location_code"] = pd.to_numeric(df["local_location_code"], errors="coerce").astype("Int64")
+        int_cols = ["search_volume", "location_code", "competition_index"]
+        float_cols = ["cpc", "low_top_of_page_bid", "high_top_of_page_bid"]
+        stringify_cols = ["monthly_searches"]
+
+        for col in int_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+        for col in float_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        for col in stringify_cols:
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda v: json.dumps(v) if isinstance(v, (list, dict)) else v
+                )
         return df
 
     def _fetch_live(self, target: str | list[str], **kwargs) -> pd.DataFrame:
@@ -106,6 +143,11 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         self,
         targets: list[str],
         *,
+        domain: Any = _UNSET,
+        domain_id: Any = _UNSET,
+        job_id: str,
+        interactive: bool = False,
+        upload: bool = True,
         batch_size: int = 1000,
         batch_delay: float = 2.0,
         **kwargs,
@@ -115,13 +157,20 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
 
         Args:
             targets: List of keywords
+            domain / domain_id: Domain attribution (mutually exclusive; omit both to opt out)
+            job_id: Required — tagged onto uploaded rows for lineage
+            interactive: Whether to prompt the user when resolving an unknown domain
+            upload: If True (default), BQ upload happens after fetch
             batch_size: Keywords per request (max 1000)
             batch_delay: Delay between batches to respect rate limits
-            **kwargs: Additional parameters
+            **kwargs: Additional parameters forwarded to `_fetch_live`
 
         Returns:
-            Combined DataFrame with all search volumes
+            Combined DataFrame with all search volumes, stamped with fetch metadata.
         """
+        _validate_job_id(job_id)
+        resolved = self._resolve_domain(domain, domain_id, interactive)
+
         batch_size = min(batch_size, 1000)  # API max
         batches = list(self._client._chunked(targets, batch_size))
         total_batches = len(batches)
@@ -144,9 +193,17 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
             if idx < total_batches:
                 await asyncio.sleep(batch_delay)
 
-        if results:
-            return pd.concat(results, ignore_index=True)
-        return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        if not results:
+            print("No rows returned. Skipping upload.")
+            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
+
+        combined = pd.concat(results, ignore_index=True)
+        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
+
+        if upload:
+            self.upload(self._client.bq_client, combined, job_id=job_id)
+
+        return combined
 
     # -------------------------------------------------------------------------
     # POST/GET workflow methods

@@ -139,56 +139,86 @@ DATAFORSEO_LABS_RELATED_KEYWORDS_COLS = """\
   location_code INT64, language_code STRING,
   search_volume INT64, cpc FLOAT64, competition FLOAT64,
   competition_level STRING, low_top_of_page_bid FLOAT64,
-  high_top_of_page_bid FLOAT64, keyword_difficulty INT64,
-  detected_language STRING, is_other_language STRING,
+  high_top_of_page_bid FLOAT64,
+  monthly_searches STRING,
+  search_volume_trend_monthly FLOAT64,
+  search_volume_trend_quarterly FLOAT64,
+  search_volume_trend_yearly FLOAT64,
+  keyword_info_last_updated_time TIMESTAMP,
+  core_keyword STRING,
+  keyword_difficulty INT64,
+  detected_language STRING, is_other_language BOOL,
   serp_item_types STRING, se_results_count INT64,
   serp_last_updated_time TIMESTAMP,
+  serp_info_check_url STRING,
+  serp_info_previous_updated_time TIMESTAMP,
   backlinks FLOAT64, dofollow FLOAT64, referring_pages FLOAT64,
   referring_domains FLOAT64, referring_main_domains FLOAT64,
-  main_domain_rank FLOAT64, search_intent_main STRING
+  main_domain_rank FLOAT64,
+  avg_rank FLOAT64,
+  avg_backlinks_last_updated_time TIMESTAMP,
+  search_intent_main STRING, foreign_intent STRING,
+  search_intent_last_updated_time TIMESTAMP,
+  related_keywords STRING
 """
 
 DATAFORSEO_LABS_RANKED_KEYWORDS_COLS = """\
   keyword STRING, rank INT64, url STRING, search_volume INT64,
   keyword_difficulty INT64, national_location_code INT64,
-  traffic_volume FLOAT64, cost_per_click FLOAT64,
+  traffic_volume FLOAT64,
   keyword_location_code INT64, language_code STRING, main_domain STRING,
-  cpc_raw FLOAT64, low_top_of_page_bid FLOAT64, high_top_of_page_bid FLOAT64,
+  cpc FLOAT64, low_top_of_page_bid FLOAT64, high_top_of_page_bid FLOAT64,
   competition FLOAT64, competition_level STRING, categories STRING,
   monthly_searches STRING,
-  search_volume_trend_monthly INT64, search_volume_trend_quarterly INT64,
-  search_volume_trend_yearly INT64,
-  rank_absolute INT64, position STRING, serp_keyword_difficulty STRING,
+  search_volume_trend_monthly FLOAT64, search_volume_trend_quarterly FLOAT64,
+  search_volume_trend_yearly FLOAT64,
+  keyword_info_last_updated_time TIMESTAMP,
+  core_keyword STRING, detected_language STRING, is_another_language BOOL,
+  rank_absolute INT64, position STRING, serp_keyword_difficulty INT64,
   serp_item_types STRING, se_results_count INT64,
   main_intent STRING, foreign_intent STRING,
+  search_intent_last_updated_time TIMESTAMP,
   avg_backlinks FLOAT64, avg_referring_domains FLOAT64,
   avg_referring_main_domains FLOAT64, avg_rank FLOAT64,
   avg_main_domain_rank FLOAT64,
-  company_id STRING, filters STRING
+  avg_backlinks_last_updated_time TIMESTAMP,
+  serp_item_type STRING, serp_item_title STRING, serp_item_description STRING,
+  is_featured_snippet BOOL, estimated_paid_traffic_cost FLOAT64,
+  previous_rank_absolute INT64,
+  rank_is_new BOOL, rank_is_up BOOL, rank_is_down BOOL,
+  serp_item_referring_domains INT64, serp_item_referring_main_domains INT64,
+  serp_item_backlinks INT64,
+  serp_item_page_rank INT64, serp_item_main_domain_rank INT64,
+  is_lost BOOL
 """
 
 DATAFORSEO_LABS_KEYWORD_OVERVIEW_COLS = """\
-  keyword STRING, location_code INT64,
+  keyword STRING, location_code INT64, language_code STRING,
   search_volume INT64, competition FLOAT64, competition_level STRING,
   cpc FLOAT64, low_top_of_page_bid FLOAT64, high_top_of_page_bid FLOAT64,
   categories STRING, monthly_searches STRING,
+  search_volume_trend_monthly FLOAT64, search_volume_trend_quarterly FLOAT64,
+  search_volume_trend_yearly FLOAT64,
+  keyword_info_last_updated_time TIMESTAMP,
+  core_keyword STRING,
   keyword_difficulty INT64, detected_language STRING,
   is_another_language BOOL,
   main_intent STRING, foreign_intent STRING,
-  ad_position_min FLOAT64, ad_position_max FLOAT64, ad_position_average FLOAT64,
-  cpc_min FLOAT64, cpc_max FLOAT64, cpc_average FLOAT64,
-  daily_impressions_min FLOAT64, daily_impressions_max FLOAT64,
-  daily_impressions_average FLOAT64
+  search_intent_last_updated_time TIMESTAMP,
+  avg_backlinks FLOAT64, avg_dofollow FLOAT64, avg_referring_pages FLOAT64,
+  avg_referring_domains FLOAT64, avg_referring_main_domains FLOAT64,
+  avg_rank FLOAT64, avg_main_domain_rank FLOAT64,
+  avg_backlinks_last_updated_time TIMESTAMP
 """
 
 DATAFORSEO_LABS_SEARCH_INTENT_COLS = """\
   keyword STRING, search_intent STRING, intent_probability FLOAT64,
-  secondary_intents STRING, language_code STRING
+  secondary_keyword_intents STRING, language_code STRING
 """
 
 DATAFORSEO_LABS_DOMAIN_RANK_OVERVIEW_COLS = """\
   target STRING, location_code INT64, language_code STRING,
-  organic_count INT64, organic_etv FLOAT64, organic_impressions_etv FLOAT64,
+  organic_count INT64, organic_etv FLOAT64,
   organic_estimated_paid_traffic_cost FLOAT64,
   organic_is_new INT64, organic_is_up INT64, organic_is_down INT64,
   organic_is_lost INT64,
@@ -196,15 +226,16 @@ DATAFORSEO_LABS_DOMAIN_RANK_OVERVIEW_COLS = """\
   organic_pos_11_20 INT64, organic_pos_21_30 INT64, organic_pos_31_40 INT64,
   organic_pos_41_50 INT64, organic_pos_51_60 INT64, organic_pos_61_70 INT64,
   organic_pos_71_80 INT64, organic_pos_81_90 INT64, organic_pos_91_100 INT64,
-  paid_count INT64, paid_etv FLOAT64, paid_impressions_etv FLOAT64,
+  paid_count INT64, paid_etv FLOAT64,
   paid_estimated_paid_traffic_cost FLOAT64,
-  paid_is_new INT64, paid_is_up INT64, paid_is_down INT64, paid_is_lost INT64,
-  local_pack_count INT64, local_pack_etv FLOAT64,
-  featured_snippet_count INT64, featured_snippet_etv FLOAT64
+  paid_is_new INT64, paid_is_up INT64, paid_is_down INT64, paid_is_lost INT64
 """
 
 KEYWORDS_DATA_SEARCH_VOLUME_COLS = """\
-  keyword STRING, local_search_volume INT64, local_location_code INT64
+  keyword STRING, search_volume INT64, location_code INT64,
+  cpc FLOAT64, competition STRING, competition_index INT64,
+  low_top_of_page_bid FLOAT64, high_top_of_page_bid FLOAT64,
+  monthly_searches STRING
 """
 
 
