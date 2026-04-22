@@ -1,24 +1,31 @@
-"""Interactive domain-mapping review.
+"""Interactive domain-mapping review — fast, no confirmations, no live writes.
 
-Walks through the inventory CSV one row at a time. For each row:
+Walks through the inventory CSV one row at a time and records your decision
+in the CSV. Does NOT touch Meta.domains — all creates are deferred to the
+apply step (a separate script that reads the finalized CSV).
 
-  - If `decision` is already filled in (from a prior session): skip silently.
-  - If a Meta.domains MATCH was suggested: auto-accept, print "already matched"
-    and move on (no keypress needed).
-  - If no match: prompt:
-        [c] create this domain in Meta.domains now (calls MetaClient.add_domains)
-        [e] edit — replace with a different domain string, then re-check
-        [s] skip — leave this row's domain_id NULL
-        [q] quit — save progress and exit
+For each row:
+  - If `decision` is already filled in (prior session): skip silently.
+  - If a Meta.domains MATCH was suggested (31 such rows): auto-accept, print
+    a line, move on with no keypress.
+  - Otherwise prompt with a single letter:
+      c — CREATE (queue the raw domain for provisioning)
+      e — EDIT   (type a replacement; instant local lookup against the
+                  Meta.domains snapshot loaded at startup; records MATCH if
+                  found, CREATE <replacement> otherwise)
+      s — SKIP   (no provisioning, domain_id stays NULL on those rows)
+      q — QUIT   (saves progress and exits)
 
-Progress is saved to the CSV after every decision. Safe to Ctrl+C and resume.
+One keypress + Enter per undecided row. No API calls, no round-trips.
 
-The resulting CSV will have a `decision` column with one of:
-  MATCH <domain_id>       — use this Meta.domains entry
-  SKIP                    — don't backfill; leave domain_id NULL
+Decision column values after review:
+  MATCH <domain_id>       existing Meta.domains entry to use
+  CREATE                  provision the row's raw_domain (apply step will do it)
+  CREATE <replacement>    provision this replacement instead
+  SKIP                    don't backfill
 
-(There's no CREATE-only state — if you choose 'c' we create immediately and
-record the new domain_id as MATCH <id> so the apply step is a pure lookup.)
+Progress saves to the CSV after every decision. Ctrl+C is safe — re-run to
+resume from the first undecided row.
 
 Usage:
   uv run python scripts/review_domain_mapping.py
@@ -27,6 +34,7 @@ Usage:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -39,86 +47,57 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 _DEFAULT_CSV = Path(__file__).resolve().parents[1] / "docs" / "domain_mapping_2026_04_22.csv"
 
+_NORMALIZE = re.compile(r"^(?:https?://)?(?:www\.)?", re.IGNORECASE)
+_TRAILING_SLASH = re.compile(r"/+$")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _normalize(raw: str) -> str:
+    if raw is None:
+        return ""
+    s = _NORMALIZE.sub("", raw.strip())
+    s = _TRAILING_SLASH.sub("", s)
+    s = _WHITESPACE.sub("", s)
+    return s.lower()
+
+
+def _load_meta_snapshot(bq, project: str) -> dict[str, int]:
+    """Read all Meta.domains once into a {normalized_domain: domain_id} dict."""
+    df = bq.client.query(
+        f"SELECT domain_id, domain FROM `{project}.Meta.domains`"
+    ).result().to_dataframe()
+    return {_normalize(d): int(did) for d, did in zip(df["domain"], df["domain_id"])}
+
 
 def _save(df: pd.DataFrame, path: Path) -> None:
     df.to_csv(path, index=False)
 
 
-def _lookup_meta(meta_client, domain: str) -> dict | None:
-    """Return dict(domain_id, domain) if found in Meta.domains, else None."""
-    result = meta_client.get_domain(domain)
-    return result if result else None
+def _prompt_key(progress: str, raw_domain: str, row_count: int) -> str:
+    """One-line prompt returning c/e/s/q."""
+    click.echo(f"\n{progress} {raw_domain!r} ({row_count:,} rows) — not in Meta")
+    return click.prompt(
+        "  [c]reate / [e]dit / [s]kip / [q]uit",
+        default="c", show_default=True,
+        type=click.Choice(["c", "e", "s", "q"], case_sensitive=False),
+    ).lower()
 
 
-def _create_in_meta(meta_client, domain: str) -> int:
-    """Provision a new Meta.domains entry and return its domain_id."""
-    added = meta_client.add_domains([domain])
-    if not added:
-        raise RuntimeError(f"add_domains returned no rows for '{domain}'")
-    return int(added[0]["domain_id"])
+def _handle_edit(meta_snapshot: dict[str, int]) -> str:
+    """Prompt for a replacement, return the decision string.
 
-
-def _handle_no_match(meta_client, raw_domain: str, normalized: str, row_count: int) -> str | None:
-    """Prompt the user to CREATE / EDIT / SKIP / QUIT.
-
-    Returns the new value for the `decision` column, or None for QUIT.
+    No confirmation — whatever the user types is the final call for this row.
     """
-    click.echo(f"\n  domain:    {raw_domain}")
-    if raw_domain != normalized:
-        click.echo(f"  normalized: {normalized}")
-    click.echo(f"  used in:   {row_count:,} rows")
-    click.echo(f"  status:    not found in Meta.domains")
-
-    while True:
-        choice = click.prompt(
-            "  [c]reate / [e]dit / [s]kip / [q]uit",
-            default="c", show_default=True,
-            type=click.Choice(["c", "e", "s", "q"], case_sensitive=False),
-        ).lower()
-
-        if choice == "s":
-            click.echo(f"  → SKIP (domain_id will stay NULL for these {row_count:,} rows)")
-            return "SKIP"
-
-        if choice == "q":
-            return None
-
-        if choice == "c":
-            if not click.confirm(f"  Create Meta.domain '{raw_domain}'?", default=True):
-                continue
-            try:
-                new_id = _create_in_meta(meta_client, raw_domain)
-            except Exception as e:
-                click.echo(f"  ERROR creating domain: {e}", err=True)
-                continue
-            click.echo(f"  → Created domain_id={new_id}. Decision: MATCH {new_id}")
-            return f"MATCH {new_id}"
-
-        if choice == "e":
-            edited = click.prompt("  Enter replacement domain").strip()
-            if not edited:
-                continue
-            existing = _lookup_meta(meta_client, edited)
-            if existing:
-                domain_id = existing["domain_id"]
-                canonical = existing["domain"]
-                click.echo(f"  '{edited}' IS in Meta.domains (id={domain_id}, canonical='{canonical}')")
-                if click.confirm(f"  Map rows with raw_domain='{raw_domain}' to domain_id={domain_id}?",
-                                 default=True):
-                    click.echo(f"  → Decision: MATCH {domain_id}")
-                    return f"MATCH {domain_id}"
-                continue
-            click.echo(f"  '{edited}' is NOT in Meta.domains.")
-            if click.confirm(f"  Create Meta.domain '{edited}' now?", default=True):
-                try:
-                    new_id = _create_in_meta(meta_client, edited)
-                except Exception as e:
-                    click.echo(f"  ERROR creating domain: {e}", err=True)
-                    continue
-                click.echo(f"  → Created domain_id={new_id}. Decision: MATCH {new_id}")
-                return f"MATCH {new_id}"
-            # user said no to creating the edited form — loop back
-            continue
+    edited = click.prompt("  Replacement domain").strip()
+    if not edited:
+        return "SKIP"  # empty input → treat as skip
+    norm = _normalize(edited)
+    if norm in meta_snapshot:
+        domain_id = meta_snapshot[norm]
+        click.echo(f"  → MATCH {domain_id} (found in Meta.domains)")
+        return f"MATCH {domain_id}"
+    click.echo(f"  → CREATE {edited} (queued for provisioning)")
+    return f"CREATE {edited}"
 
 
 @click.command()
@@ -133,12 +112,15 @@ def cli(csv_path: Path, project: str | None):
     """Walk through the inventory CSV one domain at a time."""
     from skyward.config import load_config
     from skyward.data.bigquery import BigQueryClient
-    from skyward.data.meta import MetaClient
 
     cfg = load_config()
     resolved_project = project or cfg.datahub_project_id
     bq = BigQueryClient(project_id=resolved_project)
-    meta = MetaClient(bq)
+
+    click.echo(f"CSV: {csv_path}")
+    click.echo("Loading Meta.domains snapshot for instant local lookups…")
+    meta_snapshot = _load_meta_snapshot(bq, resolved_project)
+    click.echo(f"  loaded {len(meta_snapshot):,} Meta.domains entries")
 
     df = pd.read_csv(csv_path, dtype={
         "meta_match_domain_id": "Int64",
@@ -146,7 +128,6 @@ def cli(csv_path: Path, project: str | None):
         "rows_backlinks_backlinks": "Int64",
         "rows_total": "Int64",
     })
-    # Ensure 'decision' column exists (CSV was written by the inventory script).
     if "decision" not in df.columns:
         df["decision"] = ""
     df["decision"] = df["decision"].fillna("").astype(str)
@@ -154,59 +135,63 @@ def cli(csv_path: Path, project: str | None):
     total = len(df)
     already_done = int((df["decision"].str.strip() != "").sum())
     auto_matches = int((df["suggested"] == "MATCH").sum())
-    click.echo(f"CSV: {csv_path}")
-    click.echo(f"Total rows: {total}")
-    click.echo(f"  Already decided: {already_done}")
-    click.echo(f"  Suggested MATCH (will auto-accept): {auto_matches}")
-    click.echo(f"  Need manual review: {total - auto_matches - already_done}")
-    click.echo("")
+    remaining_manual = total - auto_matches - already_done
+    click.echo(f"\nRows: {total}  already decided: {already_done}  "
+               f"auto-MATCH: {auto_matches}  manual review: {remaining_manual}\n")
 
-    processed_this_session = 0
+    processed = 0
     for idx, row in df.iterrows():
         if str(row["decision"]).strip():
-            continue  # skip already-decided
+            continue
 
         progress = f"[{idx + 1}/{total}]"
 
         if row["suggested"] == "MATCH" and pd.notna(row["meta_match_domain_id"]):
             domain_id = int(row["meta_match_domain_id"])
-            click.echo(f"{progress} ✓ '{row['raw_domain']}' — already in Meta.domains "
-                       f"(id={domain_id}, canonical='{row['meta_match_domain']}')")
+            click.echo(f"{progress} ✓ {row['raw_domain']!r} — auto-MATCH {domain_id}")
             df.at[idx, "decision"] = f"MATCH {domain_id}"
-            processed_this_session += 1
+            processed += 1
             _save(df, csv_path)
             continue
 
-        click.echo(f"\n{progress} ─────────────────────────────────────────")
-        new_decision = _handle_no_match(
-            meta,
-            raw_domain=str(row["raw_domain"]),
-            normalized=str(row["normalized_domain"]),
-            row_count=int(row["rows_total"]),
-        )
-        if new_decision is None:
-            click.echo(f"\nQuitting. Progress saved to {csv_path}.")
-            click.echo(f"Decisions made this session: {processed_this_session}")
-            break
+        raw_domain = str(row["raw_domain"])
+        row_count = int(row["rows_total"])
+        choice = _prompt_key(progress, raw_domain, row_count)
 
-        df.at[idx, "decision"] = new_decision
-        processed_this_session += 1
+        if choice == "c":
+            click.echo(f"  → CREATE (queued for provisioning)")
+            df.at[idx, "decision"] = "CREATE"
+        elif choice == "e":
+            df.at[idx, "decision"] = _handle_edit(meta_snapshot)
+        elif choice == "s":
+            click.echo(f"  → SKIP")
+            df.at[idx, "decision"] = "SKIP"
+        elif choice == "q":
+            click.echo(f"\nQuitting. Progress saved to {csv_path}.")
+            click.echo(f"Decisions made this session: {processed}")
+            _save(df, csv_path)
+            return
+
+        processed += 1
         _save(df, csv_path)
     else:
-        # Loop completed without a quit
         click.echo(f"\n=== All {total} rows processed. ===")
-        click.echo(f"Decisions made this session: {processed_this_session}")
+        click.echo(f"Decisions made this session: {processed}")
 
     # Summary
     decided = int((df["decision"].str.strip() != "").sum())
-    matched = int(df["decision"].str.startswith("MATCH").sum())
-    skipped = int((df["decision"] == "SKIP").sum())
+    matches = int(df["decision"].str.startswith("MATCH").sum())
+    creates = int(df["decision"].str.startswith("CREATE").sum())
+    skips = int((df["decision"] == "SKIP").sum())
     remaining = total - decided
     click.echo(f"\nFinal status:")
-    click.echo(f"  MATCH:     {matched:,}")
-    click.echo(f"  SKIP:      {skipped:,}")
-    click.echo(f"  Remaining: {remaining:,}")
+    click.echo(f"  MATCH (use existing):   {matches:,}")
+    click.echo(f"  CREATE (to provision):  {creates:,}")
+    click.echo(f"  SKIP:                   {skips:,}")
+    click.echo(f"  Remaining:              {remaining:,}")
     click.echo(f"\nCSV saved to: {csv_path}")
+    click.echo(f"\nNext: the apply script will read this CSV, call MetaClient.add_domains "
+               f"for every CREATE, then run the UPDATEs/MERGEs.")
 
 
 if __name__ == "__main__":
