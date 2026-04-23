@@ -9,10 +9,17 @@ from skyward.data.meta import MetaClient
 
 
 class DataHub(MetaClient):
-    """Central interface for querying data via Meta tables."""
+    """Central interface for querying data via Meta tables.
 
-    # Tables where data can be looked up by domain (via Meta.company_domains)
-    # All other tables use job_id lookup (via Logs.upload_events)
+    NOTE: Several methods on this class depend on ``client_id`` / ``project_id``
+    being populated on ``Logs.upload_events``. Those fields are not reliably set
+    today, so the affected methods are soft-deprecated and documented on each
+    method. See KNOWN_ISSUES.md in the repo root for the full list.
+    """
+
+    # Tables with a ``domain`` column that support domain-based lookup via
+    # Meta.domains + Meta.client_domains (see get_client_data).
+    # All other tables use job_id lookup (via Logs.upload_events).
     DOMAIN_TABLES = {
         "dataforseo_labs-google-ranked_keywords",
         "backlinks_backlinks_live",
@@ -41,9 +48,16 @@ class DataHub(MetaClient):
 
         All parameters are optional. Multiple parameters are ANDed together.
 
+        .. warning::
+            The ``client_id`` and ``project_id`` filters are best-effort. Those
+            fields are not reliably populated on ``Logs.upload_events`` today, so
+            filtering by them will silently miss uploads where the field is null.
+            Prefer filtering by ``job_id``, ``upload_id``, ``dataset``, or
+            ``table`` when you need complete results. See KNOWN_ISSUES.md.
+
         Args:
-            client_id: Filter by client
-            project_id: Filter by project
+            client_id: Filter by client (unreliable — see warning above)
+            project_id: Filter by project (unreliable — see warning above)
             job_id: Filter by job
             upload_id: Filter by specific upload
             dataset: Filter by dataset name
@@ -102,6 +116,12 @@ class DataHub(MetaClient):
     def get_upload_summary(self, client_id: str) -> pd.DataFrame:
         """
         Get summary of uploads per table for a client.
+
+        .. deprecated::
+            ``client_id`` is not reliably populated on ``Logs.upload_events``,
+            so this method will miss any uploads where ``client_id`` is null.
+            Results are lower-bound only. Do not use for anything that requires
+            a complete picture of a client's uploads. See KNOWN_ISSUES.md.
 
         Args:
             client_id: The client identifier
@@ -354,6 +374,15 @@ class DataHub(MetaClient):
         tables (ranked_keywords, backlinks), can optionally use domain lookup
         through Meta tables.
 
+        .. warning::
+            The default (``use_domain_lookup=False``) path filters
+            ``Logs.upload_events`` by ``client_id``, which is not reliably
+            populated today — results will miss uploads where ``client_id`` is
+            null. For the tables in ``DOMAIN_TABLES``, prefer
+            ``use_domain_lookup=True`` (goes through ``Meta.client_domains``,
+            which is reliable). For other tables, results are lower-bound only.
+            See KNOWN_ISSUES.md.
+
         Args:
             client_id: The client identifier
             table: Table name (e.g., 'dataforseo_labs-google-ranked_keywords')
@@ -406,22 +435,29 @@ class DataHub(MetaClient):
         project_id: str,
         table: str,
         dataset: str = "DataForSEO",
-        role: Optional[str] = None,
         limit: int = 1000,
-        use_domain_lookup: bool = False,
     ) -> pd.DataFrame:
         """
         Pull data for a project from a specific table.
 
-        By default, uses job_id lookup through the upload log.
+        Uses job_id lookup through ``Logs.upload_events`` filtered by
+        ``project_id``.
+
+        .. warning::
+            ``project_id`` is not reliably populated on ``Logs.upload_events``
+            today — results will miss uploads where ``project_id`` is null.
+            Results are lower-bound only. See KNOWN_ISSUES.md.
+
+            The previous ``use_domain_lookup=True`` branch has been removed
+            because it referenced ``Meta.company_domains`` and
+            ``Meta.project_companies``, neither of which exist in BigQuery.
+            The ``role`` filter was also removed with that branch.
 
         Args:
             project_id: The project identifier
             table: Table name
             dataset: Dataset name (default 'DataForSEO')
-            role: Optional filter ('client' or 'competitor')
             limit: Maximum rows to return
-            use_domain_lookup: If True and table is domain-based, lookup by domain
 
         Returns:
             DataFrame with data for the project
@@ -432,35 +468,17 @@ class DataHub(MetaClient):
             bigquery.ScalarQueryParameter("limit_val", "INT64", limit),
         ]
 
-        role_filter = ""
-        if role is not None:
-            role_filter = "AND pc.role = @role"
-            params.append(bigquery.ScalarQueryParameter("role", "STRING", role))
-
-        if use_domain_lookup and table in self.DOMAIN_TABLES:
-            # Domain-based lookup
-            query = f"""
-                SELECT d.*, pc.role
-                FROM `{self._project_id}.{dataset}.{table}` d
-                JOIN `{self._project_id}.Meta.company_domains` cd ON d.domain = cd.domain
-                JOIN `{self._project_id}.Meta.project_companies` pc ON cd.company_id = pc.company_id
-                WHERE pc.project_id = @project_id
-                {role_filter}
-                LIMIT @limit_val
-            """
-        else:
-            # Job_id-based lookup (default)
-            query = f"""
-                SELECT d.*
-                FROM `{self._project_id}.{dataset}.{table}` d
-                WHERE d.job_id IN (
-                    SELECT le.job_id
-                    FROM `{self._project_id}.Logs.upload_events` le
-                    WHERE le.project_id = @project_id
-                    AND le.`table` = @table_name
-                )
-                LIMIT @limit_val
-            """
+        query = f"""
+            SELECT d.*
+            FROM `{self._project_id}.{dataset}.{table}` d
+            WHERE d.job_id IN (
+                SELECT le.job_id
+                FROM `{self._project_id}.Logs.upload_events` le
+                WHERE le.project_id = @project_id
+                AND le.`table` = @table_name
+            )
+            LIMIT @limit_val
+        """
 
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
@@ -469,8 +487,14 @@ class DataHub(MetaClient):
         """
         Get distinct datasets from the upload log.
 
+        .. warning::
+            The ``client_id`` filter is best-effort. That field is not reliably
+            populated on ``Logs.upload_events``, so filtering will silently miss
+            datasets whose uploads have a null ``client_id``. Call without the
+            filter for a complete list. See KNOWN_ISSUES.md.
+
         Args:
-            client_id: Optional filter by client
+            client_id: Optional filter by client (unreliable — see warning above)
 
         Returns:
             List of dataset names that have uploads
@@ -501,9 +525,15 @@ class DataHub(MetaClient):
         """
         Get distinct tables from the upload log.
 
+        .. warning::
+            The ``client_id`` filter is best-effort. That field is not reliably
+            populated on ``Logs.upload_events``, so filtering will silently miss
+            tables whose uploads have a null ``client_id``. Call without the
+            filter for a complete list. See KNOWN_ISSUES.md.
+
         Args:
             dataset: Optional filter by dataset
-            client_id: Optional filter by client
+            client_id: Optional filter by client (unreliable — see warning above)
 
         Returns:
             List of table names that have uploads

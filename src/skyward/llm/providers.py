@@ -598,13 +598,18 @@ def get_provider(
     Parameters
     ----------
     provider_name : str
-        Provider name: "openai", "gemini", or "perplexity"
+        Provider name: "openai", "gemini", "perplexity", "anthropic", or "grok"
     openai_client : OpenAI, optional
-        OpenAI client (required if provider_name is "openai")
+        Pre-built OpenAI client (only honored if provider_name is "openai";
+        otherwise pass ``api_key=``)
     gemini_api_key : str, optional
-        Gemini API key (required if provider_name is "gemini")
+        Gemini API key (legacy; prefer ``api_key=``)
     perplexity_api_key : str, optional
-        Perplexity API key (required if provider_name is "perplexity")
+        Perplexity API key (legacy; prefer ``api_key=``)
+    api_key : str, optional
+        API key for any provider. Falls back to each provider's conventional
+        environment variable (OPENAI_API_KEY, GEMINI_API_KEY,
+        PERPLEXITY_API_KEY, ANTHROPIC_API_KEY, XAI_API_KEY) when omitted.
 
     Returns
     -------

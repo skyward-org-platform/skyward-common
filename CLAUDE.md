@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 `skyward-common` is a private Python package providing shared infrastructure for all Skyward projects. It contains config loading, BigQuery client, DataForSEO API client, Meta/DataHub data layer, multi-provider LLM abstraction, Slack notifications, and shared utilities.
 
-Other Skyward repos (`skyward-seo`, `skyward-ai-faqs`, `skyward-data-hub-admin`) import from this package.
+Other Skyward repos (`skyward-seo-pipeline`, `skyward-platform`) import from this package.
 
 ## Setup
 
@@ -70,18 +70,18 @@ All LLM calls must use the provider abstraction with retry logic and structured 
 ```python
 from skyward.llm import get_provider
 
-provider = get_provider("openai", openai_client=client)
-result, in_tokens, out_tokens = provider.call_structured(
+provider = get_provider("openai")  # reads OPENAI_API_KEY from env
+result, in_tokens, out_tokens = provider.call(
     messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ],
-    response_model=MyPydanticModel,
     model="gpt-4o",
+    response_model=MyPydanticModel,  # optional — omit for plain text
 )
 ```
 
-Supported providers: `openai`, `gemini`, `perplexity`.
+Supported providers: `openai`, `gemini`, `perplexity`, `anthropic`, `grok`. All share the same `call()` signature.
 
 ## BigQuery Batch Operations
 
@@ -138,7 +138,7 @@ This package is published to GitHub Packages. To publish a new version:
 | `src/skyward/data/dataforseo/` | DataForSEO API client (class-based, lazy endpoints) |
 | `src/skyward/data/meta/` | MetaClient — CRUD for Meta tables (clients, domains, projects, datasets) |
 | `src/skyward/data/hub/` | DataHub — extends MetaClient with data access and catalog management |
-| `src/skyward/llm/` | Multi-provider LLM abstraction (OpenAI, Gemini, Perplexity) with cost tracking |
+| `src/skyward/llm/` | Multi-provider LLM abstraction (OpenAI, Gemini, Perplexity, Anthropic, Grok) with cost tracking |
 | `src/skyward/notifications/` | Slack webhook integration |
 | `src/skyward/functions.py` | Shared utilities (Google Sheets upload, URL parsing, date helpers) |
 | `scripts/` | One-time scripts (Meta table seeding, DataForSEO schema migrations, live QA driver) |
@@ -148,7 +148,7 @@ This package is published to GitHub Packages. To publish a new version:
 
 The `Meta` dataset in BigQuery (`data-hub-468216.Meta`) stores client/domain/project relationships. `MetaClient` and `DataHub` are the Python interfaces.
 
-**Tables:** `clients`, `domains`, `client_domains`, `projects`, `project_domains`, `client_datasets`, `table_catalog`
+**Tables:** `clients`, `domains`, `client_domains`, `projects`, `project_domains`, `client_datasets`, `dataset_catalog`, `table_catalog`
 
 **ID convention:** All IDs are auto-incremented integers via `get_next_id()`.
 
