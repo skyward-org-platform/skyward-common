@@ -314,8 +314,8 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
         **kwargs,
     ) -> pd.DataFrame:
         """Fetch all ranked keywords for a single domain with pagination."""
-        page_size = 1000
-        max_concurrent = kwargs.get("max_concurrent", 30)
+        page_size = kwargs.pop("page_size", 1000)
+        max_concurrent = kwargs.pop("max_concurrent", 30)
         semaphore = asyncio.Semaphore(max_concurrent)
 
         results: list[pd.DataFrame] = []

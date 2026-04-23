@@ -454,6 +454,28 @@ class DataForSEOClient:
                 pass
         return []
 
+    def get_balance(self) -> dict:
+        """
+        Retrieve DataForSEO account balance and lifetime spend.
+
+        Returns:
+            Dict with keys:
+              balance (float):  current USD balance — negative means overdrawn
+              total   (float):  lifetime amount spent in USD
+              raw     (dict):   full `money` block from the API response
+        """
+        url = f"{self.BASE_URL}/appendix/user_data"
+        resp = self._get(url)
+        try:
+            money = resp["tasks"][0]["result"][0].get("money", {}) or {}
+        except (TypeError, KeyError, IndexError):
+            money = {}
+        return {
+            "balance": float(money.get("balance", 0.0) or 0.0),
+            "total": float(money.get("total", 0.0) or 0.0),
+            "raw": money,
+        }
+
     def find_code(self, name: str, location_list: list[dict]) -> list[dict]:
         """
         Search for a location by name in the location list.
