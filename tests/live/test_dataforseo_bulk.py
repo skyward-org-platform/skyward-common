@@ -259,12 +259,13 @@ async def test_backlinks_bulk_pages_summary_40501_fallback(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.live
-def test_dataforseo_labs_keyword_overview_bulk_multi_batch(
+@pytest.mark.asyncio
+async def test_dataforseo_labs_keyword_overview_bulk_multi_batch(
     dfs_client_live, cost_tracker, seeded_domain
 ):
     """In-call batching: 6 keywords, batch_size=2 → 3 API calls with 2 kw each."""
     ep = dfs_client_live.dataforseo_labs_google_keyword_overview
-    df = ep.live_all(
+    df = await ep.live_all(
         keywords=KEYWORD_TARGETS_6,
         domain=SEEDED_TEST_DOMAIN,
         job_id=generate_job_id(),
@@ -276,12 +277,13 @@ def test_dataforseo_labs_keyword_overview_bulk_multi_batch(
 
 
 @pytest.mark.live
-def test_dataforseo_labs_search_intent_bulk_multi_batch(
+@pytest.mark.asyncio
+async def test_dataforseo_labs_search_intent_bulk_multi_batch(
     dfs_client_live, cost_tracker, seeded_domain
 ):
     """In-call batching: 6 keywords, batch_size=2 → 3 API calls."""
     ep = dfs_client_live.dataforseo_labs_google_search_intent
-    df = ep.live_all(
+    df = await ep.live_all(
         keywords=KEYWORD_TARGETS_6,
         domain=SEEDED_TEST_DOMAIN,
         job_id=generate_job_id(),
@@ -343,7 +345,8 @@ async def test_keywords_data_search_volume_post_all_multi_batch(
 
 
 @pytest.mark.live
-def test_serp_google_organic_post_all_multi_batch(
+@pytest.mark.asyncio
+async def test_serp_google_organic_post_all_multi_batch(
     dfs_client_live, cost_tracker, seeded_domain
 ):
     """Worker-pool POST/GET: 6 keywords, batch_size=2 → 3 batches, worker queue.
@@ -351,7 +354,7 @@ def test_serp_google_organic_post_all_multi_batch(
     Note: serp's post_all returns (results_df, failed_df) tuple, not a single df.
     """
     ep = dfs_client_live.serp_google_organic
-    results_df, failed_df = ep.post_all(
+    results_df, failed_df = await ep.post_all(
         targets=KEYWORD_TARGETS_6,
         domain=SEEDED_TEST_DOMAIN,
         job_id=generate_job_id(),

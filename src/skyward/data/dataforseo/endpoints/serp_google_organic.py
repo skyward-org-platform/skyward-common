@@ -5,6 +5,8 @@ Fetches SERP results for a keyword. Supports both live and POST/GET workflows.
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import json
 import time
 from queue import Queue, Empty
@@ -33,6 +35,8 @@ class SerpGoogleOrganic(BaseEndpoint):
             "location_code": kwargs.get("location_code", self.config.location_code),
             "language_code": kwargs.get("language_code", self.config.language_code),
         }
+        if kwargs.get("depth") is not None:
+            payload["depth"] = kwargs["depth"]
         if kwargs.get("tag"):
             payload["tag"] = kwargs["tag"]
         return [payload]
@@ -155,6 +159,7 @@ class SerpGoogleOrganic(BaseEndpoint):
         location_code: int | None = None,
         language_code: str | None = None,
         debug: bool | None = None,
+        depth: int | None = None,
     ) -> list[dict]:
         """POST up to 100 keywords to task_post. Returns [{"id": task_id, "keyword": kw}]."""
         if len(keywords) > 100:
@@ -165,8 +170,11 @@ class SerpGoogleOrganic(BaseEndpoint):
         debug = debug if debug is not None else self.config.debug
 
         url = f"{self._client.BASE_URL}/{self.POST_URL}"
+        base = {"location_code": location_code, "language_code": language_code}
+        if depth is not None:
+            base["depth"] = depth
         payload = [
-            {"keyword": kw, "location_code": location_code, "language_code": language_code, "tag": kw}
+            {"keyword": kw, "tag": kw, **base}
             for kw in keywords
         ]
 
@@ -273,7 +281,16 @@ class SerpGoogleOrganic(BaseEndpoint):
 
         return combined
 
-    def post_all(
+    async def post_all(self, *args, **kwargs) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Async wrapper — delegates to _post_all_sync in a thread executor
+        so callers can `await` uniformly across all endpoints."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            functools.partial(self._post_all_sync, *args, **kwargs),
+        )
+
+    def _post_all_sync(
         self,
         targets: list[str],
         *,
@@ -289,6 +306,7 @@ class SerpGoogleOrganic(BaseEndpoint):
         location_code: int | None = None,
         language_code: str | None = None,
         debug: bool | None = None,
+        depth: int | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """High-volume POST/GET. Returns (results_df, failed_df)."""
         _validate_job_id(job_id)
@@ -325,7 +343,7 @@ class SerpGoogleOrganic(BaseEndpoint):
             print(f"Submitting {len(targets):,} keywords in {len(batches)} batches...")
 
         for i, batch in enumerate(batches):
-            tasks = self._task_post(batch, location_code, language_code, debug=False)
+            tasks = self._task_post(batch, location_code, language_code, debug=False, depth=depth)
             for t in tasks:
                 task_id_to_keyword[t["id"]] = t["keyword"]
             if debug and (i + 1) % 100 == 0:

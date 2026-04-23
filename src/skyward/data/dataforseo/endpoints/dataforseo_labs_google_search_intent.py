@@ -6,6 +6,8 @@ Returns intent label, probability, and secondary intents.
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import json
 import math
 import time
@@ -131,7 +133,16 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
 
         return pd.DataFrame(columns=self._get_schema() + ["task_id"])
 
-    def live_all(
+    async def live_all(self, *args, **kwargs) -> pd.DataFrame:
+        """Async wrapper — delegates to _live_all_sync in a thread executor
+        so callers can `await` uniformly across all endpoints."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            functools.partial(self._live_all_sync, *args, **kwargs),
+        )
+
+    def _live_all_sync(
         self,
         keywords: list[str],
         *,
