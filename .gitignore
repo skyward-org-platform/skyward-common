@@ -42,3 +42,6 @@ docs/superpowers/
 
 # DataForSEO live test raw responses (for Layer B fidelity audit only)
 tests/live/responses/
+
+# Data artifacts / annotated inventories — keep out of git by default
+*.csv
