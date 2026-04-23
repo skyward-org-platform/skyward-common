@@ -89,6 +89,22 @@ Supported providers: `openai`, `gemini`, `perplexity`.
 - **Writes (UPDATE):** Use a single `MERGE` / `UPDATE ... FROM` join instead of one UPDATE per row.
 - **Writes (INSERT):** Use `load_table_from_dataframe()` with `WRITE_APPEND` — never one INSERT per row.
 
+## DataForSEO
+
+All 11 DataForSEO endpoint tables in `data-hub-468216.DataForSEO` now use the standardized schema (7-column metadata block: `job_id`, `upload_id`, `ingest_timestamp`, `domain_id`, `domain`, `task_id`, `endpoint_mode`, then endpoint-specific columns). Historical rows were migrated and metadata backfilled; see `scripts/migrate_dataforseo_tables.py` and related scripts in `scripts/` for the one-time migration tools.
+
+**Key knobs when calling endpoints:**
+
+- `batch_size` — (1) for multi-item endpoints like `keyword_overview`, `search_intent`, `search_volume`, `serp-google-organic`, `bulk_pages_summary`: items per API request. (2) For single-target endpoints like `backlinks-backlinks`, `backlinks-summary`, `ranked_keywords.live_all([domains])`, `keyword_suggestions`, `related_keywords`: `ThreadPoolExecutor(max_workers=batch_size)` — controls concurrency, not request size.
+- `limit` (backlinks-backlinks) — max backlinks per target per call. Default 100, API max 1000. No `offset` pagination implemented; callers must raise `limit` if they need more than 100 (and cannot exceed 1000 per call).
+- `limit_per_domain` (ranked_keywords) — caller-side cap on total keywords pulled across paginated calls. Default 10000. Silently truncates when exceeded — no warning, no error.
+- `page_size` (ranked_keywords) — keywords per paginated API call. Default 1000 (API max). Lower values force more pagination loops — useful for testing.
+- Default filter on `backlinks-backlinks` is `[["dofollow", "=", True]]` — nofollow backlinks excluded unless caller passes `filters=[]` or custom filters.
+
+**Account balance check** — `DataForSEOClient.get_balance()` returns `{balance, total, raw}`. Use it as a pre-flight guard before expensive fetches.
+
+**Standard (POST/GET) mode** — only `serp-google-organic` and `keywords_data-google_ads-search_volume` support the async `task_post` + `task_get` workflow via `post_all()`. All other endpoints are live-only.
+
 ## Testing
 
 ```bash
@@ -125,7 +141,7 @@ This package is published to GitHub Packages. To publish a new version:
 | `src/skyward/llm/` | Multi-provider LLM abstraction (OpenAI, Gemini, Perplexity) with cost tracking |
 | `src/skyward/notifications/` | Slack webhook integration |
 | `src/skyward/functions.py` | Shared utilities (Google Sheets upload, URL parsing, date helpers) |
-| `scripts/` | One-time scripts (Meta table seeding, schema migrations) |
+| `scripts/` | One-time scripts (Meta table seeding, DataForSEO schema migrations, live QA driver) |
 | `tests/` | Pytest suite using FakeBQClient fixtures |
 
 ## Meta Tables
@@ -135,3 +151,7 @@ The `Meta` dataset in BigQuery (`data-hub-468216.Meta`) stores client/domain/pro
 **Tables:** `clients`, `domains`, `client_domains`, `projects`, `project_domains`, `client_datasets`, `table_catalog`
 
 **ID convention:** All IDs are auto-incremented integers via `get_next_id()`.
+
+## Known Issues
+
+- `ranked_keywords._fetch_domain_keywords` triggers a pandas `FutureWarning` on `pd.concat` when pagination appends empty/all-NA result frames. Cosmetic only — final DataFrame is correct. Fix by filtering empty frames out of `results` before the concat.

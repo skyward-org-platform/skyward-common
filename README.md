@@ -52,6 +52,45 @@ result, in_tok, out_tok = provider.call(
 )
 ```
 
+## DataForSEO
+
+Class-based client with one lazily-initialized endpoint accessor per API family. All calls automatically stamp `job_id`, `upload_id`, `ingest_timestamp`, `domain_id`, `domain`, `task_id`, and `endpoint_mode` onto returned rows and (optionally) upload them to BigQuery.
+
+```python
+from skyward.config import load_config
+from skyward.data.dataforseo import ClientConfig, DataForSEOClient
+from skyward.functions import generate_job_id
+
+cfg = load_config()
+client = DataForSEOClient(
+    username=cfg.dataforseo_username,
+    password=cfg.dataforseo_password,
+    config=ClientConfig(debug=True),
+)
+
+# Pre-flight balance check
+balance = client.get_balance()
+print(f"${balance['balance']:.2f} remaining (lifetime spent ${balance['total']:.2f})")
+
+# Fetch keywords a domain ranks for (paginated automatically)
+job_id = generate_job_id()
+df = await client.dataforseo_labs_google_ranked_keywords.live_all(
+    targets=["example.com"],
+    domain="example.com",
+    job_id=job_id,
+    limit_per_domain=10000,  # caller-side cap; silently truncates if exceeded
+    upload=True,             # appends to BigQuery + logs upload event
+)
+```
+
+Key per-endpoint knobs:
+- `batch_size` — items per API request (multi-item endpoints) OR concurrency pool size (single-target endpoints)
+- `limit` (backlinks-backlinks) — max backlinks per target per call, default 100, API max 1000
+- `limit_per_domain` / `page_size` (ranked_keywords) — how many keywords to pull and how many per paginated call
+- `upload=True/False` — toggle BigQuery write-through
+
+Standard (async) mode via `post_all()` is supported on `serp-google-organic` and `keywords_data-google_ads-search_volume`. All other endpoints are live-only.
+
 ## LLM Providers
 
 All providers share the same `call()` interface:
