@@ -58,6 +58,55 @@ These methods filter `Logs.upload_events` by `client_id` or `project_id` and wil
 
 ---
 
+## `MetaClient.get_next_id()` — race condition on concurrent writes
+
+**Status:** Outstanding — requires a design decision before fixing.
+
+### The problem
+
+`get_next_id(table, id_column)` allocates integer IDs for Meta tables by reading `MAX(id_column)` and returning `max + 1`. There is a gap between the SELECT and the downstream INSERT where another writer can read the same max and allocate colliding IDs.
+
+```
+Process A:  SELECT MAX(domain_id) → 47
+Process A:  allocate 48, 49
+Process A:  INSERT rows with domain_id = 48, 49
+Process B:  SELECT MAX(domain_id) → 47 (A's rows not yet visible)
+Process B:  allocate 48, 49
+Process B:  INSERT rows with domain_id = 48, 49   ← DUPLICATE
+```
+
+Affected tables: `Meta.clients`, `Meta.domains`, `Meta.projects` — any table allocating IDs via `get_next_id`.
+
+**Within a single call** it's safe — methods like `add_domains` read the max once, allocate all new IDs in Python, and do one bulk INSERT. The race is **between** concurrent callers (two admin-portal users at once, two scripts running in parallel, etc.).
+
+### Root cause
+
+BigQuery has no atomic `sequence` / "increment-and-get" primitive like Postgres. Any SELECT-MAX-then-INSERT pattern is racey unless writes are serialized at the application layer.
+
+The `_max_ids` cache on `MetaClient` is unrelated — it's used by `get_max_id()` (zero-padding for display), not by `get_next_id()` for allocation.
+
+### Severity
+
+- `Meta.clients`, `Meta.projects` — low frequency. Collision is possible but unlikely in practice.
+- `Meta.domains` — higher risk. Two admins adding domains via the portal, or two scripts running in parallel, can collide.
+
+### Mitigations while unfixed
+
+- Do not run multiple ID-allocating scripts against the same Meta table concurrently.
+- For writes via the skyward-platform admin portal: the FastAPI backend is a single process, so serialization at that layer is feasible if the race becomes a real problem (wrap `get_next_id` + INSERT in an `asyncio.Lock`).
+- Any new code that allocates IDs should do the bulk work in one call (allocate once, insert all rows) rather than looping `get_next_id` + INSERT per row.
+
+### Fix options (not yet chosen)
+
+1. **UUIDs instead of integer IDs** — eliminates the race. Big schema migration for every existing row and every downstream join.
+2. **`MERGE` against a `Meta.id_counters` table** — atomic increment in a single statement. Still subject to BigQuery's eventual-consistency quirks for subsequent reads.
+3. **Application-layer serialization** — `asyncio.Lock` in the portal; unhelpful for scripts or non-portal writers.
+4. **Optimistic insert + collision-detect + retry** — requires a post-insert uniqueness check.
+
+Pick one when it's time to fix. Until then, document and avoid concurrent writers.
+
+---
+
 ## Removed: `Meta.company_domains` / `Meta.project_companies` references
 
 **Status:** Resolved (in this PR).
