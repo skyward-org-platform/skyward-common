@@ -96,7 +96,7 @@ All 11 DataForSEO endpoint tables in `data-hub-468216.DataForSEO` now use the st
 **Key knobs when calling endpoints:**
 
 - `batch_size` — (1) for multi-item endpoints like `keyword_overview`, `search_intent`, `search_volume`, `serp-google-organic`, `bulk_pages_summary`: items per API request. (2) For single-target endpoints like `backlinks-backlinks`, `backlinks-summary`, `ranked_keywords.live_all([domains])`, `keyword_suggestions`, `related_keywords`: `ThreadPoolExecutor(max_workers=batch_size)` — controls concurrency, not request size.
-- `limit` (backlinks-backlinks) — max backlinks per target per call. Default 100, API max 1000. No `offset` pagination implemented; callers must raise `limit` if they need more than 100 (and cannot exceed 1000 per call).
+- `limit` / `page_size` (backlinks-backlinks) — `limit` is the total rows wanted across all calls (default `None` = pull everything up to DFS's 20,000 offset cap). `page_size` is rows per API call (default 1000, also the DFS per-call max). The endpoint paginates via `offset` internally until `limit` is hit, the API returns fewer than `page_size` rows, or the 20,000 offset cap is reached.
 - `limit_per_domain` (ranked_keywords) — caller-side cap on total keywords pulled across paginated calls. Default 10000. Silently truncates when exceeded — no warning, no error.
 - `page_size` (ranked_keywords) — keywords per paginated API call. Default 1000 (API max). Lower values force more pagination loops — useful for testing.
 - Default filter on `backlinks-backlinks` is `[["dofollow", "=", True]]` — nofollow backlinks excluded unless caller passes `filters=[]` or custom filters.

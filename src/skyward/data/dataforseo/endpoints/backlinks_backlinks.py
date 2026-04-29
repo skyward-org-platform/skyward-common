@@ -20,7 +20,8 @@ class BacklinksBacklinks(BaseEndpoint):
     def _build_payload(self, target: str, **kwargs) -> list[dict]:
         return [{
             "target": target,
-            "limit": kwargs.get("limit", 100),
+            "limit": kwargs.get("limit", 1000),
+            "offset": kwargs.get("offset", 0),
             "filters": kwargs.get("filters") or [["dofollow", "=", True]],
         }]
 
@@ -156,24 +157,55 @@ class BacklinksBacklinks(BaseEndpoint):
         retry_delay = kwargs.pop("retry_delay", cfg.retry_delay)
         debug = kwargs.pop("debug", cfg.debug)
 
+        limit = kwargs.pop("limit", None)
+        page_size = min(kwargs.pop("page_size", 1000), 1000)
+        filters = kwargs.pop("filters", None)
+
         url = f"{self._client.BASE_URL}/{self.LIVE_URL}"
-        payload = self._build_payload(target, **kwargs)
+        # DataForSEO caps offset at 20,000 for backlinks/backlinks/live.
+        DFS_MAX_OFFSET = 20000
 
-        for attempt in range(1, max_retries + 1):
-            if attempt > 1:
-                time.sleep(retry_delay)
-            resp = self._client._post(url, payload, max_retries=1, retry_delay=0)
-            if not resp:
-                if debug:
-                    print(f"[{target}] Invalid response. Attempt {attempt}/{max_retries}")
-                continue
-            try:
-                df = self._parse_response(resp, target)
-                if not df.empty:
-                    return df
-            except Exception as e:
-                if debug:
-                    print(f"[{target}] Parse error: {e}. Attempt {attempt}/{max_retries}")
-                continue
+        frames: list[pd.DataFrame] = []
+        fetched = 0
+        offset = 0
 
-        return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        while offset < DFS_MAX_OFFSET:
+            remaining = page_size if limit is None else min(page_size, limit - fetched)
+            if remaining <= 0:
+                break
+
+            payload = self._build_payload(
+                target, limit=remaining, offset=offset, filters=filters
+            )
+
+            df_page = None
+            for attempt in range(1, max_retries + 1):
+                if attempt > 1:
+                    time.sleep(retry_delay)
+                resp = self._client._post(url, payload, max_retries=1, retry_delay=0)
+                if not resp:
+                    if debug:
+                        print(f"[{target}] Invalid response. Attempt {attempt}/{max_retries}")
+                    continue
+                try:
+                    df_page = self._parse_response(resp, target)
+                    break
+                except Exception as e:
+                    if debug:
+                        print(f"[{target}] Parse error: {e}. Attempt {attempt}/{max_retries}")
+                    continue
+
+            if df_page is None or df_page.empty:
+                break
+
+            frames.append(df_page)
+            n = len(df_page)
+            fetched += n
+            offset += remaining
+
+            if n < remaining:
+                break
+
+        if not frames:
+            return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        return pd.concat(frames, ignore_index=True)
