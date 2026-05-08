@@ -36,6 +36,8 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
         try:
             task = response["tasks"][0]
             task_id = task.get("id", "")
+            task_data = task.get("data") or {}
+            requested_location_code = task_data.get("location_code")
             items = task["result"][0]["items"]
             if not items:
                 return pd.DataFrame(columns=self._get_schema() + ["task_id"])
@@ -79,7 +81,7 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
                 "url": ranked_url,
                 "search_volume": search_volume,
                 "keyword_difficulty": keyword_props.get("keyword_difficulty"),
-                "national_location_code": self.config.location_code,
+                "national_location_code": requested_location_code,
                 "traffic_volume": serp_item.get("etv"),
                 "keyword_location_code": keyword_data.get("location_code"),
                 "language_code": keyword_data.get("language_code"),

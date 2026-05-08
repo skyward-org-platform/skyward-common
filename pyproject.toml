@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "skyward-common"
-version = "1.4.0"
+version = "1.4.1"
 description = "Shared infrastructure for Skyward projects"
 requires-python = ">=3.11"
 dependencies = [
