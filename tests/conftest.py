@@ -5,6 +5,10 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
+# Register the ephemeral-Postgres fixtures (pg_client, _pg_schema) so
+# Supabase-backed tests can use them. They skip when TEST_DATABASE_URL is unset.
+pytest_plugins = ["tests.conftest_pg"]
+
 
 class FakeLoadJob:
     """Mimics a BQ load job."""
