@@ -625,154 +625,6 @@ class MetaClient:
     # Dataset catalog (source of truth for dataset metadata)
     # ══════════════════════════════════════════════════════════════════════════
 
-    def scan_datasets(self, prefixes: dict = None, full: bool = False) -> dict:
-        """Scan BQ datasets and update dataset_catalog with type and hostname.
-
-        Args:
-            prefixes: Dict mapping type names to list of prefixes.
-                      e.g. {"ga4": ["analytics_"], "gsc": ["jepto_gsc_"]}
-                      Defaults to DEFAULT_DATASET_PREFIXES.
-            full: If True, scan ALL datasets (slow). If False, only scan
-                  datasets matching the prefix patterns (fast).
-
-        Returns:
-            Dict mapping type names to lists of dataset info dicts.
-            Includes "other" key for unrecognized datasets (only if full=True).
-        """
-        if prefixes is None:
-            prefixes = self.DEFAULT_DATASET_PREFIXES
-
-        # Build flat list of (prefix, type) for matching
-        prefix_map = []
-        for ds_type, prefix_list in prefixes.items():
-            for prefix in prefix_list:
-                prefix_map.append((prefix.lower(), ds_type))
-
-        # Get all datasets from BQ
-        all_datasets = list(self.bq.client.list_datasets())
-
-        # Classify each dataset
-        categorized = {}  # type -> list of {dataset, dataset_type, hostname}
-        unrecognized = []
-
-        for ds in all_datasets:
-            dataset_id = ds.dataset_id
-            dataset_lower = dataset_id.lower()
-
-            matched_type = None
-            for prefix, ds_type in prefix_map:
-                if dataset_lower.startswith(prefix):
-                    matched_type = ds_type
-                    break
-
-            if matched_type:
-                categorized.setdefault(matched_type, []).append(dataset_id)
-            elif full:
-                unrecognized.append(dataset_id)
-
-        # Resolve hostnames for GA4 datasets (queries INFORMATION_SCHEMA per dataset)
-        ga4_hostnames = {}
-        if "ga4" in categorized:
-            ga4_hostnames = self.bq.get_ga4_dataset_hostnames()
-
-        # Build rows for MERGE
-        discovered = []
-
-        for ds_type, dataset_ids in categorized.items():
-            for dataset_id in dataset_ids:
-                hostname = None
-
-                if ds_type == "ga4":
-                    hostname = ga4_hostnames.get(dataset_id)
-                    # Skip error strings from hostname resolution
-                    if hostname and hostname.startswith("Error:"):
-                        hostname = None
-
-                elif ds_type == "gsc":
-                    # Extract hostname from GSC dataset naming conventions
-                    dataset_lower = dataset_id.lower()
-                    if "_sc_domain_" in dataset_lower:
-                        parts = dataset_id.split("_sc_domain_")
-                        if len(parts) > 1:
-                            hostname = parts[1].replace("_", ".").lower().replace("www.", "")
-                    elif dataset_lower.startswith("jepto_gsc_"):
-                        hostname = dataset_id[len("jepto_gsc_"):].replace("_", ".").lower()
-                    elif dataset_lower.startswith("searchconsole_"):
-                        hostname = dataset_id[len("searchconsole_"):].replace("_", ".").lower()
-
-                discovered.append({
-                    "dataset": dataset_id,
-                    "dataset_type": ds_type,
-                    "hostname": hostname,
-                })
-
-        if full:
-            for dataset_id in unrecognized:
-                discovered.append({
-                    "dataset": dataset_id,
-                    "dataset_type": "other",
-                    "hostname": None,
-                })
-
-        # MERGE each discovered dataset into dataset_catalog
-        for ds_info in discovered:
-            merge_query = f"""
-                MERGE `{self._project_id}.Meta.dataset_catalog` T
-                USING (SELECT @dataset AS dataset) S
-                ON T.dataset = S.dataset
-                WHEN MATCHED THEN UPDATE SET
-                    dataset_type = @dataset_type,
-                    hostname = COALESCE(@hostname, T.hostname),
-                    active = TRUE,
-                    updated_at = CURRENT_TIMESTAMP()
-                WHEN NOT MATCHED THEN INSERT
-                    (dataset, dataset_type, hostname, active, updated_at)
-                    VALUES (@dataset, @dataset_type, @hostname, TRUE, CURRENT_TIMESTAMP())
-            """
-            merge_params = [
-                bigquery.ScalarQueryParameter("dataset", "STRING", ds_info["dataset"]),
-                bigquery.ScalarQueryParameter("dataset_type", "STRING", ds_info["dataset_type"]),
-                bigquery.ScalarQueryParameter("hostname", "STRING", ds_info["hostname"]),
-            ]
-            merge_config = bigquery.QueryJobConfig(query_parameters=merge_params)
-            self.bq.client.query(merge_query, job_config=merge_config).result()
-
-        # Remove datasets from catalog that no longer exist in BQ
-        all_bq_dataset_names = {ds.dataset_id for ds in all_datasets}
-        if full:
-            # Full scan: delete any catalog entry not found in BQ
-            delete_query = f"""
-                DELETE FROM `{self._project_id}.Meta.dataset_catalog`
-                WHERE dataset NOT IN UNNEST(@datasets)
-            """
-        else:
-            # Quick scan: only delete entries matching our prefixes that are gone
-            discovered_names = [d["dataset"] for d in discovered]
-            # Get all catalog entries matching our prefixes
-            prefix_conditions = " OR ".join(
-                [f"LOWER(dataset) LIKE '{p}%'" for p, _ in prefix_map]
-            )
-            delete_query = f"""
-                DELETE FROM `{self._project_id}.Meta.dataset_catalog`
-                WHERE ({prefix_conditions})
-                AND dataset NOT IN UNNEST(@datasets)
-            """
-            all_bq_dataset_names = {d for d in all_bq_dataset_names}
-
-        delete_params = [
-            bigquery.ArrayQueryParameter("datasets", "STRING", list(all_bq_dataset_names))
-        ]
-        delete_config = bigquery.QueryJobConfig(query_parameters=delete_params)
-        self.bq.client.query(delete_query, job_config=delete_config).result()
-
-        # Build return dict grouped by type
-        result = {}
-        for ds_info in discovered:
-            ds_type = ds_info["dataset_type"]
-            result.setdefault(ds_type, []).append(ds_info)
-
-        return result
-
     def get_dataset_catalog(
         self,
         dataset_type: Optional[str] = None,
@@ -784,17 +636,17 @@ class MetaClient:
             dataset_type: Filter by type (ga4, gsc, gmb, facebook, etc.)
             unassigned_only: If True, exclude datasets already in client_datasets
         """
-        params = []
+        params = {}
         conditions = []
 
         if dataset_type is not None:
-            conditions.append("dc.dataset_type = @dataset_type")
-            params.append(bigquery.ScalarQueryParameter("dataset_type", "STRING", dataset_type))
+            conditions.append("dc.dataset_type = %(dataset_type)s")
+            params["dataset_type"] = dataset_type
 
         if unassigned_only:
-            conditions.append(f"""
+            conditions.append("""
                 dc.dataset NOT IN (
-                    SELECT dataset_id FROM `{self._project_id}.Meta.client_datasets`
+                    SELECT dataset_id FROM meta.client_datasets
                 )
             """)
 
@@ -803,13 +655,12 @@ class MetaClient:
         query = f"""
             SELECT dc.dataset, dc.dataset_type, dc.hostname,
                    dc.is_standardized, dc.owner, dc.active, dc.updated_at
-            FROM `{self._project_id}.Meta.dataset_catalog` dc
+            FROM meta.dataset_catalog dc
             {where_clause}
             ORDER BY dc.dataset_type, dc.dataset
         """
 
-        job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
-        return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        return self.sb.query(query, params)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Dataset client linking (Meta.client_datasets)
@@ -836,16 +687,16 @@ class MetaClient:
             DataFrame with: client_id, domain_id, dataset_id, dataset_type,
                             hostname, is_active, notes, created_at
         """
-        params = []
+        params = {}
         conditions = []
 
         if client_id is not None:
-            conditions.append("cd.client_id = @client_id")
-            params.append(bigquery.ScalarQueryParameter("client_id", "INT64", client_id))
+            conditions.append("cd.client_id = %(client_id)s")
+            params["client_id"] = client_id
 
         if dataset_type is not None:
-            conditions.append("dc.dataset_type = @dataset_type")
-            params.append(bigquery.ScalarQueryParameter("dataset_type", "STRING", dataset_type))
+            conditions.append("dc.dataset_type = %(dataset_type)s")
+            params["dataset_type"] = dataset_type
 
         if active_only:
             conditions.append("cd.is_active = TRUE")
@@ -856,15 +707,20 @@ class MetaClient:
             SELECT cd.client_id, cd.domain_id, cd.dataset_id,
                    dc.dataset_type, dc.hostname,
                    cd.is_active, cd.notes, cd.created_at
-            FROM `{self._project_id}.Meta.client_datasets` cd
-            LEFT JOIN `{self._project_id}.Meta.dataset_catalog` dc
+            FROM meta.client_datasets cd
+            LEFT JOIN meta.dataset_catalog dc
                 ON cd.dataset_id = dc.dataset
             {where_clause}
             ORDER BY cd.client_id, dc.dataset_type, cd.dataset_id
         """
 
-        job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
-        return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        df = self.sb.query(query, params)
+        # Keep is_active as native Python bools (object dtype) rather than the
+        # numpy.bool_ that pandas infers, so callers can use `is True/False`.
+        if "is_active" in df.columns and not df.empty:
+            vals = [None if v is None else bool(v) for v in df["is_active"].tolist()]
+            df["is_active"] = pd.Series(vals, dtype=object, index=df.index)
+        return df
 
     def check_dataset_assignment(self, dataset_id: str) -> Optional[dict]:
         """Check if a dataset is already assigned to any client.
@@ -872,16 +728,14 @@ class MetaClient:
         Returns:
             dict with client_id and client_name if assigned, None if unassigned.
         """
-        query = f"""
+        query = """
             SELECT cd.client_id, c.client_name
-            FROM `{self._project_id}.Meta.client_datasets` cd
-            JOIN `{self._project_id}.Meta.clients` c ON cd.client_id = c.client_id
-            WHERE cd.dataset_id = @dataset_id
+            FROM meta.client_datasets cd
+            JOIN meta.clients c ON cd.client_id = c.client_id
+            WHERE cd.dataset_id = %(dataset_id)s
             LIMIT 1
         """
-        params = [bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id)]
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        df = self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        df = self.sb.query(query, {"dataset_id": dataset_id})
         if df.empty:
             return None
         row = df.iloc[0]
@@ -919,42 +773,29 @@ class MetaClient:
         if existing:
             warning = f"Dataset already assigned to client {existing['client_id']} ({existing['client_name']})"
 
-        # 1. MERGE into dataset_catalog so metadata lives there
-        merge_query = f"""
-            MERGE `{self._project_id}.Meta.dataset_catalog` T
-            USING (SELECT @dataset AS dataset) S
-            ON T.dataset = S.dataset
-            WHEN MATCHED THEN UPDATE SET
-                dataset_type = @dataset_type,
-                hostname = @hostname,
-                active = TRUE,
-                updated_at = CURRENT_TIMESTAMP()
-            WHEN NOT MATCHED THEN INSERT
-                (dataset, dataset_type, hostname, active, updated_at)
-                VALUES (@dataset, @dataset_type, @hostname, TRUE, CURRENT_TIMESTAMP())
-        """
-        merge_params = [
-            bigquery.ScalarQueryParameter("dataset", "STRING", dataset_id),
-            bigquery.ScalarQueryParameter("dataset_type", "STRING", dataset_type),
-            bigquery.ScalarQueryParameter("hostname", "STRING", hostname),
-        ]
-        merge_config = bigquery.QueryJobConfig(query_parameters=merge_params)
-        self.bq.client.query(merge_query, job_config=merge_config).result()
+        # 1. Upsert into dataset_catalog so metadata lives there
+        self.sb.execute(
+            """
+            INSERT INTO meta.dataset_catalog (dataset, dataset_type, hostname, active, updated_at)
+            VALUES (%(dataset)s, %(dataset_type)s, %(hostname)s, true, now())
+            ON CONFLICT (dataset) DO UPDATE SET
+                dataset_type = excluded.dataset_type,
+                hostname = excluded.hostname,
+                active = true,
+                updated_at = now()
+            """,
+            {"dataset": dataset_id, "dataset_type": dataset_type, "hostname": hostname},
+        )
 
         # 2. Insert the link row into client_datasets
-        insert_query = f"""
-            INSERT INTO `{self._project_id}.Meta.client_datasets`
+        self.sb.execute(
+            """
+            INSERT INTO meta.client_datasets
             (client_id, domain_id, dataset_id, notes)
-            VALUES (@client_id, @domain_id, @dataset_id, @notes)
-        """
-        insert_params = [
-            bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-            bigquery.ScalarQueryParameter("domain_id", "INT64", domain_id),
-            bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id),
-            bigquery.ScalarQueryParameter("notes", "STRING", notes),
-        ]
-        insert_config = bigquery.QueryJobConfig(query_parameters=insert_params)
-        self.bq.client.query(insert_query, job_config=insert_config).result()
+            VALUES (%(client_id)s, %(domain_id)s, %(dataset_id)s, %(notes)s)
+            """,
+            {"client_id": client_id, "domain_id": domain_id, "dataset_id": dataset_id, "notes": notes},
+        )
 
         return {"status": "added", "warning": warning}
 
@@ -969,52 +810,40 @@ class MetaClient:
         """
         # Update hostname in dataset_catalog if provided
         if hostname is not None:
-            catalog_query = f"""
-                UPDATE `{self._project_id}.Meta.dataset_catalog`
-                SET hostname = @hostname, updated_at = CURRENT_TIMESTAMP()
-                WHERE dataset = @dataset_id
-            """
-            catalog_params = [
-                bigquery.ScalarQueryParameter("hostname", "STRING", hostname),
-                bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id),
-            ]
-            catalog_config = bigquery.QueryJobConfig(query_parameters=catalog_params)
-            self.bq.client.query(catalog_query, job_config=catalog_config).result()
+            self.sb.execute(
+                """
+                UPDATE meta.dataset_catalog
+                SET hostname = %(hostname)s, updated_at = now()
+                WHERE dataset = %(dataset_id)s
+                """,
+                {"hostname": hostname, "dataset_id": dataset_id},
+            )
 
         # Update link-level fields in client_datasets if provided
         set_clauses = []
-        params = [
-            bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-            bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id),
-        ]
+        params = {"client_id": client_id, "dataset_id": dataset_id}
         if is_active is not None:
-            set_clauses.append("is_active = @is_active")
-            params.append(bigquery.ScalarQueryParameter("is_active", "BOOL", is_active))
+            set_clauses.append("is_active = %(is_active)s")
+            params["is_active"] = is_active
         if notes is not None:
-            set_clauses.append("notes = @notes")
-            params.append(bigquery.ScalarQueryParameter("notes", "STRING", notes))
+            set_clauses.append("notes = %(notes)s")
+            params["notes"] = notes
         if not set_clauses:
             return
         query = f"""
-            UPDATE `{self._project_id}.Meta.client_datasets`
+            UPDATE meta.client_datasets
             SET {', '.join(set_clauses)}
-            WHERE client_id = @client_id AND dataset_id = @dataset_id
+            WHERE client_id = %(client_id)s AND dataset_id = %(dataset_id)s
         """
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
+        self.sb.execute(query, params)
 
     def delete_client_dataset(self, client_id: int, dataset_id: str) -> None:
         """Remove a dataset mapping entirely."""
-        query = f"""
-            DELETE FROM `{self._project_id}.Meta.client_datasets`
-            WHERE client_id = @client_id AND dataset_id = @dataset_id
+        query = """
+            DELETE FROM meta.client_datasets
+            WHERE client_id = %(client_id)s AND dataset_id = %(dataset_id)s
         """
-        params = [
-            bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-            bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id),
-        ]
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
+        self.sb.execute(query, {"client_id": client_id, "dataset_id": dataset_id})
 
     def deactivate_client_dataset(self, dataset_id: str) -> None:
         """
@@ -1023,18 +852,12 @@ class MetaClient:
         Args:
             dataset_id: The dataset to deactivate
         """
-        query = f"""
-            UPDATE `{self._project_id}.Meta.client_datasets`
+        query = """
+            UPDATE meta.client_datasets
             SET is_active = FALSE
-            WHERE dataset_id = @dataset_id
+            WHERE dataset_id = %(dataset_id)s
         """
-
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id)
-            ]
-        )
-        self.bq.client.query(query, job_config=job_config).result()
+        self.sb.execute(query, {"dataset_id": dataset_id})
 
     def scan_and_match_datasets(self) -> dict:
         """
@@ -1061,13 +884,13 @@ class MetaClient:
         existing_ids = set(existing_df["dataset_id"].tolist()) if not existing_df.empty else set()
 
         # Get all non-competitor domains mapped to clients WITH domain_id
-        domain_query = f"""
+        domain_query = """
             SELECT d.domain_id, d.domain, cd.client_id
-            FROM `{self._project_id}.Meta.client_domains` cd
-            JOIN `{self._project_id}.Meta.domains` d ON cd.domain_id = d.domain_id
+            FROM meta.client_domains cd
+            JOIN meta.domains d ON cd.domain_id = d.domain_id
             WHERE cd.is_competitor = FALSE AND d.is_active = TRUE
         """
-        domains_df = self.bq.client.query(domain_query).result().to_dataframe()
+        domains_df = self.sb.query(domain_query)
 
         # Build hostname → (client_id, domain_id) mapping
         domain_lookup = {}  # normalized_hostname → {client_id, domain_id, domain}
@@ -1251,30 +1074,26 @@ class MetaClient:
         if not approvals:
             return 0
 
-        # 1. MERGE metadata into dataset_catalog for each dataset
+        # 1. Upsert metadata into dataset_catalog for each dataset
         for item in approvals:
-            merge_query = f"""
-                MERGE `{self._project_id}.Meta.dataset_catalog` T
-                USING (SELECT @dataset AS dataset) S
-                ON T.dataset = S.dataset
-                WHEN MATCHED THEN UPDATE SET
-                    dataset_type = @dataset_type,
-                    hostname = @hostname,
-                    active = TRUE,
-                    updated_at = CURRENT_TIMESTAMP()
-                WHEN NOT MATCHED THEN INSERT
-                    (dataset, dataset_type, hostname, active, updated_at)
-                    VALUES (@dataset, @dataset_type, @hostname, TRUE, CURRENT_TIMESTAMP())
-            """
-            merge_params = [
-                bigquery.ScalarQueryParameter("dataset", "STRING", item["dataset_id"]),
-                bigquery.ScalarQueryParameter("dataset_type", "STRING", item["dataset_type"]),
-                bigquery.ScalarQueryParameter("hostname", "STRING", item.get("hostname")),
-            ]
-            merge_config = bigquery.QueryJobConfig(query_parameters=merge_params)
-            self.bq.client.query(merge_query, job_config=merge_config).result()
+            self.sb.execute(
+                """
+                INSERT INTO meta.dataset_catalog (dataset, dataset_type, hostname, active, updated_at)
+                VALUES (%(dataset)s, %(dataset_type)s, %(hostname)s, true, now())
+                ON CONFLICT (dataset) DO UPDATE SET
+                    dataset_type = excluded.dataset_type,
+                    hostname = excluded.hostname,
+                    active = true,
+                    updated_at = now()
+                """,
+                {
+                    "dataset": item["dataset_id"],
+                    "dataset_type": item["dataset_type"],
+                    "hostname": item.get("hostname"),
+                },
+            )
 
-        # 2. Bulk insert link rows into client_datasets (pure linking table)
+        # 2. Insert link rows into client_datasets (pure linking table)
         link_rows = []
         for item in approvals:
             link_rows.append({
@@ -1284,14 +1103,12 @@ class MetaClient:
                 "notes": None,
             })
 
-        df = pd.DataFrame(link_rows)
-        # Ensure int columns are correct dtype
-        df["client_id"] = df["client_id"].astype("Int64")
-        df["domain_id"] = df["domain_id"].astype("Int64")
-
-        table_ref = f"{self._project_id}.Meta.client_datasets"
-        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-        self.bq.client.load_table_from_dataframe(df, table_ref, job_config=job_config).result()
+        for row in link_rows:
+            self.sb.execute(
+                "insert into meta.client_datasets (client_id, domain_id, dataset_id, notes) "
+                "values (%(client_id)s, %(domain_id)s, %(dataset_id)s, %(notes)s)",
+                row,
+            )
 
         return len(link_rows)
 
