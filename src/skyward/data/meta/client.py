@@ -257,16 +257,11 @@ class MetaClient:
         Uses preserve_path=True so domains like 'kitchenguard.com/fw' are kept intact.
         """
         cleaned = self._clean_domain(domain, preserve_path=True)
-        query = f"""
-            SELECT domain_id, domain, domain_name, is_active
-            FROM `{self._project_id}.Meta.domains`
-            WHERE domain = @domain
-            LIMIT 1
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("domain", "STRING", cleaned)]
+        df = self.sb.query(
+            "select domain_id, domain, domain_name, is_active "
+            "from meta.domains where domain = %(domain)s limit 1",
+            {"domain": cleaned},
         )
-        df = self.bq.client.query(query, job_config=job_config).result().to_dataframe()
         if df.empty:
             return None
         row = df.iloc[0]
@@ -283,35 +278,30 @@ class MetaClient:
         extracted = tldextract.extract(query)
         search_term = extracted.domain if extracted.domain else query
 
-        sql = f"""
+        sql = """
             SELECT domain_id, domain, domain_name, is_active
-            FROM `{self._project_id}.Meta.domains`
-            WHERE LOWER(domain) LIKE @pattern
-            LIMIT @limit
+            FROM meta.domains
+            WHERE LOWER(domain) LIKE %(pattern)s
+            LIMIT %(limit)s
         """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("pattern", "STRING", f"%{search_term.lower()}%"),
-                bigquery.ScalarQueryParameter("limit", "INT64", limit),
-            ]
+        return self.sb.query(
+            sql, {"pattern": f"%{search_term.lower()}%", "limit": limit}
         )
-        return self.bq.client.query(sql, job_config=job_config).result().to_dataframe()
 
     def get_client_domains(self, client_id: int, is_competitor: Optional[bool] = None) -> pd.DataFrame:
-        params = [bigquery.ScalarQueryParameter("client_id", "INT64", client_id)]
+        params = {"client_id": client_id}
         competitor_filter = ""
         if is_competitor is not None:
-            competitor_filter = "AND cd.is_competitor = @is_competitor"
-            params.append(bigquery.ScalarQueryParameter("is_competitor", "BOOL", is_competitor))
+            competitor_filter = "AND cd.is_competitor = %(is_competitor)s"
+            params["is_competitor"] = is_competitor
         query = f"""
             SELECT d.domain_id, d.domain, d.domain_name, d.is_active, cd.is_competitor, cd.priority, d.notes
-            FROM `{self._project_id}.Meta.client_domains` cd
-            JOIN `{self._project_id}.Meta.domains` d ON cd.domain_id = d.domain_id
-            WHERE cd.client_id = @client_id {competitor_filter}
+            FROM meta.client_domains cd
+            JOIN meta.domains d ON cd.domain_id = d.domain_id
+            WHERE cd.client_id = %(client_id)s {competitor_filter}
             ORDER BY cd.is_competitor, d.domain
         """
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        return self.sb.query(query, params)
 
     VALID_PRIORITIES = {"VERY LOW", "LOW", "NORMAL", "HIGH", "VERY HIGH"}
 
@@ -346,77 +336,58 @@ class MetaClient:
             return []
 
         # 1. Batch check which domains already exist (single query)
-        check_query = f"""
-            SELECT domain_id, domain FROM `{self._project_id}.Meta.domains`
-            WHERE domain IN UNNEST(@domains)
-        """
-        check_params = [bigquery.ArrayQueryParameter("domains", "STRING", clean_domains)]
-        check_config = bigquery.QueryJobConfig(query_parameters=check_params)
-        existing_df = self.bq.client.query(check_query, job_config=check_config).result().to_dataframe()
+        existing_df = self.sb.query(
+            "select domain_id, domain from meta.domains where domain = ANY(%(domains)s)",
+            {"domains": clean_domains},
+        )
         existing_map = dict(zip(existing_df["domain"].tolist(), existing_df["domain_id"].tolist())) if not existing_df.empty else {}
 
-        # 2. Get next ID once, increment in Python for new domains
+        # 2. Insert new domains via IDENTITY, capturing the generated ids
         new_domains = [d for d in clean_domains if d not in existing_map]
         if new_domains:
-            next_num = self.get_next_id("domains", "domain_id")
-
-            # Build rows for bulk insert into Meta.domains
-            domain_rows = []
-            for domain in new_domains:
-                domain_id = next_num
-                existing_map[domain] = domain_id
-                domain_rows.append({
-                    "domain_id": domain_id,
-                    "domain": domain,
-                    "domain_name": self._domain_to_name(domain),
-                })
-                next_num += 1
-
-            # Bulk insert new domains
-            domains_df = pd.DataFrame(domain_rows)
-            domains_df["domain_id"] = domains_df["domain_id"].astype("int64")
-            table_ref = f"{self._project_id}.Meta.domains"
-            job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-            self.bq.client.load_table_from_dataframe(domains_df, table_ref, job_config=job_config).result()
+            new_names = [self._domain_to_name(d) for d in new_domains]
+            rows = self.sb.execute(
+                "insert into meta.domains (domain, domain_name) "
+                "select * from unnest(%(domains)s::text[], %(names)s::text[]) "
+                "returning domain_id, domain",
+                {"domains": new_domains, "names": new_names},
+            )
+            for domain_id, domain in rows:
+                existing_map[domain] = int(domain_id)
 
         skipped: list[str] = []
 
         if client_id is not None:
             # 3. Check which client_domains links already exist
             all_domain_ids = [existing_map[d] for d in clean_domains]
-            existing_links_query = f"""
-                SELECT domain_id FROM `{self._project_id}.Meta.client_domains`
-                WHERE client_id = @client_id AND domain_id IN UNNEST(@domain_ids)
-            """
-            link_check_params = [
-                bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-                bigquery.ArrayQueryParameter("domain_ids", "INT64", all_domain_ids),
-            ]
-            link_check_config = bigquery.QueryJobConfig(query_parameters=link_check_params)
-            existing_links_df = self.bq.client.query(existing_links_query, job_config=link_check_config).result().to_dataframe()
+            existing_links_df = self.sb.query(
+                "select domain_id from meta.client_domains "
+                "where client_id = %(client_id)s and domain_id = ANY(%(domain_ids)s)",
+                {"client_id": client_id, "domain_ids": all_domain_ids},
+            )
             already_linked = set(existing_links_df["domain_id"].tolist()) if not existing_links_df.empty else set()
 
-            # 4. Bulk insert only new client_domains links
-            link_rows = []
+            # 4. Bulk insert only new client_domains links (all share competitor/priority)
+            new_link_ids = []
             for domain in clean_domains:
                 domain_id = existing_map[domain]
                 if domain_id in already_linked:
                     skipped.append(domain)
                     continue
-                link_rows.append({
-                    "client_id": client_id,
-                    "domain_id": domain_id,
-                    "is_competitor": is_competitor,
-                    "priority": priority,
-                })
+                new_link_ids.append(domain_id)
 
-            if link_rows:
-                links_df = pd.DataFrame(link_rows)
-                links_df["client_id"] = links_df["client_id"].astype("int64")
-                links_df["domain_id"] = links_df["domain_id"].astype("int64")
-                link_table_ref = f"{self._project_id}.Meta.client_domains"
-                link_job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-                self.bq.client.load_table_from_dataframe(links_df, link_table_ref, job_config=link_job_config).result()
+            if new_link_ids:
+                self.sb.execute(
+                    "insert into meta.client_domains (client_id, domain_id, is_competitor, priority) "
+                    "select %(client_id)s, did, %(is_competitor)s, %(priority)s "
+                    "from unnest(%(domain_ids)s::bigint[]) as did",
+                    {
+                        "client_id": client_id,
+                        "is_competitor": is_competitor,
+                        "priority": priority,
+                        "domain_ids": new_link_ids,
+                    },
+                )
 
         # 5. Return results
         return [
@@ -426,25 +397,24 @@ class MetaClient:
 
     def update_domain(self, domain_id: int, domain_name: Optional[str] = None, is_active: Optional[bool] = None, notes: Optional[str] = None) -> None:
         set_clauses = []
-        params = [bigquery.ScalarQueryParameter("domain_id", "INT64", domain_id)]
+        params = {"domain_id": domain_id}
         if domain_name is not None:
-            set_clauses.append("domain_name = @domain_name")
-            params.append(bigquery.ScalarQueryParameter("domain_name", "STRING", domain_name))
+            set_clauses.append("domain_name = %(domain_name)s")
+            params["domain_name"] = domain_name
         if is_active is not None:
-            set_clauses.append("is_active = @is_active")
-            params.append(bigquery.ScalarQueryParameter("is_active", "BOOL", is_active))
+            set_clauses.append("is_active = %(is_active)s")
+            params["is_active"] = is_active
         if notes is not None:
-            set_clauses.append("notes = @notes")
-            params.append(bigquery.ScalarQueryParameter("notes", "STRING", notes))
+            set_clauses.append("notes = %(notes)s")
+            params["notes"] = notes
         if not set_clauses:
             return
         query = f"""
-            UPDATE `{self._project_id}.Meta.domains`
+            UPDATE meta.domains
             SET {', '.join(set_clauses)}
-            WHERE domain_id = @domain_id
+            WHERE domain_id = %(domain_id)s
         """
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
+        self.sb.execute(query, params)
 
     def update_domains_batch(self, rows: list) -> None:
         """Batch-update multiple domains using parameterized queries.
@@ -479,30 +449,22 @@ class MetaClient:
             if priority not in self.VALID_PRIORITIES:
                 priority = "NORMAL"
 
-            query = f"""
-                UPDATE `{self._project_id}.Meta.client_domains`
-                SET priority = @priority
-                WHERE client_id = @client_id AND domain_id = @domain_id
+            query = """
+                UPDATE meta.client_domains
+                SET priority = %(priority)s
+                WHERE client_id = %(client_id)s AND domain_id = %(domain_id)s
             """
-            params = [
-                bigquery.ScalarQueryParameter("priority", "STRING", priority),
-                bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-                bigquery.ScalarQueryParameter("domain_id", "INT64", domain_id),
-            ]
-            job_config = bigquery.QueryJobConfig(query_parameters=params)
-            self.bq.client.query(query, job_config=job_config).result()
+            self.sb.execute(
+                query,
+                {"priority": priority, "client_id": client_id, "domain_id": domain_id},
+            )
 
     def remove_client_domain(self, client_id: int, domain_id: int) -> None:
-        query = f"""
-            DELETE FROM `{self._project_id}.Meta.client_domains`
-            WHERE client_id = @client_id AND domain_id = @domain_id
-        """
-        params = [
-            bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-            bigquery.ScalarQueryParameter("domain_id", "INT64", domain_id),
-        ]
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
+        self.sb.execute(
+            "delete from meta.client_domains "
+            "where client_id = %(client_id)s and domain_id = %(domain_id)s",
+            {"client_id": client_id, "domain_id": domain_id},
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Project CRUD
