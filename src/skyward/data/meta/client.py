@@ -17,42 +17,34 @@ class MetaClient:
         "facebook": ["jepto_facebook_"],
     }
 
-    def __init__(self, bq_client):
-        self.bq = bq_client
-        self._project_id = bq_client.client.project
-        self._max_ids = {}  # Cache: (dataset, table, id_column) -> max_id
+    def __init__(self, sb_client):
+        self.sb = sb_client
+        self._max_ids = {}  # Cache: (schema, table, id_column) -> max_id
 
     # ══════════════════════════════════════════════════════════════════════════
     # ID generation
+    #
+    # Inserts now use Postgres IDENTITY + ``INSERT ... RETURNING``; these helpers
+    # remain as compatibility shims (MAX+1) for any external caller that still
+    # expects them. They no longer guard insert paths, so the historical
+    # get_next_id race condition is gone.
     # ══════════════════════════════════════════════════════════════════════════
 
-    def get_next_id(self, table: str, id_column: str, dataset: str = "Meta") -> int:
-        """Get the next auto-incremented integer ID for any BQ table."""
-        query = f"""
-            SELECT MAX({id_column}) AS max_id
-            FROM `{self._project_id}.{dataset}.{table}`
-        """
-        df = self.bq.client.query(query).result().to_dataframe()
+    def get_next_id(self, table: str, id_column: str, schema: str = "meta") -> int:
+        """Get the next auto-incremented integer ID for a table (MAX+1 shim)."""
+        df = self.sb.query(f"select max({id_column}) as max_id from {schema}.{table}")
         max_id = df["max_id"].iloc[0]
-        if max_id is None or pd.isna(max_id):
-            next_id = 1
-        else:
-            next_id = int(max_id) + 1
-        # Update cache
-        self._max_ids[(dataset, table, id_column)] = next_id
+        next_id = 1 if (max_id is None or pd.isna(max_id)) else int(max_id) + 1
+        self._max_ids[(schema, table, id_column)] = next_id
         return next_id
 
-    def get_max_id(self, table: str, id_column: str, dataset: str = "Meta") -> int:
-        """Get the current max ID from cache or BQ."""
-        cache_key = (dataset, table, id_column)
+    def get_max_id(self, table: str, id_column: str, schema: str = "meta") -> int:
+        """Get the current max ID from cache or Postgres."""
+        cache_key = (schema, table, id_column)
         if cache_key not in self._max_ids:
-            query = f"""
-                SELECT MAX({id_column}) AS max_id
-                FROM `{self._project_id}.{dataset}.{table}`
-            """
-            df = self.bq.client.query(query).result().to_dataframe()
+            df = self.sb.query(f"select max({id_column}) as max_id from {schema}.{table}")
             max_id = df["max_id"].iloc[0]
-            self._max_ids[cache_key] = int(max_id) if max_id is not None and not pd.isna(max_id) else 0
+            self._max_ids[cache_key] = int(max_id) if (max_id is not None and not pd.isna(max_id)) else 0
         return self._max_ids[cache_key]
 
     @staticmethod
