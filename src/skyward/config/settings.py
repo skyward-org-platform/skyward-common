@@ -49,6 +49,9 @@ class Settings:
     # xAI (Grok) Key
     xai_key: str
 
+    # Supabase (skyward-ops project) — Postgres connection string (transaction pooler)
+    supabase_db_url: str | None
+
 
 def load_config() -> Settings:
     """Load configuration from environment variables.
@@ -107,4 +110,5 @@ def load_config() -> Settings:
         perplexity_key=os.getenv("PERPLEXITY_API_KEY", ""),
         anthropic_key=os.getenv("ANTHROPIC_API_KEY", ""),
         xai_key=os.getenv("XAI_API_KEY", ""),
+        supabase_db_url=os.getenv("SUPABASE_DB_URL"),
     )
