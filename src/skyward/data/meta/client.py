@@ -483,32 +483,30 @@ class MetaClient:
             client_id: Filter to projects for this client
             project_type: Filter to projects of this type (e.g., 'seo_pipeline', 'kga')
         """
-        params = []
+        params = {}
         conditions = []
 
         if client_id is not None:
-            conditions.append("client_id = @client_id")
-            params.append(bigquery.ScalarQueryParameter("client_id", "INT64", client_id))
+            conditions.append("client_id = %(client_id)s")
+            params["client_id"] = client_id
 
         if project_type is not None:
-            conditions.append("project_type = @project_type")
-            params.append(bigquery.ScalarQueryParameter("project_type", "STRING", project_type))
+            conditions.append("project_type = %(project_type)s")
+            params["project_type"] = project_type
 
         if status is not None:
-            conditions.append("status = @status")
-            params.append(bigquery.ScalarQueryParameter("status", "STRING", status))
+            conditions.append("status = %(status)s")
+            params["status"] = status
 
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
         query = f"""
             SELECT project_id, client_id, project_type, project_name, notes, status, created_at
-            FROM `{self._project_id}.Meta.projects`
+            FROM meta.projects
             {where_clause}
             ORDER BY project_id
         """
-
-        job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
-        return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        return self.sb.query(query, params)
 
     def list_project_domains(self, project_id: int) -> pd.DataFrame:
         """
@@ -520,17 +518,14 @@ class MetaClient:
         Returns:
             DataFrame with domain_id, domain, domain_name, role, priority
         """
-        query = f"""
+        query = """
             SELECT pd.domain_id, d.domain, d.domain_name, pd.role, pd.priority
-            FROM `{self._project_id}.Meta.project_domains` pd
-            JOIN `{self._project_id}.Meta.domains` d ON pd.domain_id = d.domain_id
-            WHERE pd.project_id = @project_id
+            FROM meta.project_domains pd
+            JOIN meta.domains d ON pd.domain_id = d.domain_id
+            WHERE pd.project_id = %(project_id)s
             ORDER BY pd.role, d.domain
         """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("project_id", "INT64", project_id)]
-        )
-        return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        return self.sb.query(query, {"project_id": project_id})
 
     def add_project(
         self,
@@ -551,52 +546,45 @@ class MetaClient:
         Returns:
             The generated project_id
         """
-        project_id = self.get_next_id("projects", "project_id")
-
-        query = f"""
-            INSERT INTO `{self._project_id}.Meta.projects`
-            (project_id, client_id, project_type, project_name, notes, status)
-            VALUES (@project_id, @client_id, @project_type, @project_name, @notes, @status)
-        """
-
-        params = [
-            bigquery.ScalarQueryParameter("project_id", "INT64", project_id),
-            bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-            bigquery.ScalarQueryParameter("project_type", "STRING", project_type),
-            bigquery.ScalarQueryParameter("project_name", "STRING", project_name),
-            bigquery.ScalarQueryParameter("notes", "STRING", notes),
-            bigquery.ScalarQueryParameter("status", "STRING", "active"),
-        ]
-
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
-        return project_id
+        rows = self.sb.execute(
+            "insert into meta.projects "
+            "(client_id, project_type, project_name, notes, status) "
+            "values (%(client_id)s, %(project_type)s, %(project_name)s, %(notes)s, %(status)s) "
+            "returning project_id",
+            {
+                "client_id": client_id,
+                "project_type": project_type,
+                "project_name": project_name,
+                "notes": notes,
+                "status": "active",
+            },
+        )
+        return int(rows[0][0])
 
     def update_project(self, project_id, project_name=None, status=None, notes=None):
         """Update a project's mutable fields."""
         set_clauses = []
-        params = [bigquery.ScalarQueryParameter("project_id", "INT64", project_id)]
+        params = {"project_id": project_id}
 
         if project_name is not None:
-            set_clauses.append("project_name = @project_name")
-            params.append(bigquery.ScalarQueryParameter("project_name", "STRING", project_name))
+            set_clauses.append("project_name = %(project_name)s")
+            params["project_name"] = project_name
         if status is not None:
-            set_clauses.append("status = @status")
-            params.append(bigquery.ScalarQueryParameter("status", "STRING", status))
+            set_clauses.append("status = %(status)s")
+            params["status"] = status
         if notes is not None:
-            set_clauses.append("notes = @notes")
-            params.append(bigquery.ScalarQueryParameter("notes", "STRING", notes))
+            set_clauses.append("notes = %(notes)s")
+            params["notes"] = notes
 
         if not set_clauses:
             return
 
         query = f"""
-            UPDATE `{self._project_id}.Meta.projects`
+            UPDATE meta.projects
             SET {', '.join(set_clauses)}
-            WHERE project_id = @project_id
+            WHERE project_id = %(project_id)s
         """
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
+        self.sb.execute(query, params)
 
     def deactivate_project(self, project_id: int) -> None:
         """Deactivate a project."""
@@ -610,29 +598,28 @@ class MetaClient:
         """Link domains to a project. Returns count of rows inserted."""
         if not domain_ids:
             return 0
-        rows = [
-            {"project_id": project_id, "domain_id": did, "role": role, "priority": priority.upper()}
-            for did in domain_ids
-        ]
-        table_ref = f"{self._project_id}.Meta.project_domains"
-        df = pd.DataFrame(rows)
-        self.bq.client.load_table_from_dataframe(df, table_ref).result()
-        return len(rows)
+        self.sb.execute(
+            "insert into meta.project_domains (project_id, domain_id, role, priority) "
+            "select %(project_id)s, did, %(role)s, %(priority)s "
+            "from unnest(%(domain_ids)s::bigint[]) as did",
+            {
+                "project_id": project_id,
+                "role": role,
+                "priority": priority.upper(),
+                "domain_ids": list(domain_ids),
+            },
+        )
+        return len(domain_ids)
 
     def remove_project_domains(self, project_id, domain_ids):
         """Remove domains from a project (hard delete)."""
         if not domain_ids:
             return
-        query = f"""
-            DELETE FROM `{self._project_id}.Meta.project_domains`
-            WHERE project_id = @project_id AND domain_id IN UNNEST(@domain_ids)
-        """
-        params = [
-            bigquery.ScalarQueryParameter("project_id", "INT64", project_id),
-            bigquery.ArrayQueryParameter("domain_ids", "INT64", domain_ids),
-        ]
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
+        self.sb.execute(
+            "delete from meta.project_domains "
+            "where project_id = %(project_id)s and domain_id = ANY(%(domain_ids)s)",
+            {"project_id": project_id, "domain_ids": list(domain_ids)},
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Dataset catalog (source of truth for dataset metadata)
