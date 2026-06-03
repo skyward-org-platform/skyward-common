@@ -68,34 +68,31 @@ class MetaClient:
 
     def get_client(self, client_id: int) -> Optional[dict]:
         """Get a single client by ID. Returns dict or None if not found."""
-        query = f"""
-            SELECT client_id, client_name, abbreviation, is_active, notes, created_at
-            FROM `{self._project_id}.Meta.clients`
-            WHERE client_id = @client_id
-        """
-        params = [bigquery.ScalarQueryParameter("client_id", "INT64", client_id)]
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        df = self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        df = self.sb.query(
+            "select client_id, client_name, abbreviation, is_active, notes, created_at "
+            "from meta.clients where client_id = %(client_id)s",
+            {"client_id": client_id},
+        )
         if df.empty:
             return None
         return df.iloc[0].to_dict()
 
     def list_clients(self, search: Optional[str] = None, include_counts: bool = False) -> pd.DataFrame:
-        """Get all clients from Meta.clients, optionally filtered by search term.
+        """Get all clients from meta.clients, optionally filtered by search term.
 
         Search matches against client_name and abbreviation (case-insensitive).
         If include_counts=True, adds domain_count, competitor_count, project_count columns.
         """
         if include_counts:
             count_subqueries = """,
-                (SELECT COUNT(*) FROM `{project}.Meta.client_domains` cd
-                 JOIN `{project}.Meta.domains` d ON cd.domain_id = d.domain_id
+                (SELECT COUNT(*) FROM meta.client_domains cd
+                 JOIN meta.domains d ON cd.domain_id = d.domain_id
                  WHERE cd.client_id = c.client_id AND cd.is_competitor = FALSE AND d.is_active = TRUE) AS domain_count,
-                (SELECT COUNT(*) FROM `{project}.Meta.client_domains` cd
-                 JOIN `{project}.Meta.domains` d ON cd.domain_id = d.domain_id
+                (SELECT COUNT(*) FROM meta.client_domains cd
+                 JOIN meta.domains d ON cd.domain_id = d.domain_id
                  WHERE cd.client_id = c.client_id AND cd.is_competitor = TRUE AND d.is_active = TRUE) AS competitor_count,
-                (SELECT COUNT(*) FROM `{project}.Meta.projects` p
-                 WHERE p.client_id = c.client_id) AS project_count""".format(project=self._project_id)
+                (SELECT COUNT(*) FROM meta.projects p
+                 WHERE p.client_id = c.client_id) AS project_count"""
         else:
             count_subqueries = ""
 
@@ -103,22 +100,20 @@ class MetaClient:
             query = f"""
                 SELECT c.client_id, c.client_name, c.abbreviation, c.is_active, c.notes, c.created_at
                     {count_subqueries}
-                FROM `{self._project_id}.Meta.clients` c
-                WHERE LOWER(c.client_name) LIKE CONCAT('%', LOWER(@search), '%')
-                   OR LOWER(c.abbreviation) LIKE CONCAT('%', LOWER(@search), '%')
+                FROM meta.clients c
+                WHERE LOWER(c.client_name) LIKE '%%' || LOWER(%(search)s) || '%%'
+                   OR LOWER(c.abbreviation) LIKE '%%' || LOWER(%(search)s) || '%%'
                 ORDER BY c.client_name
             """
-            params = [bigquery.ScalarQueryParameter("search", "STRING", search)]
-            job_config = bigquery.QueryJobConfig(query_parameters=params)
-            return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+            return self.sb.query(query, {"search": search})
 
         query = f"""
             SELECT c.client_id, c.client_name, c.abbreviation, c.is_active, c.notes, c.created_at
                 {count_subqueries}
-            FROM `{self._project_id}.Meta.clients` c
+            FROM meta.clients c
             ORDER BY c.client_name
         """
-        return self.bq.client.query(query).result().to_dataframe()
+        return self.sb.query(query)
 
     def add_client(
         self,
@@ -137,23 +132,12 @@ class MetaClient:
         Returns:
             The generated client_id
         """
-        client_id = self.get_next_id("clients", "client_id")
-
-        query = f"""
-            INSERT INTO `{self._project_id}.Meta.clients` (client_id, client_name, abbreviation, notes)
-            VALUES (@client_id, @client_name, @abbreviation, @notes)
-        """
-
-        params = [
-            bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-            bigquery.ScalarQueryParameter("client_name", "STRING", client_name),
-            bigquery.ScalarQueryParameter("abbreviation", "STRING", abbreviation),
-            bigquery.ScalarQueryParameter("notes", "STRING", notes),
-        ]
-
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
-        return client_id
+        rows = self.sb.execute(
+            "insert into meta.clients (client_name, abbreviation, notes) "
+            "values (%(client_name)s, %(abbreviation)s, %(notes)s) returning client_id",
+            {"client_name": client_name, "abbreviation": abbreviation, "notes": notes},
+        )
+        return int(rows[0][0])
 
     def update_client(self, client_id: int, **fields) -> None:
         """
@@ -168,24 +152,17 @@ class MetaClient:
             return
 
         set_clauses = []
-        params = []
+        params = {"client_id": client_id}
         for key, value in fields.items():
-            set_clauses.append(f"{key} = @{key}")
-            if isinstance(value, bool):
-                params.append(bigquery.ScalarQueryParameter(key, "BOOL", value))
-            else:
-                params.append(bigquery.ScalarQueryParameter(key, "STRING", value))
-
-        params.append(bigquery.ScalarQueryParameter("client_id", "INT64", client_id))
+            set_clauses.append(f"{key} = %({key})s")
+            params[key] = value
 
         query = f"""
-            UPDATE `{self._project_id}.Meta.clients`
+            UPDATE meta.clients
             SET {", ".join(set_clauses)}
-            WHERE client_id = @client_id
+            WHERE client_id = %(client_id)s
         """
-
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        self.bq.client.query(query, job_config=job_config).result()
+        self.sb.execute(query, params)
 
     def deactivate_client(self, client_id: int, cascade: bool = False) -> None:
         """
@@ -197,51 +174,34 @@ class MetaClient:
         """
         if cascade:
             # Get domain_ids linked to this client
-            domain_query = f"""
-                SELECT domain_id
-                FROM `{self._project_id}.Meta.client_domains`
-                WHERE client_id = @client_id
-            """
-            job_config = bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("client_id", "INT64", client_id)
-                ]
+            domain_df = self.sb.query(
+                "select domain_id from meta.client_domains where client_id = %(client_id)s",
+                {"client_id": client_id},
             )
-            domain_df = self.bq.client.query(domain_query, job_config=job_config).result().to_dataframe()
 
             # Deactivate domains that aren't linked to any OTHER active client
             if not domain_df.empty:
                 domain_ids = domain_df["domain_id"].tolist()
-                deactivate_domains_query = f"""
-                    UPDATE `{self._project_id}.Meta.domains`
+                self.sb.execute(
+                    """
+                    UPDATE meta.domains
                     SET is_active = FALSE
-                    WHERE domain_id IN UNNEST(@domain_ids)
+                    WHERE domain_id = ANY(%(domain_ids)s)
                     AND domain_id NOT IN (
                         SELECT cd.domain_id
-                        FROM `{self._project_id}.Meta.client_domains` cd
-                        JOIN `{self._project_id}.Meta.clients` c ON cd.client_id = c.client_id
-                        WHERE c.is_active = TRUE AND cd.client_id != @client_id
+                        FROM meta.client_domains cd
+                        JOIN meta.clients c ON cd.client_id = c.client_id
+                        WHERE c.is_active = TRUE AND cd.client_id != %(client_id)s
                     )
-                """
-                params = [
-                    bigquery.ArrayQueryParameter("domain_ids", "INT64", domain_ids),
-                    bigquery.ScalarQueryParameter("client_id", "INT64", client_id),
-                ]
-                job_config_d = bigquery.QueryJobConfig(query_parameters=params)
-                self.bq.client.query(deactivate_domains_query, job_config=job_config_d).result()
+                    """,
+                    {"domain_ids": domain_ids, "client_id": client_id},
+                )
 
             # Deactivate linked client_datasets
-            dataset_update = f"""
-                UPDATE `{self._project_id}.Meta.client_datasets`
-                SET is_active = FALSE
-                WHERE client_id = @client_id
-            """
-            job_config2 = bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("client_id", "INT64", client_id)
-                ]
+            self.sb.execute(
+                "update meta.client_datasets set is_active = FALSE where client_id = %(client_id)s",
+                {"client_id": client_id},
             )
-            self.bq.client.query(dataset_update, job_config=job_config2).result()
 
         self.update_client(client_id, is_active=False)
 
