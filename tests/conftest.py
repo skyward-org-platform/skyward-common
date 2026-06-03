@@ -82,7 +82,7 @@ def fake_bq():
 
 
 @pytest.fixture
-def hub(fake_bq):
-    """Provide a DataHub with a fake BQ client."""
+def hub(pg_client, fake_bq):
+    """Provide a DataHub: Supabase (pg_client) for entities, fake BQ for analytics."""
     from skyward.data.hub import DataHub
-    return DataHub(fake_bq)
+    return DataHub(pg_client, fake_bq)

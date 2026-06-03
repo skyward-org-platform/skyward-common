@@ -28,6 +28,19 @@ class DataHub(MetaClient):
         "backlinks_summary_live",
     }
 
+    def __init__(self, sb_client, bq_client):
+        """Hybrid data hub: entities/catalogs in Supabase, analytics in BigQuery.
+
+        Args:
+            sb_client: SupabaseClient for the meta.* schema (entities + catalogs).
+            bq_client: BigQueryClient for analytical data, Logs.upload_events,
+                       and INFORMATION_SCHEMA scans.
+        """
+        super().__init__(sb_client)
+        self.bq = bq_client
+        # BQ project id, used by the f-string BQ queries below.
+        self._project_id = bq_client.client.project
+
     # ══════════════════════════════════════════════════════════════════════════
     # Upload log queries
     # ══════════════════════════════════════════════════════════════════════════
@@ -225,12 +238,12 @@ class DataHub(MetaClient):
             DataFrame with dataset, table_name, row_count, size_bytes,
             is_active, status_changed_at, notes, last_indexed_at
         """
-        params = []
+        params = {}
         conditions = []
 
         if dataset is not None:
-            conditions.append("dataset = @dataset")
-            params.append(bigquery.ScalarQueryParameter("dataset", "STRING", dataset))
+            conditions.append("dataset = %(dataset)s")
+            params["dataset"] = dataset
 
         if active_only:
             conditions.append("is_active = TRUE")
@@ -240,13 +253,11 @@ class DataHub(MetaClient):
         query = f"""
             SELECT dataset, table_name, row_count, size_bytes,
                    is_active, status_changed_at, notes, last_indexed_at
-            FROM `{self._project_id}.Meta.table_catalog`
+            FROM meta.table_catalog
             {where_clause}
             ORDER BY dataset, table_name
         """
-
-        job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
-        return self.bq.client.query(query, job_config=job_config).result().to_dataframe()
+        return self.sb.query(query, params)
 
     def reindex_catalog(self, dataset: str) -> dict:
         """
@@ -271,80 +282,80 @@ class DataHub(MetaClient):
         """
         project = self._project_id
 
-        # 1. Read current catalog state for computing the diff summary
-        catalog_query = f"""
-            SELECT table_name, is_active
-            FROM `{project}.Meta.table_catalog`
-            WHERE dataset = @dataset
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("dataset", "STRING", dataset)
-            ]
+        # 1. Read current catalog state from Supabase for the diff summary.
+        catalog = self.sb.query(
+            "select table_name, is_active from meta.table_catalog where dataset = %(dataset)s",
+            {"dataset": dataset},
         )
-        catalog = self.bq.client.query(catalog_query, job_config=job_config).result().to_dataframe()
         catalog_table_names = set(catalog["table_name"]) if not catalog.empty else set()
         catalog_active = set(catalog[catalog["is_active"] == True]["table_name"]) if not catalog.empty else set()
         catalog_inactive = set(catalog[catalog["is_active"] == False]["table_name"]) if not catalog.empty else set()
 
-        # 2. Get current BQ tables for the diff summary
-        bq_names_query = f"""
-            SELECT table_name
-            FROM `{project}.{dataset}.INFORMATION_SCHEMA.TABLES`
-            WHERE table_type = 'BASE TABLE'
-              AND NOT STARTS_WITH(table_name, 'temp_')
-              AND NOT STARTS_WITH(table_name, '_temp_')
+        # 2. Scan BQ INFORMATION_SCHEMA for current tables + storage (one query).
+        bq_scan_query = f"""
+            SELECT
+                t.table_name,
+                ts.total_rows AS row_count,
+                ts.total_logical_bytes AS size_bytes
+            FROM `{project}.{dataset}.INFORMATION_SCHEMA.TABLES` t
+            LEFT JOIN `region-us.INFORMATION_SCHEMA.TABLE_STORAGE` ts
+                ON ts.table_schema = '{dataset}'
+                AND t.table_name = ts.table_name
+            WHERE t.table_type = 'BASE TABLE'
+              AND NOT STARTS_WITH(t.table_name, 'temp_')
+              AND NOT STARTS_WITH(t.table_name, '_temp_')
         """
-        bq_names_df = self.bq.client.query(bq_names_query).result().to_dataframe()
-        bq_table_names = set(bq_names_df["table_name"])
+        bq_df = self.bq.client.query(bq_scan_query).result().to_dataframe()
+        bq_table_names = set(bq_df["table_name"]) if not bq_df.empty else set()
 
-        # 3. Compute diff for summary
+        # 3. Compute diff for summary.
         new_tables = bq_table_names - catalog_table_names
         missing_tables = catalog_active - bq_table_names
         reappearing_tables = catalog_inactive & bq_table_names
         existing_tables = catalog_active & bq_table_names
 
-        # 4. Single MERGE handles all inserts, updates, and deactivations.
-        merge_query = f"""
-            MERGE `{project}.Meta.table_catalog` T
-            USING (
-                SELECT
-                    '{dataset}' AS dataset,
-                    t.table_name,
-                    ts.total_rows AS row_count,
-                    ts.total_logical_bytes AS size_bytes
-                FROM `{project}.{dataset}.INFORMATION_SCHEMA.TABLES` t
-                LEFT JOIN `region-us.INFORMATION_SCHEMA.TABLE_STORAGE` ts
-                    ON ts.table_schema = '{dataset}'
-                    AND t.table_name = ts.table_name
-                WHERE t.table_type = 'BASE TABLE'
-                  AND NOT STARTS_WITH(t.table_name, 'temp_')
-                  AND NOT STARTS_WITH(t.table_name, '_temp_')
-            ) S
-            ON T.dataset = S.dataset AND T.table_name = S.table_name
-            WHEN MATCHED THEN UPDATE SET
-                T.row_count = S.row_count,
-                T.size_bytes = S.size_bytes,
-                T.is_active = TRUE,
-                T.status_changed_at = CASE
-                    WHEN T.is_active = FALSE THEN CURRENT_TIMESTAMP()
-                    ELSE T.status_changed_at
-                END,
-                T.last_indexed_at = CURRENT_TIMESTAMP()
-            WHEN NOT MATCHED BY TARGET THEN INSERT
-                (dataset, table_name, row_count, size_bytes, is_active,
-                 status_changed_at, notes, last_indexed_at)
-                VALUES (S.dataset, S.table_name, S.row_count, S.size_bytes,
-                        TRUE, NULL, NULL, CURRENT_TIMESTAMP())
-            WHEN NOT MATCHED BY SOURCE AND T.dataset = '{dataset}' THEN UPDATE SET
-                T.is_active = FALSE,
-                T.status_changed_at = CASE
-                    WHEN T.is_active = TRUE THEN CURRENT_TIMESTAMP()
-                    ELSE T.status_changed_at
-                END,
-                T.last_indexed_at = CURRENT_TIMESTAMP()
-        """
-        self.bq.client.query(merge_query).result()
+        # 4. Upsert every scanned table into the Supabase catalog. status_changed_at
+        #    flips only when an inactive row reactivates (matches the old MERGE).
+        for row in bq_df.itertuples(index=False):
+            row_count = None if pd.isna(row.row_count) else int(row.row_count)
+            size_bytes = None if pd.isna(row.size_bytes) else int(row.size_bytes)
+            self.sb.execute(
+                """
+                INSERT INTO meta.table_catalog
+                    (dataset, table_name, row_count, size_bytes, is_active,
+                     status_changed_at, notes, last_indexed_at)
+                VALUES (%(dataset)s, %(table_name)s, %(row_count)s, %(size_bytes)s,
+                        TRUE, NULL, NULL, now())
+                ON CONFLICT (dataset, table_name) DO UPDATE SET
+                    row_count = excluded.row_count,
+                    size_bytes = excluded.size_bytes,
+                    is_active = TRUE,
+                    status_changed_at = CASE
+                        WHEN meta.table_catalog.is_active = FALSE THEN now()
+                        ELSE meta.table_catalog.status_changed_at
+                    END,
+                    last_indexed_at = now()
+                """,
+                {
+                    "dataset": dataset,
+                    "table_name": row.table_name,
+                    "row_count": row_count,
+                    "size_bytes": size_bytes,
+                },
+            )
+
+        # 5. Deactivate catalog tables that are active but no longer in BQ.
+        if missing_tables:
+            self.sb.execute(
+                """
+                UPDATE meta.table_catalog
+                SET is_active = FALSE, status_changed_at = now(), last_indexed_at = now()
+                WHERE dataset = %(dataset)s
+                  AND table_name = ANY(%(names)s)
+                  AND is_active = TRUE
+                """,
+                {"dataset": dataset, "names": sorted(missing_tables)},
+            )
 
         return {
             "dataset": dataset,
@@ -354,6 +365,112 @@ class DataHub(MetaClient):
             "updated_tables": sorted(existing_tables),
             "total_active": len(bq_table_names),
         }
+
+    def scan_datasets(self, prefixes: dict = None, full: bool = False) -> dict:
+        """Scan BQ datasets and update meta.dataset_catalog with type and hostname.
+
+        Hybrid: dataset discovery + GA4 hostname resolution come from BigQuery
+        (self.bq); the catalog rows are written to Supabase (self.sb).
+
+        Args:
+            prefixes: Dict mapping type names to list of prefixes.
+                      Defaults to MetaClient.DEFAULT_DATASET_PREFIXES.
+            full: If True, scan ALL datasets (slow). If False, only scan
+                  datasets matching the prefix patterns (fast).
+
+        Returns:
+            Dict mapping type names to lists of dataset info dicts.
+        """
+        if prefixes is None:
+            prefixes = self.DEFAULT_DATASET_PREFIXES
+
+        prefix_map = []
+        for ds_type, prefix_list in prefixes.items():
+            for prefix in prefix_list:
+                prefix_map.append((prefix.lower(), ds_type))
+
+        # Get all datasets from BQ
+        all_datasets = list(self.bq.client.list_datasets())
+
+        categorized = {}
+        unrecognized = []
+        for ds in all_datasets:
+            dataset_id = ds.dataset_id
+            dataset_lower = dataset_id.lower()
+            matched_type = None
+            for prefix, ds_type in prefix_map:
+                if dataset_lower.startswith(prefix):
+                    matched_type = ds_type
+                    break
+            if matched_type:
+                categorized.setdefault(matched_type, []).append(dataset_id)
+            elif full:
+                unrecognized.append(dataset_id)
+
+        ga4_hostnames = {}
+        if "ga4" in categorized:
+            ga4_hostnames = self.bq.get_ga4_dataset_hostnames()
+
+        discovered = []
+        for ds_type, dataset_ids in categorized.items():
+            for dataset_id in dataset_ids:
+                hostname = None
+                if ds_type == "ga4":
+                    hostname = ga4_hostnames.get(dataset_id)
+                    if hostname and hostname.startswith("Error:"):
+                        hostname = None
+                elif ds_type == "gsc":
+                    dataset_lower = dataset_id.lower()
+                    if "_sc_domain_" in dataset_lower:
+                        parts = dataset_id.split("_sc_domain_")
+                        if len(parts) > 1:
+                            hostname = parts[1].replace("_", ".").lower().replace("www.", "")
+                    elif dataset_lower.startswith("jepto_gsc_"):
+                        hostname = dataset_id[len("jepto_gsc_"):].replace("_", ".").lower()
+                    elif dataset_lower.startswith("searchconsole_"):
+                        hostname = dataset_id[len("searchconsole_"):].replace("_", ".").lower()
+                discovered.append({"dataset": dataset_id, "dataset_type": ds_type, "hostname": hostname})
+
+        if full:
+            for dataset_id in unrecognized:
+                discovered.append({"dataset": dataset_id, "dataset_type": "other", "hostname": None})
+
+        # Upsert each discovered dataset into the Supabase catalog (hostname COALESCE).
+        for ds_info in discovered:
+            self.sb.execute(
+                """
+                INSERT INTO meta.dataset_catalog (dataset, dataset_type, hostname, active, updated_at)
+                VALUES (%(dataset)s, %(dataset_type)s, %(hostname)s, TRUE, now())
+                ON CONFLICT (dataset) DO UPDATE SET
+                    dataset_type = excluded.dataset_type,
+                    hostname = COALESCE(excluded.hostname, meta.dataset_catalog.hostname),
+                    active = TRUE,
+                    updated_at = now()
+                """,
+                ds_info,
+            )
+
+        # Remove catalog entries that no longer exist in BQ.
+        all_bq_dataset_names = list({ds.dataset_id for ds in all_datasets})
+        if full:
+            self.sb.execute(
+                "DELETE FROM meta.dataset_catalog WHERE dataset != ALL(%(datasets)s)",
+                {"datasets": all_bq_dataset_names},
+            )
+        else:
+            prefix_conditions = " OR ".join(
+                [f"LOWER(dataset) LIKE '{p}%%'" for p, _ in prefix_map]
+            )
+            self.sb.execute(
+                f"DELETE FROM meta.dataset_catalog "
+                f"WHERE ({prefix_conditions}) AND dataset != ALL(%(datasets)s)",
+                {"datasets": all_bq_dataset_names},
+            )
+
+        result = {}
+        for ds_info in discovered:
+            result.setdefault(ds_info["dataset_type"], []).append(ds_info)
+        return result
 
     # ══════════════════════════════════════════════════════════════════════════
     # Data access (read from actual tables)
@@ -394,27 +511,30 @@ class DataHub(MetaClient):
         Returns:
             DataFrame with data for the client
         """
-        params = [
-            bigquery.ScalarQueryParameter("client_id", "STRING", client_id),
-            bigquery.ScalarQueryParameter("table_name", "STRING", table),
-            bigquery.ScalarQueryParameter("limit_val", "INT64", limit),
-        ]
-
         # Check if we should use domain lookup
         if use_domain_lookup and table in self.DOMAIN_TABLES:
-            # Domain-based lookup through Meta tables
+            # Resolve the client's (non-competitor) domains from Supabase, then
+            # filter the BQ data table by that domain list. Meta no longer lives
+            # in BQ, so this can't be a single cross-dataset subquery anymore.
+            domains_df = self.get_client_domains(int(client_id), is_competitor=False)
+            domain_list = domains_df["domain"].tolist() if not domains_df.empty else []
+            params = [
+                bigquery.ArrayQueryParameter("domains", "STRING", domain_list),
+                bigquery.ScalarQueryParameter("limit_val", "INT64", limit),
+            ]
             query = f"""
                 SELECT d.*
                 FROM `{self._project_id}.{dataset}.{table}` d
-                WHERE d.domain IN (
-                    SELECT d2.domain FROM `{self._project_id}.Meta.domains` d2
-                    JOIN `{self._project_id}.Meta.client_domains` cd ON d2.domain_id = cd.domain_id
-                    WHERE cd.client_id = @client_id AND cd.is_competitor = FALSE
-                )
+                WHERE d.domain IN UNNEST(@domains)
                 LIMIT @limit_val
             """
         else:
             # Job_id-based lookup through upload log (default)
+            params = [
+                bigquery.ScalarQueryParameter("client_id", "STRING", client_id),
+                bigquery.ScalarQueryParameter("table_name", "STRING", table),
+                bigquery.ScalarQueryParameter("limit_val", "INT64", limit),
+            ]
             query = f"""
                 SELECT d.*
                 FROM `{self._project_id}.{dataset}.{table}` d
