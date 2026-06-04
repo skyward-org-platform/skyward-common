@@ -135,9 +135,10 @@ This package is published to GitHub Packages. To publish a new version:
 |------|-------------|
 | `src/skyward/config/` | Central config loader (`load_config()`, `Settings` dataclass) |
 | `src/skyward/data/bigquery/` | BigQuery client wrapper with upload logging |
+| `src/skyward/data/supabase/` | `SupabaseClient` — psycopg3 transport for the skyward-ops Supabase project (meta schema + future client data) |
 | `src/skyward/data/dataforseo/` | DataForSEO API client (class-based, lazy endpoints) |
-| `src/skyward/data/meta/` | MetaClient — CRUD for Meta tables (clients, domains, projects, datasets) |
-| `src/skyward/data/hub/` | DataHub — extends MetaClient with data access and catalog management |
+| `src/skyward/data/meta/` | MetaClient — CRUD for Meta tables, backed by Supabase (`meta` schema) via `SupabaseClient` |
+| `src/skyward/data/hub/` | DataHub — hybrid: entities/catalog from Supabase, analytics + upload log from BigQuery |
 | `src/skyward/llm/` | Multi-provider LLM abstraction (OpenAI, Gemini, Perplexity, Anthropic, Grok) with cost tracking |
 | `src/skyward/notifications/` | Slack webhook integration |
 | `src/skyward/functions.py` | Shared utilities (Google Sheets upload, URL parsing, date helpers) |
@@ -146,11 +147,15 @@ This package is published to GitHub Packages. To publish a new version:
 
 ## Meta Tables
 
-The `Meta` dataset in BigQuery (`data-hub-468216.Meta`) stores client/domain/project relationships. `MetaClient` and `DataHub` are the Python interfaces.
+Meta lives in the **skyward-ops Supabase project** (Postgres), under the `meta` schema — `MetaClient`/`DataHub` connect via `SupabaseClient` (`SUPABASE_DB_URL`, the session pooler). The old BigQuery `data-hub-468216.Meta` dataset is retired post-cutover (kept read-only as a rollback for a window, then archived).
 
-**Tables:** `clients`, `domains`, `client_domains`, `projects`, `project_domains`, `client_datasets`, `dataset_catalog`, `table_catalog`
+**Tables (`meta` schema):** `clients`, `domains`, `client_domains`, `projects`, `project_domains`, `client_datasets`, `dataset_catalog`, `table_catalog`
 
-**ID convention:** All IDs are auto-incremented integers via `get_next_id()`.
+**ID convention:** Integer surrogate keys via Postgres `BIGINT GENERATED ALWAYS AS IDENTITY` with real FK constraints. Inserts use `INSERT ... RETURNING <id>`; `get_next_id()`/`get_max_id()` remain as `MAX+1` compatibility shims.
+
+**Hybrid `DataHub`:** entity/catalog reads+writes go to Supabase; `Logs.upload_events` and the actual analytical data tables (DataForSEO, GA4/GSC) stay in BigQuery. `get_client_data(use_domain_lookup=True)` resolves the client's domains from Supabase, then filters the BQ data table by that list. `reindex_catalog()` scans BQ `INFORMATION_SCHEMA` but writes `meta.table_catalog` in Supabase.
+
+**Migration:** `scripts/migrate_meta_to_supabase.py` (dry-run by default; `--apply` to write). See the cutover runbook under `docs/superpowers/plans/`.
 
 ## Known Issues
 
