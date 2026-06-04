@@ -25,6 +25,8 @@ import argparse
 import os
 import sys
 
+import pandas as pd
+
 # FK-safe load order: parents before children.
 LOAD_ORDER = [
     "clients",
@@ -100,17 +102,20 @@ def validate(bq, project_id):
     client_ids = set(clients_df["client_id"].tolist())
     domain_ids = set(domains_df["domain_id"].tolist())
 
+    # client_datasets.domain_id is nullable (client-level datasets). Coerce
+    # pandas NA -> None so a legitimately-null domain isn't flagged as an orphan.
+    if "domain_id" in clds_df:
+        clds_domain = [None if pd.isna(x) else int(x) for x in clds_df["domain_id"]]
+    else:
+        clds_domain = [None] * len(clds_df)
+
     orphans = find_orphans(
         clients=client_ids,
         domains=domain_ids,
         client_domains=list(zip(cd_df["client_id"], cd_df["domain_id"])),
         projects=list(zip(proj_df["project_id"], proj_df["client_id"])),
         project_domains=list(zip(pd_df["project_id"], pd_df["domain_id"])),
-        client_datasets=list(zip(
-            clds_df["client_id"],
-            clds_df["domain_id"] if "domain_id" in clds_df else [None] * len(clds_df),
-            clds_df["dataset_id"],
-        )),
+        client_datasets=list(zip(clds_df["client_id"], clds_domain, clds_df["dataset_id"])),
     )
     total = sum(len(v) for v in orphans.values())
     print("=== FK validation ===")
@@ -177,7 +182,7 @@ def main(argv=None):
     if not cfg.supabase_db_url:
         sys.exit("SUPABASE_DB_URL is not set.")
 
-    bq = BigQueryClient()
+    bq = BigQueryClient(project_id=project_id, credentials_info=cfg.datahub_credentials)
     sb = SupabaseClient(cfg.supabase_db_url)
 
     orphans = validate(bq, project_id)
