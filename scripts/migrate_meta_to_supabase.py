@@ -23,9 +23,57 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 import pandas as pd
+
+# One-time fix (approved 2026-06-04): BQ Meta.projects ids 15 & 17 each collided
+# 3 distinct per-domain projects due to the old get_next_id race. Split them into
+# distinct ids; map (old_project_id, domain) -> new_project_id. project_name
+# encodes the domain (e.g. "bushire.com.au_001"). project_domains links are
+# re-pointed by resolving domain_id -> domain. Highest-WQA-work domain keeps the
+# original id.
+PROJECT_SPLIT = {
+    (15, "tnabushire.com.au"): 15,
+    (15, "bushire.com.au"): 22,
+    (15, "minibushire.com.au"): 23,
+    (17, "bushire.co.nz"): 17,
+    (17, "minibushire.co.nz"): 24,
+    (17, "transportnetworkaustralia.com.au"): 25,
+}
+
+
+def _domain_from_project_name(name):
+    """'bushire.com.au_001' -> 'bushire.com.au' (strip a trailing _NNN suffix)."""
+    return re.sub(r"_\d+$", "", str(name))
+
+
+def split_collided_projects(projects_df, project_domains_df, domains_df):
+    """Apply PROJECT_SPLIT to the projects + project_domains DataFrames.
+
+    Returns (new_projects_df, new_project_domains_df). Rows not in the map are
+    unchanged. Raises if the result still has duplicate project_ids.
+    """
+    id2dom = dict(zip(domains_df["domain_id"], domains_df["domain"]))
+
+    proj = projects_df.copy()
+    proj["project_id"] = proj.apply(
+        lambda r: PROJECT_SPLIT.get(
+            (r["project_id"], _domain_from_project_name(r["project_name"])), r["project_id"]
+        ),
+        axis=1,
+    )
+    dup = proj["project_id"][proj["project_id"].duplicated()].tolist()
+    if dup:
+        raise RuntimeError(f"projects still has duplicate ids after split: {sorted(set(dup))}")
+
+    pd_df = project_domains_df.copy()
+    pd_df["project_id"] = pd_df.apply(
+        lambda r: PROJECT_SPLIT.get((r["project_id"], id2dom.get(r["domain_id"])), r["project_id"]),
+        axis=1,
+    )
+    return proj, pd_df
 
 # FK-safe load order: parents before children.
 LOAD_ORDER = [
@@ -128,16 +176,35 @@ def validate(bq, project_id):
     return orphans
 
 
+def _pg_columns(sb, table):
+    """Column names of meta.<table> in the target Supabase schema."""
+    df = sb.query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'meta' AND table_name = %(t)s",
+        {"t": table},
+    )
+    return set(df["column_name"].tolist())
+
+
 def load_table(sb, table, df):
-    """Insert a BQ DataFrame into meta.<table>, preserving identity IDs."""
+    """Insert a BQ DataFrame into meta.<table>, preserving identity IDs.
+
+    Only columns that exist in the target Supabase table are loaded; any extra
+    BQ columns (e.g. legacy standardization flags) are dropped and logged.
+    """
     if df.empty:
         return 0
-    cols = list(df.columns)
+    target_cols = _pg_columns(sb, table)
+    cols = [c for c in df.columns if c in target_cols]
+    dropped = [c for c in df.columns if c not in target_cols]
+    if dropped:
+        print(f"    (dropping non-schema columns from {table}: {dropped})")
     collist = ", ".join(cols)
     placeholders = ", ".join(f"%({c})s" for c in cols)
     override = "OVERRIDING SYSTEM VALUE" if table in IDENTITY_TABLES else ""
     sql = f"INSERT INTO meta.{table} ({collist}) {override} VALUES ({placeholders})"
-    records = df.where(df.notna(), None).to_dict("records")
+    subset = df[cols]
+    records = subset.where(subset.notna(), None).to_dict("records")
     with sb._conn.cursor() as cur:
         cur.executemany(sql, records)
     sb._conn.commit()
@@ -195,9 +262,20 @@ def main(argv=None):
     if total_orphans and not args.force_orphans:
         sys.exit("Refusing to --apply: FK orphans present. Resolve them or pass --force-orphans.")
 
+    # Pre-transform the race-collided projects + their domain links.
+    proj_df = _read_bq_table(bq, project_id, "projects")
+    pd_df = _read_bq_table(bq, project_id, "project_domains")
+    dom_df = _read_bq_table(bq, project_id, "domains")
+    proj_split, pd_split = split_collided_projects(proj_df, pd_df, dom_df)
+    n_remapped = int((proj_split["project_id"].values != proj_df["project_id"].values).sum())
+    print(f"\n=== Project split: {n_remapped} project rows reassigned to new ids ===")
+    overrides = {"projects": proj_split, "project_domains": pd_split}
+
     print("\n=== Loading (--apply) ===")
     for table in LOAD_ORDER:
-        df = _read_bq_table(bq, project_id, table)
+        df = overrides.get(table)
+        if df is None:
+            df = _read_bq_table(bq, project_id, table)
         n = load_table(sb, table, df)
         print(f"  loaded meta.{table}: {n} rows")
 
