@@ -204,7 +204,10 @@ def load_table(sb, table, df):
     override = "OVERRIDING SYSTEM VALUE" if table in IDENTITY_TABLES else ""
     sql = f"INSERT INTO meta.{table} ({collist}) {override} VALUES ({placeholders})"
     subset = df[cols]
-    records = subset.where(subset.notna(), None).to_dict("records")
+    # Cast to object dtype FIRST so NA/NaT become real Python None. Without the
+    # astype, .where on a datetime64 column keeps NaT (psycopg then serializes the
+    # NaT sentinel into a bogus far-future timestamp), and NaN stays in float cols.
+    records = subset.astype(object).where(subset.notna(), None).to_dict("records")
     with sb._conn.cursor() as cur:
         cur.executemany(sql, records)
     sb._conn.commit()
