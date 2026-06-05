@@ -93,6 +93,35 @@ def main():
         check("delete_client_dataset", hub.get_client_datasets(client_id=cid, active_only=False).empty)
         check("scan_and_match_datasets", isinstance(hub.scan_and_match_datasets(), dict))
 
+        print("=== additional create/modify coverage ===")
+        # add_domain (singular wrapper) + update_domains_batch
+        d2 = hub.add_domain("zzlive2.com", client_id=cid, is_competitor=True, priority="LOW")
+        check("add_domain singular", isinstance(d2, int) and "zzlive2.com" in list(hub.get_client_domains(cid)["domain"]))
+        check("add_domain is_competitor link", hub.get_client_domains(cid, is_competitor=True).iloc[0]["domain"] == "zzlive2.com")
+        hub.update_domains_batch([{"domain_id": d2, "domain_name": "ZZ Two", "is_active": False, "notes": "b"}])
+        check("update_domains_batch", hub.get_domain("zzlive2.com")["domain_name"] == "ZZ Two")
+
+        # deactivate_project
+        p2 = hub.add_project(cid, "live_test2", project_name="ZZ proj2")
+        hub.deactivate_project(p2)
+        check("deactivate_project", hub.list_projects(client_id=cid, status="deactivated").iloc[0]["project_id"] == p2)
+
+        # deactivate_client_dataset (soft delete)
+        hub.add_client_dataset(cid, "zz_ds2", "gsc", hostname="zzlive2.com")
+        hub.deactivate_client_dataset("zz_ds2")
+        check("deactivate_client_dataset", bool((hub.get_client_datasets(client_id=cid, active_only=False)["dataset_id"] == "zz_ds2").any())
+              and not bool((hub.get_client_datasets(client_id=cid, active_only=True)["dataset_id"] == "zz_ds2").any()))
+
+        # approve_scanned_datasets (bulk approve path)
+        n_appr = hub.approve_scanned_datasets([
+            {"dataset_id": "zz_ds3", "dataset_type": "ga4", "hostname": "zzlive2.com", "client_id": cid, "domain_id": d2}
+        ])
+        check("approve_scanned_datasets", n_appr == 1 and "zz_ds3" in list(hub.get_dataset_catalog(dataset_type="ga4")["dataset"]))
+
+        # cached getters
+        check("get_ga4_datasets_cached cols", set(["client_id", "dataset_id", "hostname"]) <= set(hub.get_ga4_datasets_cached(client_id=cid).columns))
+        check("get_gsc_datasets_cached cols", set(["client_id", "dataset_id", "hostname"]) <= set(hub.get_gsc_datasets_cached(client_id=cid).columns))
+
         print("=== DataHub catalog + hybrid ===")
         lt = hub.list_tables(dataset="DataForSEO")
         check("list_tables reads catalog", "table_name" in lt.columns and len(lt) > 0)
@@ -104,8 +133,8 @@ def main():
         print("=== teardown ops ===")
         hub.remove_client_domain(cid, did)
         check("remove_client_domain", did not in list(hub.get_client_domains(cid)["domain_id"]))
-        hub.deactivate_client(cid)
-        check("deactivate_client", hub.get_client(cid)["is_active"] is False)
+        hub.deactivate_client(cid, cascade=True)
+        check("deactivate_client cascade", hub.get_client(cid)["is_active"] is False)
     finally:
         sb._conn.rollback()  # cleanup: undo ALL test writes
 
