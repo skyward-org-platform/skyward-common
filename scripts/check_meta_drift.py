@@ -21,8 +21,10 @@ from skyward.config import load_config
 from skyward.data.bigquery import BigQueryClient
 from skyward.data.supabase import SupabaseClient
 
-# PG split ids -> original BQ ids, so projects/project_domains compare cleanly.
-REVERSE_SPLIT = {22: 15, 23: 15, 24: 17, 25: 17}
+# PG split ids -> original BQ collided ids, so projects/project_domains compare
+# cleanly. Tracks the migration's dynamic split output (re-check after any rebuild):
+# 23,24 were under BQ project 15; 25,26 were under BQ project 17.
+REVERSE_SPLIT = {23: 15, 24: 15, 25: 17, 26: 17}
 
 # Stable business columns to compare per table (exclude derived/volatile/dropped).
 TABLES = {

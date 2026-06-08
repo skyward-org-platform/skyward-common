@@ -28,20 +28,14 @@ import sys
 
 import pandas as pd
 
-# One-time fix (approved 2026-06-04): BQ Meta.projects ids 15 & 17 each collided
-# 3 distinct per-domain projects due to the old get_next_id race. Split them into
-# distinct ids; map (old_project_id, domain) -> new_project_id. project_name
-# encodes the domain (e.g. "bushire.com.au_001"). project_domains links are
-# re-pointed by resolving domain_id -> domain. Highest-WQA-work domain keeps the
-# original id.
-PROJECT_SPLIT = {
-    (15, "tnabushire.com.au"): 15,
-    (15, "bushire.com.au"): 22,
-    (15, "minibushire.com.au"): 23,
-    (17, "bushire.co.nz"): 17,
-    (17, "minibushire.co.nz"): 24,
-    (17, "transportnetworkaustralia.com.au"): 25,
-}
+# BQ Meta.projects ids 15 & 17 each collided 3 distinct per-domain projects due to
+# the old get_next_id race. Split them into distinct ids. The domain that KEEPS the
+# original id (highest WQA work, approved 2026-06-04); the others are assigned FRESH
+# ids ABOVE the current max(project_id) at run time, so the split never collides with
+# ids BQ has allocated since (BQ keeps writing until cutover). project_name encodes
+# the domain (e.g. "bushire.com.au_001"); project_domains links are re-pointed by
+# resolving domain_id -> domain.
+PROJECT_SPLIT_KEEP = {15: "tnabushire.com.au", 17: "bushire.co.nz"}
 
 
 def _domain_from_project_name(name):
@@ -49,19 +43,45 @@ def _domain_from_project_name(name):
     return re.sub(r"_\d+$", "", str(name))
 
 
-def split_collided_projects(projects_df, project_domains_df, domains_df):
-    """Apply PROJECT_SPLIT to the projects + project_domains DataFrames.
+def build_split_map(projects_df):
+    """Return {(old_project_id, domain): new_project_id} for collided projects.
 
-    Returns (new_projects_df, new_project_domains_df). Rows not in the map are
-    unchanged. Raises if the result still has duplicate project_ids.
+    Fresh ids are allocated above the current max(project_id) so they can't clash
+    with ids BQ allocated after the original snapshot.
+    """
+    proj = projects_df
+    collided = sorted(set(proj["project_id"][proj["project_id"].duplicated(keep=False)]))
+    next_id = int(proj["project_id"].max()) + 1
+    remap = {}
+    for oid in collided:
+        grp = proj[proj["project_id"] == oid]
+        domains = [_domain_from_project_name(n) for n in grp["project_name"]]
+        keeper = PROJECT_SPLIT_KEEP.get(oid)
+        if keeper not in domains:
+            keeper = domains[0]  # fallback: first row keeps the original id
+        kept = False
+        for dom in domains:
+            if dom == keeper and not kept:
+                remap[(oid, dom)] = oid
+                kept = True
+            else:
+                remap[(oid, dom)] = next_id
+                next_id += 1
+    return remap
+
+
+def split_collided_projects(projects_df, project_domains_df, domains_df):
+    """Split race-collided projects into distinct ids.
+
+    Returns (new_projects_df, new_project_domains_df). Rows not in the split map
+    are unchanged. Raises if the result still has duplicate project_ids.
     """
     id2dom = dict(zip(domains_df["domain_id"], domains_df["domain"]))
+    remap = build_split_map(projects_df)
 
     proj = projects_df.copy()
     proj["project_id"] = proj.apply(
-        lambda r: PROJECT_SPLIT.get(
-            (r["project_id"], _domain_from_project_name(r["project_name"])), r["project_id"]
-        ),
+        lambda r: remap.get((r["project_id"], _domain_from_project_name(r["project_name"])), r["project_id"]),
         axis=1,
     )
     dup = proj["project_id"][proj["project_id"].duplicated()].tolist()
@@ -70,7 +90,7 @@ def split_collided_projects(projects_df, project_domains_df, domains_df):
 
     pd_df = project_domains_df.copy()
     pd_df["project_id"] = pd_df.apply(
-        lambda r: PROJECT_SPLIT.get((r["project_id"], id2dom.get(r["domain_id"])), r["project_id"]),
+        lambda r: remap.get((r["project_id"], id2dom.get(r["domain_id"])), r["project_id"]),
         axis=1,
     )
     return proj, pd_df
