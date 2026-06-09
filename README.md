@@ -95,6 +95,32 @@ Key per-endpoint knobs:
 
 Standard (async) mode via `post_all()` is supported on `serp-google-organic` and `keywords_data-google_ads-search_volume`. All other endpoints are live-only.
 
+### Per-attempt debug logging (`include_debug_logs`)
+
+Opt-in observability for the live retry loop. Pass `include_debug_logs=True` to `live()` / `live_all()` and every attempt — including empty retries — is written to one shared BigQuery table, `DataForSEO.debug_request_logs`, capturing the input payload, the full raw response, timing, thread, transport/task status, cost, and `n_items`. Off by default (zero overhead).
+
+```python
+df = await client.dataforseo_labs_google_keyword_suggestions.live_all(
+    targets=seeds,
+    domain="busbank.com",
+    job_id=job_id,
+    include_debug_logs=True,   # default False
+)
+```
+
+- **Where:** `data-hub-468216.DataForSEO.debug_request_logs`. Create it once with `python scripts/create_dfs_debug_log_table.py --yes` (the loader never auto-creates tables).
+- **How:** a run-scoped buffer flushes to BigQuery in batches (every ~1000 records and once at run end) — never per-row DML, and a mid-run crash loses at most the last unflushed batch. Rows carry the run's `job_id`/`upload_id`, so they join straight back to the data table.
+- **Coverage:** currently captured on `keyword_suggestions` and `related_keywords` (the two endpoints behind the busbank empty-payload investigation). All other endpoints accept the flag but don't yet capture — see the `TODO(debug-logs)` markers.
+- **Cost/size:** each row's `response` is ~5–15 KB; a 14K-call run ≈ 100 MB. Fine for debugging, not for always-on. Credentials are never logged (auth lives outside the payload).
+
+```sql
+-- Are empties faster than successes? (DFS didn't compute vs computed-found-nothing)
+SELECT n_items = 0 AS is_empty,
+       APPROX_QUANTILES(duration_ms, 100)[OFFSET(50)] AS p50_ms, COUNT(*)
+FROM `data-hub-468216.DataForSEO.debug_request_logs`
+WHERE job_id = @job_id GROUP BY is_empty;
+```
+
 ## LLM Providers
 
 All providers share the same `call()` interface:

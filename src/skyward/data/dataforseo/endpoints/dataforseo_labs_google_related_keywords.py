@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 
 import pandas as pd
 
@@ -176,28 +175,19 @@ class DataforseoLabsGoogleRelatedKeywords(BaseEndpoint):
 
     def _fetch_live(self, target: str, **kwargs) -> pd.DataFrame:
         cfg = self.config
+        collector = kwargs.pop("_debug_collector", None)
         max_retries = kwargs.pop("max_retries", cfg.max_retries)
         retry_delay = kwargs.pop("retry_delay", cfg.retry_delay)
         debug = kwargs.pop("debug", cfg.debug)
 
-        url = f"{self._client.BASE_URL}/{self.LIVE_URL}"
         payload = self._build_payload(target, **kwargs)
-
-        for attempt in range(1, max_retries + 1):
-            if attempt > 1:
-                time.sleep(retry_delay)
-            resp = self._client._post(url, payload, max_retries=1, retry_delay=0)
-            if not resp:
-                if debug:
-                    print(f"[{target}] Invalid response. Attempt {attempt}/{max_retries}")
-                continue
-            try:
-                df = self._parse_response(resp, target)
-                if not df.empty:
-                    return df
-            except Exception as e:
-                if debug:
-                    print(f"[{target}] Parse error: {e}. Attempt {attempt}/{max_retries}")
-                continue
-
-        return pd.DataFrame(columns=self._get_schema())
+        return self._run_live_loop(
+            target=target,
+            parse_target=target,
+            payload=payload,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            debug=debug,
+            collector=collector,
+            empty_columns=self._get_schema(),
+        )

@@ -153,6 +153,8 @@ class BacklinksBacklinks(BaseEndpoint):
 
     def _fetch_live(self, target: str, **kwargs) -> pd.DataFrame:
         cfg = self.config
+        # TODO(debug-logs): wire run-scoped collector into this loop (ClickUp 86babz7xp).
+        kwargs.pop("_debug_collector", None)  # accepted, not yet captured
         max_retries = kwargs.pop("max_retries", cfg.max_retries)
         retry_delay = kwargs.pop("retry_delay", cfg.retry_delay)
         debug = kwargs.pop("debug", cfg.debug)

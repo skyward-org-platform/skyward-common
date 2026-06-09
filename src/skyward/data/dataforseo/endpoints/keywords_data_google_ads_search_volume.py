@@ -108,6 +108,8 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         return df
 
     def _fetch_live(self, target: str | list[str], **kwargs) -> pd.DataFrame:
+        # TODO(debug-logs): wire run-scoped collector into this loop (ClickUp 86babz7xp).
+        kwargs.pop("_debug_collector", None)  # accepted, not yet captured
         keywords = [target] if isinstance(target, str) else target
 
         if len(keywords) > 1000:

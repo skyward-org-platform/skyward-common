@@ -149,18 +149,33 @@ class DataForSEOClient:
         session: requests.Session | None = None,
         max_retries: int | None = None,
         retry_delay: int | None = None,
+        status_sink: dict | None = None,
     ) -> dict | None:
-        """Send a POST request to a DataForSEO endpoint with retry logic."""
+        """Send a POST request to a DataForSEO endpoint with retry logic.
+
+        If `status_sink` is provided, it is populated with the transport-level
+        `http_status` (the HTTP status code, or None on a network failure where no
+        response came back) and `error` (the exception repr, if any) for the LAST
+        attempt — used by the debug logger to tell an API-empty (200) apart from a
+        network issue. Omitting it leaves behavior unchanged.
+        """
         sess = session or self._session
         max_retries = max_retries or self.config.max_retries
         retry_delay = retry_delay or self.config.retry_delay
 
         for attempt in range(max_retries):
+            if status_sink is not None:
+                status_sink["http_status"] = None
+                status_sink["error"] = ""
             try:
                 resp = sess.post(endpoint, json=payload, timeout=30)
+                if status_sink is not None:
+                    status_sink["http_status"] = resp.status_code
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
+                if status_sink is not None:
+                    status_sink["error"] = repr(e)
                 if self.config.debug:
                     print(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
                 if attempt < max_retries - 1:

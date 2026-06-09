@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from skyward.data.dataforseo.debug_log import build_attempt_record
 from skyward.functions import _validate_job_id, generate_upload_id
 
 if TYPE_CHECKING:
@@ -79,12 +82,18 @@ class BaseEndpoint(ABC):
         job_id: str,
         interactive: bool = False,
         upload: bool = True,
+        include_debug_logs: bool = False,
         **kwargs,
     ) -> pd.DataFrame:
         _validate_job_id(job_id)
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
-        df = self._fetch_live(target, **kwargs)
+        collector = self._make_debug_collector(job_id, include_debug_logs)
+        try:
+            df = self._fetch_live(target, _debug_collector=collector, **kwargs)
+        finally:
+            if collector is not None:
+                collector.flush()
 
         if df is None or df.empty:
             print("No rows returned. Skipping upload.")
@@ -108,6 +117,7 @@ class BaseEndpoint(ABC):
         upload: bool = True,
         batch_size: int | None = None,
         batch_delay: float | None = None,
+        include_debug_logs: bool = False,
         **kwargs,
     ) -> pd.DataFrame:
         _validate_job_id(job_id)
@@ -116,26 +126,34 @@ class BaseEndpoint(ABC):
         batch_size = batch_size or self.config.batch_size
         batch_delay = batch_delay if batch_delay is not None else self.config.batch_delay
 
+        collector = self._make_debug_collector(job_id, include_debug_logs)
         loop = asyncio.get_running_loop()
         df_list: list[pd.DataFrame] = []
 
-        with ThreadPoolExecutor(max_workers=batch_size) as executor:
-            total = len(targets)
-            total_batches = math.ceil(total / batch_size) if batch_size else 1
-            batches = [targets[i : i + batch_size] for i in range(0, total, batch_size)]
-            for idx, batch in enumerate(batches, start=1):
-                if self.config.debug:
-                    print(f"Processing batch {idx}/{total_batches} ({len(batch)} targets)")
-                tasks = [
-                    loop.run_in_executor(executor, lambda t=t: self._fetch_live(t, **kwargs))
-                    for t in batch
-                ]
-                batch_results = await asyncio.gather(*tasks)
-                for df in batch_results:
-                    if isinstance(df, pd.DataFrame) and not df.empty:
-                        df_list.append(df)
-                if idx < total_batches:
-                    await asyncio.sleep(batch_delay)
+        try:
+            with ThreadPoolExecutor(max_workers=batch_size) as executor:
+                total = len(targets)
+                total_batches = math.ceil(total / batch_size) if batch_size else 1
+                batches = [targets[i : i + batch_size] for i in range(0, total, batch_size)]
+                for idx, batch in enumerate(batches, start=1):
+                    if self.config.debug:
+                        print(f"Processing batch {idx}/{total_batches} ({len(batch)} targets)")
+                    tasks = [
+                        loop.run_in_executor(
+                            executor,
+                            lambda t=t: self._fetch_live(t, _debug_collector=collector, **kwargs),
+                        )
+                        for t in batch
+                    ]
+                    batch_results = await asyncio.gather(*tasks)
+                    for df in batch_results:
+                        if isinstance(df, pd.DataFrame) and not df.empty:
+                            df_list.append(df)
+                    if idx < total_batches:
+                        await asyncio.sleep(batch_delay)
+        finally:
+            if collector is not None:
+                collector.flush()
 
         if not df_list:
             print("No rows returned. Skipping upload.")
@@ -226,6 +244,90 @@ class BaseEndpoint(ABC):
             print(f"Upload failed: {e}")
 
     # ----- Helpers -----
+
+    def _make_debug_collector(self, job_id: str, include_debug_logs: bool):
+        """Allocate a run-scoped DebugLogCollector, or None when logging is off.
+
+        Returns None (logging disabled) when the flag is off or no bq_client is
+        wired, so the retry loop's `_debug_collector` is a simple truthiness check.
+        """
+        if not include_debug_logs:
+            return None
+        bq = self._client.bq_client
+        if bq is None:
+            print("include_debug_logs=True but no bq_client; debug logging disabled.")
+            return None
+        from skyward.data.dataforseo.debug_log import DebugLogCollector
+        return DebugLogCollector(bq, job_id=job_id)
+
+    def _run_live_loop(
+        self,
+        *,
+        target,
+        parse_target,
+        payload: list[dict],
+        max_retries: int,
+        retry_delay: float,
+        debug: bool,
+        collector,
+        empty_columns: list[str],
+    ) -> pd.DataFrame:
+        """Shared live retry loop with optional per-attempt debug capture.
+
+        Posts `payload`, parses with `parse_target`, and returns the first
+        non-empty df. When `collector` is set, records one debug row per attempt
+        (timing, transport status via the `_post` status_sink, DFS task fields).
+        `endpoint` on each row is derived from `LIVE_URL` (e.g. `keyword_suggestions`).
+        """
+        url = f"{self._client.BASE_URL}/{self.LIVE_URL}"
+        endpoint_name = self.LIVE_URL.split("/")[-2]
+
+        for attempt in range(1, max_retries + 1):
+            if attempt > 1:
+                time.sleep(retry_delay)
+
+            sink: dict | None = {} if collector is not None else None
+            t0 = time.perf_counter()
+            started_at = datetime.now(timezone.utc).isoformat()
+            resp = self._client._post(
+                url, payload, max_retries=1, retry_delay=0, status_sink=sink
+            )
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+
+            df = None
+            n_items = 0
+            if resp:
+                try:
+                    df = self._parse_response(resp, parse_target)
+                    n_items = 0 if (df is None or df.empty) else len(df)
+                except Exception as e:
+                    df = None
+                    if debug:
+                        print(f"[{endpoint_name}:{target}] Parse error: {e}. "
+                              f"Attempt {attempt}/{max_retries}")
+            elif debug:
+                print(f"[{endpoint_name}:{target}] Invalid response. "
+                      f"Attempt {attempt}/{max_retries}")
+
+            is_terminal = (n_items > 0) or (attempt == max_retries)
+            if collector is not None:
+                collector.record(build_attempt_record(
+                    endpoint=endpoint_name,
+                    target=target,
+                    attempt=attempt,
+                    is_terminal=is_terminal,
+                    started_at=started_at,
+                    duration_ms=elapsed_ms,
+                    status_sink=sink,
+                    payload=payload,
+                    resp=resp,
+                    n_items=n_items,
+                ))
+
+            if df is not None and not df.empty:
+                return df
+
+        return pd.DataFrame(columns=empty_columns)
 
     def _resolve_domain(self, domain: Any, domain_id: Any, interactive: bool) -> dict | None:
         """Resolve domain args to {"domain_id": int, "domain": str} or None."""
