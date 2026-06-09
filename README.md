@@ -31,8 +31,12 @@ from skyward.data.bigquery import BigQueryClient
 bq = BigQueryClient(project_id=cfg.datahub_project_id, credentials_info=cfg.datahub_credentials)
 
 # Meta tables / DataHub
+# Meta now lives in the skyward-ops Supabase project (v1.5.0+). DataHub is hybrid:
+# entities/catalog from Supabase, analytics + upload log from BigQuery.
+from skyward.data.supabase import SupabaseClient
 from skyward.data.hub import DataHub
-hub = DataHub(bq)
+sb = SupabaseClient(cfg.supabase_db_url)   # requires SUPABASE_DB_URL
+hub = DataHub(sb, bq)                        # MetaClient(sb) if you don't need BQ
 clients = hub.list_clients()
 
 # LLM — one interface, any provider
@@ -233,6 +237,7 @@ Copy `.env.example` to `.env` and fill in:
 |----------|----------|-------------|
 | `GCP_DATAHUB_PROJECT_ID` | Yes | BigQuery project ID |
 | `GCP_DATAHUB_CREDENTIALS` | No | Path to SA JSON (empty = use ADC) |
+| `SUPABASE_DB_URL` | For Meta (v1.5.0+) | skyward-ops Postgres pooler connection string (used by `SupabaseClient`/`MetaClient`/`DataHub`) |
 | `DATAFORSEO_API_LOGIN` | For DataForSEO | API login |
 | `DATAFORSEO_API_PASSWORD` | For DataForSEO | API password |
 | `OPENAI_API_KEY` | For OpenAI | OpenAI API key |
