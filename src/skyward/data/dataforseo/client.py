@@ -119,11 +119,20 @@ class DataForSEOClient:
 
     @property
     def meta_client(self):
-        if self.bq_client is None:
-            return None
+        """Supabase-backed MetaClient for domain resolution (v1.5.0+).
+
+        Meta lives in the skyward-ops Supabase ``meta`` schema, not BigQuery.
+        Built lazily from ``SUPABASE_DB_URL``; returns None when that's unset so
+        callers that pass ``domain=None`` (opt out of domain tagging) never need it.
+        """
         if self._meta_client is None:
+            from skyward.config import load_config
             from skyward.data.meta import MetaClient
-            self._meta_client = MetaClient(self.bq_client)
+            from skyward.data.supabase import SupabaseClient
+            db_url = load_config().supabase_db_url
+            if not db_url:
+                return None
+            self._meta_client = MetaClient(SupabaseClient(db_url))
         return self._meta_client
 
     # -------------------------------------------------------------------------
