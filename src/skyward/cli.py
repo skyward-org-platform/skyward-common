@@ -3,22 +3,35 @@ import click
 
 BigQueryClient = None
 DataHub = None
+SupabaseClient = None
 load_config = None
 
 
 def _get_hub():
-    """Bootstrap config and return a DataHub instance."""
-    global load_config, BigQueryClient, DataHub
+    """Bootstrap config and return a DataHub instance.
+
+    DataHub is hybrid as of v1.5.0: Meta lives in Supabase (``meta`` schema),
+    analytics + upload log in BigQuery — so it needs both clients.
+    """
+    global load_config, BigQueryClient, DataHub, SupabaseClient
     if load_config is None:
         from skyward.config import load_config as _lc
         from skyward.data.bigquery import BigQueryClient as _bq
         from skyward.data.hub import DataHub as _dh
+        from skyward.data.supabase import SupabaseClient as _sb
         load_config = _lc
         BigQueryClient = _bq
         DataHub = _dh
+        SupabaseClient = _sb
     cfg = load_config()
+    if not cfg.supabase_db_url:
+        raise RuntimeError(
+            "Meta lives in Supabase as of v1.5.0 — set SUPABASE_DB_URL to use the "
+            "CLI's meta/data commands."
+        )
     bq = BigQueryClient(project_id=cfg.datahub_project_id, credentials_info=cfg.datahub_credentials or None)
-    return DataHub(bq)
+    sb = SupabaseClient(cfg.supabase_db_url)
+    return DataHub(sb, bq)
 
 
 class SkywardCLI(click.Group):
