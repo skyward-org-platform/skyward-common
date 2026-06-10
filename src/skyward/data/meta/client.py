@@ -272,6 +272,24 @@ class MetaClient:
             "is_active": bool(row["is_active"]),
         }
 
+    def get_domain_by_id(self, domain_id: int) -> dict | None:
+        """Look up a domain by its id. Returns dict with domain_id, domain,
+        domain_name, is_active — or None if not found."""
+        df = self.sb.query(
+            "select domain_id, domain, domain_name, is_active "
+            "from meta.domains where domain_id = %(domain_id)s limit 1",
+            {"domain_id": domain_id},
+        )
+        if df.empty:
+            return None
+        row = df.iloc[0]
+        return {
+            "domain_id": int(row["domain_id"]),
+            "domain": row["domain"],
+            "domain_name": row["domain_name"],
+            "is_active": bool(row["is_active"]),
+        }
+
     def search_domains(self, query: str, limit: int = 10) -> pd.DataFrame:
         """Fuzzy/partial match search against Meta.domains."""
         import tldextract
