@@ -1,20 +1,26 @@
+from unittest.mock import patch
+
 import pytest
 
 from skyward.data.dataforseo import DataForSEOClient, ClientConfig
 
 
-def test_client_accepts_no_bq_client_and_meta_is_none():
+def test_meta_client_none_without_supabase_url():
+    """v1.5.0: meta_client is None when SUPABASE_DB_URL is unset — independent of bq_client."""
     client = DataForSEOClient(username="u", password="p")
-    assert client.bq_client is None
-    assert client.meta_client is None
+    with patch("skyward.config.load_config") as lc:
+        lc.return_value.supabase_db_url = None
+        assert client.meta_client is None
 
 
-def test_client_with_bq_client_constructs_meta_client(fake_bq):
+def test_bq_client_assignment_does_not_drive_meta(fake_bq):
+    """bq_client is still stored (for uploads), but meta_client no longer derives from it."""
     client = DataForSEOClient(username="u", password="p", bq_client=fake_bq)
     assert client.bq_client is fake_bq
-    meta = client.meta_client
-    assert meta is not None
-    assert meta.bq is fake_bq
+    # meta_client comes from Supabase now; with no URL it's None regardless of bq_client
+    with patch("skyward.config.load_config") as lc:
+        lc.return_value.supabase_db_url = None
+        assert client.meta_client is None
 
 
 def test_client_missing_credentials_raises():

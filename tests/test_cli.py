@@ -3,6 +3,7 @@ import json
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
+import pytest
 from click.testing import CliRunner
 
 from skyward.cli import cli
@@ -338,30 +339,47 @@ def test_bq_search_uploads(mock_get_hub):
 @patch("skyward.cli.load_config")
 @patch("skyward.cli.BigQueryClient")
 @patch("skyward.cli.DataHub")
-def test_get_hub_bootstraps_from_config(mock_datahub, mock_bq_cls, mock_load_config):
+@patch("skyward.cli.SupabaseClient")
+def test_get_hub_bootstraps_from_config(mock_sb_cls, mock_datahub, mock_bq_cls, mock_load_config):
     from skyward.cli import _get_hub
     mock_cfg = MagicMock()
     mock_cfg.datahub_credentials = {"key": "val"}
     mock_cfg.datahub_project_id = "my-project"
+    mock_cfg.supabase_db_url = "postgresql://u:p@h:6543/postgres"
     mock_load_config.return_value = mock_cfg
     hub = _get_hub()
     mock_bq_cls.assert_called_once_with(project_id="my-project", credentials_info={"key": "val"})
-    mock_datahub.assert_called_once_with(mock_bq_cls.return_value)
+    mock_sb_cls.assert_called_once_with("postgresql://u:p@h:6543/postgres")
+    # v1.5.0: DataHub(sb_client, bq_client)
+    mock_datahub.assert_called_once_with(mock_sb_cls.return_value, mock_bq_cls.return_value)
     assert hub == mock_datahub.return_value
 
 
 @patch("skyward.cli.load_config")
 @patch("skyward.cli.BigQueryClient")
 @patch("skyward.cli.DataHub")
-def test_get_hub_uses_adc_when_credentials_empty(mock_datahub, mock_bq_cls, mock_load_config):
+@patch("skyward.cli.SupabaseClient")
+def test_get_hub_uses_adc_when_credentials_empty(mock_sb_cls, mock_datahub, mock_bq_cls, mock_load_config):
     """_get_hub passes None for credentials_info when config returns empty dict (ADC mode)."""
     from skyward.cli import _get_hub
     mock_cfg = MagicMock()
     mock_cfg.datahub_credentials = {}
     mock_cfg.datahub_project_id = "my-project"
+    mock_cfg.supabase_db_url = "postgresql://u:p@h:6543/postgres"
     mock_load_config.return_value = mock_cfg
     _get_hub()
     mock_bq_cls.assert_called_once_with(project_id="my-project", credentials_info=None)
+
+
+@patch("skyward.cli.load_config")
+def test_get_hub_requires_supabase_url(mock_load_config):
+    """v1.5.0: _get_hub errors clearly when SUPABASE_DB_URL is unset (Meta is in Supabase)."""
+    from skyward.cli import _get_hub
+    mock_cfg = MagicMock()
+    mock_cfg.supabase_db_url = None
+    mock_load_config.return_value = mock_cfg
+    with pytest.raises(RuntimeError, match="SUPABASE_DB_URL"):
+        _get_hub()
 
 
 def test_get_hub_does_lazy_import():

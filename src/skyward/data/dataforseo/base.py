@@ -345,9 +345,8 @@ class BaseEndpoint(ABC):
         meta = self._client.meta_client
         if meta is None:
             raise RuntimeError(
-                "Domain resolution requires a bq_client. Construct DataForSEOClient "
-                "with `bq_client=` to enable Meta.domains lookup, or pass `domain=None` "
-                "to opt out."
+                "Domain resolution requires SUPABASE_DB_URL (Meta lives in Supabase as "
+                "of v1.5.0). Set it, or pass `domain=None` to opt out of domain tagging."
             )
 
         if provided_id:
@@ -355,26 +354,13 @@ class BaseEndpoint(ABC):
                 domain_id_int = int(domain_id)
             except (TypeError, ValueError):
                 raise ValueError(f"domain_id must be an integer (got {domain_id!r})")
-            from google.cloud import bigquery
-            query = f"""
-                SELECT domain_id, domain
-                FROM `{meta._project_id}.Meta.domains`
-                WHERE domain_id = @domain_id
-                LIMIT 1
-            """
-            job_config = bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("domain_id", "INT64", domain_id_int)
-                ]
-            )
-            rows = meta.bq.client.query(query, job_config=job_config).result().to_dataframe()
-            if rows.empty:
+            found = meta.get_domain_by_id(domain_id_int)
+            if found is None:
                 raise ValueError(
-                    f"Domain ID {domain_id_int} not found in Meta.domains. "
+                    f"Domain ID {domain_id_int} not found in meta.domains. "
                     f"Provide a valid domain_id, or pass domain=<string> to auto-create by name."
                 )
-            row = rows.iloc[0]
-            return {"domain_id": int(row["domain_id"]), "domain": row["domain"]}
+            return {"domain_id": found["domain_id"], "domain": found["domain"]}
 
         # domain string path
         existing = meta.get_domain(domain)
@@ -398,7 +384,7 @@ class BaseEndpoint(ABC):
         meta = self._client.meta_client
         while True:
             choice = input(
-                f"\nDomain {cleaned!r} not found in Meta.domains.\n"
+                f"\nDomain {cleaned!r} not found in meta.domains.\n"
                 f"  [r] retype\n"
                 f"  [a] add this domain to the system and continue\n"
                 f"  [x] abort\n"
