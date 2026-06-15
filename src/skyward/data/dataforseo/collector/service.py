@@ -22,11 +22,25 @@ from skyward.functions import generate_upload_id
 _NOT_FOUND = 40401  # DFS task_get: Task Not Found (e.g. a task that was never queued)
 
 
-def fetch_ready_task_ids(client, ready_url: str) -> list[str]:
-    """GET tasks_ready for one endpoint -> list of ready task_ids (DFS shape is uniform)."""
+class CollectorDfsError(Exception):
+    """DataForSEO was unreachable for an endpoint's tasks_ready (transport failure)."""
+
+    def __init__(self, endpoint: str):
+        super().__init__(f"DataForSEO unreachable for {endpoint}")
+        self.endpoint = endpoint
+
+
+def fetch_ready_task_ids(client, ready_url: str) -> list[str] | None:
+    """GET tasks_ready for one endpoint -> list of ready task_ids (DFS shape is uniform).
+
+    Returns None on a transport failure (client._get exhausted its retries and got nothing) —
+    distinct from [] (reached DFS, nothing ready) so the caller can alert on unreachability.
+    """
     resp = client._get(f"{client.BASE_URL}/{ready_url}")
+    if resp is None:
+        return None
     ids: list[str] = []
-    for task in (resp or {}).get("tasks") or []:
+    for task in resp.get("tasks") or []:
         for entry in task.get("result") or []:
             tid = entry.get("id")
             if tid:
@@ -44,6 +58,8 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None) -> dict:
     """Drain one endpoint once. Returns {endpoint, ready, fetched, failed}."""
     bq_client = bq_client or client.bq_client
     ready = fetch_ready_task_ids(client, handler.ready_url)
+    if ready is None:
+        raise CollectorDfsError(handler.key)
     if not ready:
         return {"endpoint": handler.key, "ready": 0, "fetched": 0, "failed": 0}
 
@@ -116,26 +132,58 @@ def _append_canonical(bq_client, table_name: str, df: pd.DataFrame) -> None:
     )
 
 
-def run_forever(client, store, handlers, *, poll_interval=30, max_cycles=None, sleep=time.sleep) -> None:
-    """Loop over all allowlisted endpoints each cycle. One endpoint erroring never kills the loop."""
+def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
+                max_cycles=None, sleep=time.sleep, should_stop=None) -> None:
+    """Loop over all allowlisted endpoints each cycle, alerting on failures.
+
+    One endpoint erroring never kills the loop. Per endpoint, failures alert (deduped) and a
+    later success resolves them. A heartbeat line is emitted once per loop. `should_stop()`
+    (set by the SIGTERM handler) breaks the loop for a graceful shutdown.
+    """
+    from skyward.data.dataforseo.collector.alerts import Alerter, classify_failure
+    alerter = alerter or Alerter()
+
     cycle = 0
     while max_cycles is None or cycle < max_cycles:
+        if should_stop is not None and should_stop():
+            break
         cycle += 1
         for handler in handlers.values():
+            key = handler.key
             try:
                 stats = run_cycle(client, store, handler)
-                if stats["ready"]:
-                    print(f"[collector] cycle {cycle} {stats}")
+            except CollectorDfsError:
+                alerter.fire(f"dfs:{key}", f"can't reach DataForSEO ({key})")
+                continue
             except Exception as e:  # noqa: BLE001 - never let one endpoint kill the loop
-                print(f"[collector] cycle {cycle} {handler.key} ERROR: {e!r}")
+                suffix, label = classify_failure(e)
+                alerter.fire(f"{suffix}:{key}", f"collector {label} on {key}: {e!r}")
+                print(f"[collector] cycle {cycle} {key} ERROR: {e!r}")
+                continue
+
+            # success — clear any prior failure alerts for this endpoint
+            for ek in ("dfs", "bigquery", "error"):
+                alerter.resolve(f"{ek}:{key}")
+            if stats["ready"] and stats["failed"] / stats["ready"] >= 0.5:
+                alerter.fire(f"failrate:{key}",
+                             f"{stats['failed']}/{stats['ready']} {key} fetches failing")
+            else:
+                alerter.resolve(f"failrate:{key}")
+            if stats["ready"]:
+                print(f"[collector] cycle {cycle} {stats}")
+
+        alerter.heartbeat()
         if max_cycles is None or cycle < max_cycles:
             sleep(poll_interval)
 
 
 def main() -> None:  # pragma: no cover - thin wiring, exercised at deploy
+    import signal
+
     from skyward.config import load_config
     from skyward.data.bigquery import BigQueryClient
     from skyward.data.dataforseo import ClientConfig, DataForSEOClient
+    from skyward.data.dataforseo.collector.alerts import Alerter
     from skyward.data.dataforseo.collector.allowlist import build_allowlist
 
     cfg = load_config()
@@ -146,9 +194,29 @@ def main() -> None:  # pragma: no cover - thin wiring, exercised at deploy
     )
     store = TrackingStore(bq)
     handlers = build_allowlist(client)
+    alerter = Alerter()
+
+    stop = {"flag": False}
+
+    def _handle_stop(signum, _frame):
+        stop["flag"] = True
+        print(f"[collector] received signal {signum}; stopping after current cycle")
+
+    signal.signal(signal.SIGTERM, _handle_stop)
+    signal.signal(signal.SIGINT, _handle_stop)
+
     print(f"[collector] starting; endpoints={list(handlers)} "
           f"poll_interval={client.config.task_poll_interval}s")
-    run_forever(client, store, handlers, poll_interval=client.config.task_poll_interval)
+    alerter.startup()
+    try:
+        run_forever(client, store, handlers, alerter=alerter,
+                    poll_interval=client.config.task_poll_interval,
+                    should_stop=lambda: stop["flag"])
+    except Exception as e:  # pragma: no cover - top-level safety net
+        alerter.crash(f"collector crashed: {e!r}")
+        raise
+    finally:
+        alerter.shutdown("signal" if stop["flag"] else "exit")
 
 
 if __name__ == "__main__":  # pragma: no cover

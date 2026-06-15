@@ -135,6 +135,78 @@ def test_run_forever_loops_and_survives_endpoint_errors(monkeypatch):
     assert calls.count("boom") == 2  # error in 'boom' did not kill the loop
 
 
+class _FakeAlerter:
+    def __init__(self):
+        self.events = []
+
+    def fire(self, key, message, **kw):
+        self.events.append(("fire", key))
+
+    def resolve(self, key, message=None):
+        self.events.append(("resolve", key))
+
+    def startup(self):
+        self.events.append(("startup",))
+
+    def shutdown(self, reason="x"):
+        self.events.append(("shutdown",))
+
+    def crash(self, message):
+        self.events.append(("crash",))
+
+    def heartbeat(self):
+        self.events.append(("heartbeat",))
+
+
+def test_run_forever_alerts_on_dfs_unreachable_then_recovers(monkeypatch):
+    from skyward.data.dataforseo.collector.service import CollectorDfsError
+    seq = [CollectorDfsError("serp_google_organic"),
+           {"endpoint": "serp_google_organic", "ready": 0, "fetched": 0, "failed": 0}]
+
+    def fake_rc(client, store, handler, **k):
+        v = seq.pop(0)
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+    monkeypatch.setattr(service, "run_cycle", fake_rc)
+    al = _FakeAlerter()
+    service.run_forever(None, None, {"serp_google_organic": _handler()}, alerter=al,
+                        max_cycles=2, poll_interval=0, sleep=lambda s: None)
+    assert ("fire", "dfs:serp_google_organic") in al.events
+    assert ("resolve", "dfs:serp_google_organic") in al.events
+    assert ("heartbeat",) in al.events
+
+
+def test_run_forever_classifies_bigquery_error(monkeypatch):
+    from google.api_core import exceptions as gexc
+    monkeypatch.setattr(service, "run_cycle",
+                        lambda *a, **k: (_ for _ in ()).throw(gexc.ServiceUnavailable("503")))
+    al = _FakeAlerter()
+    service.run_forever(None, None, {"serp_google_organic": _handler()}, alerter=al,
+                        max_cycles=1, poll_interval=0, sleep=lambda s: None)
+    assert ("fire", "bigquery:serp_google_organic") in al.events
+
+
+def test_run_forever_alerts_high_failure_rate(monkeypatch):
+    monkeypatch.setattr(service, "run_cycle",
+                        lambda *a, **k: {"endpoint": "serp_google_organic", "ready": 4,
+                                         "fetched": 1, "failed": 3})
+    al = _FakeAlerter()
+    service.run_forever(None, None, {"serp_google_organic": _handler()}, alerter=al,
+                        max_cycles=1, poll_interval=0, sleep=lambda s: None)
+    assert ("fire", "failrate:serp_google_organic") in al.events
+
+
+def test_run_forever_should_stop_breaks_before_cycle(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "run_cycle",
+                        lambda *a, **k: calls.append(1) or {"endpoint": "e", "ready": 0, "fetched": 0, "failed": 0})
+    service.run_forever(None, None, {"serp_google_organic": _handler()}, alerter=_FakeAlerter(),
+                        max_cycles=None, poll_interval=0, sleep=lambda s: None, should_stop=lambda: True)
+    assert calls == []
+
+
 def test_build_allowlist_has_both_standard_endpoints():
     client = DataForSEOClient(username="u", password="p", bq_client=FakeBigQueryClient(),
                               config=ClientConfig())
