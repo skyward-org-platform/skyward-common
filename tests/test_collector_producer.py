@@ -45,8 +45,8 @@ class _FakeStore:
         self._pct = list(pct_seq)
         self.submitted = None
 
-    def submit(self, *, job_id, endpoint, tasks):
-        self.submitted = (job_id, endpoint, list(tasks))
+    def submit(self, *, job_id, endpoint, tasks, domain_id=None, domain=None):
+        self.submitted = (job_id, endpoint, list(tasks), domain_id, domain)
 
     def completion_pct(self, *, job_id, endpoint):
         return self._pct.pop(0) if len(self._pct) > 1 else self._pct[0]

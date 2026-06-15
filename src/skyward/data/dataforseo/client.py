@@ -63,6 +63,10 @@ class ClientConfig:
     # fields are likely to remain.
     task_total_timeout: int = 7200  # 2 hours in seconds
     task_poll_interval: int = 30  # seconds between tasks_ready polls
+    # Standard-mode collector path (ClickUp 86bac9q9y): when True, post_all submits +
+    # tracks in BQ and waits on dfs_job_summary instead of polling DFS in-process.
+    # Off by default = legacy in-process behavior. Per-call `use_collector=` overrides.
+    use_collector: bool = False
 
 
 # =============================================================================

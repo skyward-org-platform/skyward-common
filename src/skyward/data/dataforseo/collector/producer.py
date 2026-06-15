@@ -57,6 +57,8 @@ def submit_and_wait(
     proceed_at_pct: float = 1.0,
     poll_interval: float = 5.0,
     max_wait: float = 18000.0,
+    domain_id: int | None = None,
+    domain: str | None = None,
     store: "TrackingStore | None" = None,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
@@ -68,7 +70,8 @@ def submit_and_wait(
     keeps landing in the canonical table regardless — the collector owns the tail).
     """
     store = store or TrackingStore(bq_client)
-    store.submit(job_id=job_id, endpoint=endpoint_key, tasks=posted_tasks)
+    store.submit(job_id=job_id, endpoint=endpoint_key, tasks=posted_tasks,
+                 domain_id=domain_id, domain=domain)
 
     deadline = now() + max_wait
     pct = store.completion_pct(job_id=job_id, endpoint=endpoint_key)
