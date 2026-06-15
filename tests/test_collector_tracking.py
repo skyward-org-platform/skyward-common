@@ -92,6 +92,29 @@ def test_completion_pct_zero_total_is_complete():
     assert store.completion_pct(job_id="x", endpoint="serp_google_organic") == 1.0
 
 
+# ---- job_status() ----
+
+def test_job_status_returns_per_endpoint_breakdown():
+    store, bq = _store()
+    bq.client.queue_result(pd.DataFrame([
+        {"endpoint": "serp_google_organic", "total_tasks": 10, "fetched_count": 7,
+         "failed_count": 1, "status": "partial", "submitted_at": None, "last_updated": None},
+        {"endpoint": "keywords_data_google_ads_search_volume", "total_tasks": 2, "fetched_count": 2,
+         "failed_count": 0, "status": "done", "submitted_at": None, "last_updated": None},
+    ]))
+    rows = store.job_status(job_id="j")
+    assert len(rows) == 2
+    serp = next(r for r in rows if r["endpoint"] == "serp_google_organic")
+    assert serp["total_tasks"] == 10 and serp["fetched"] == 7 and serp["failed"] == 1
+    assert abs(serp["completion_pct"] - 0.7) < 1e-9 and serp["status"] == "partial"
+
+
+def test_job_status_empty_when_unknown():
+    store, bq = _store()
+    bq.client.queue_result(pd.DataFrame())
+    assert store.job_status(job_id="nope") == []
+
+
 # ---- mark_fetched() ----
 
 def test_mark_fetched_one_merge_and_one_summary_update():

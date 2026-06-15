@@ -193,6 +193,46 @@ class TrackingStore:
             return 1.0  # zero tasks submitted == trivially complete (don't hang the producer)
         return float(fetched) / float(total)
 
+    def job_status(self, *, job_id: str, endpoint: str | None = None) -> list[dict]:
+        """Per-endpoint progress for a job_id, read from dfs_job_summary.
+
+        Returns one dict per (job_id, endpoint): total_tasks, fetched, failed, status,
+        completion_pct (fetched/total), submitted_at, last_updated. Empty list if unknown.
+        """
+        from google.cloud import bigquery
+
+        where = "job_id = @job_id" + (" AND endpoint = @endpoint" if endpoint else "")
+        params = [bigquery.ScalarQueryParameter("job_id", "STRING", job_id)]
+        if endpoint:
+            params.append(bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint))
+        sql = f"""
+        SELECT endpoint, total_tasks, fetched_count, failed_count, status, submitted_at, last_updated
+        FROM `{self._table(JOB_SUMMARY_TABLE)}`
+        WHERE {where}
+        ORDER BY endpoint
+        """
+        cfg = bigquery.QueryJobConfig(query_parameters=params)
+        df = self._retry(
+            lambda: self._bq.client.query(sql, job_config=cfg).result().to_dataframe(),
+            label="job_status",
+        )
+        out = []
+        for _, r in df.iterrows():
+            total = int(r["total_tasks"] or 0)
+            fetched = int(r["fetched_count"] or 0)
+            failed = int(r["failed_count"] or 0)
+            out.append({
+                "endpoint": r["endpoint"],
+                "total_tasks": total,
+                "fetched": fetched,
+                "failed": failed,
+                "status": r["status"],
+                "completion_pct": 1.0 if total == 0 else fetched / total,
+                "submitted_at": r["submitted_at"],
+                "last_updated": r["last_updated"],
+            })
+        return out
+
     # ----- collector: batch status update -----
 
     def mark_fetched(self, *, endpoint: str, results: list[dict]) -> None:
