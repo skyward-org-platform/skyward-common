@@ -53,6 +53,31 @@ def _is_retryable(exc: Exception) -> bool:
     return any(s in msg for s in _RETRYABLE_MSG)
 
 
+def run_with_retry(
+    fn: Callable,
+    *,
+    label: str,
+    max_retries: int = 5,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0,
+    sleep: Callable[[float], None] = time.sleep,
+):
+    """Run `fn`, retrying transient BQ/network errors with exponential backoff.
+
+    Shared by TrackingStore and the collector service so every BQ op is resilient.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 - classify, then re-raise if not transient
+            if not _is_retryable(e) or attempt == max_retries:
+                raise
+            delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+            print(f"[retry] {label}: transient error (attempt "
+                  f"{attempt}/{max_retries}): {e!r}; retrying in {delay}s")
+            sleep(delay)
+
+
 class TrackingStore:
     def __init__(
         self,
@@ -73,17 +98,10 @@ class TrackingStore:
         return f"{self._bq.client.project}.{DATASET}.{name}"
 
     def _retry(self, fn: Callable, *, label: str):
-        """Run `fn`, retrying transient BQ errors with exponential backoff."""
-        for attempt in range(1, self._max_retries + 1):
-            try:
-                return fn()
-            except Exception as e:  # noqa: BLE001 - classify, then re-raise if not transient
-                if not _is_retryable(e) or attempt == self._max_retries:
-                    raise
-                delay = min(self._retry_max_delay, self._retry_base_delay * (2 ** (attempt - 1)))
-                print(f"[TrackingStore] {label}: transient error (attempt "
-                      f"{attempt}/{self._max_retries}): {e!r}; retrying in {delay}s")
-                self._sleep(delay)
+        return run_with_retry(
+            fn, label=label, max_retries=self._max_retries,
+            base_delay=self._retry_base_delay, max_delay=self._retry_max_delay, sleep=self._sleep,
+        )
 
     def _query(self, sql: str, params: list, *, label: str):
         from google.cloud import bigquery
@@ -231,6 +249,43 @@ class TrackingStore:
                 "submitted_at": r["submitted_at"],
                 "last_updated": r["last_updated"],
             })
+        return out
+
+    def lookup_tasks(self, *, endpoint: str, task_ids: list[str]) -> dict[str, dict]:
+        """Map task_ids (for one endpoint) to their {job_id, keyword, domain_id, domain}.
+
+        Joins dfs_task_log -> dfs_job_summary for the run's domain context. task_ids absent
+        from the result are untracked (the collector attributes those to the sentinel job).
+        """
+        if not task_ids:
+            return {}
+        from google.cloud import bigquery
+
+        sql = f"""
+        SELECT l.task_id, ANY_VALUE(l.job_id) AS job_id, ANY_VALUE(l.keyword) AS keyword,
+               ANY_VALUE(s.domain_id) AS domain_id, ANY_VALUE(s.domain) AS domain
+        FROM `{self._table(TASK_LOG_TABLE)}` l
+        LEFT JOIN `{self._table(JOB_SUMMARY_TABLE)}` s
+          ON l.job_id = s.job_id AND l.endpoint = s.endpoint
+        WHERE l.endpoint = @endpoint AND l.task_id IN UNNEST(@ids)
+        GROUP BY l.task_id
+        """
+        cfg = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint),
+            bigquery.ArrayQueryParameter("ids", "STRING", list(task_ids)),
+        ])
+        df = self._retry(
+            lambda: self._bq.client.query(sql, job_config=cfg).result().to_dataframe(),
+            label="lookup_tasks",
+        )
+        out: dict[str, dict] = {}
+        for _, r in df.iterrows():
+            out[r["task_id"]] = {
+                "job_id": r["job_id"],
+                "keyword": None if pd.isna(r["keyword"]) else r["keyword"],
+                "domain_id": None if pd.isna(r["domain_id"]) else int(r["domain_id"]),
+                "domain": None if pd.isna(r["domain"]) else r["domain"],
+            }
         return out
 
     # ----- collector: batch status update -----

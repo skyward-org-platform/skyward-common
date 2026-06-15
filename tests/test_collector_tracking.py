@@ -168,6 +168,26 @@ def test_submit_empty_tasks_skips_load_writes_zero_total():
     assert _scalar_params(merges[0]["job_config"]).get("total") == 0
 
 
+# ---- lookup_tasks() ----
+
+def test_lookup_tasks_maps_to_job_and_domain():
+    store, bq = _store()
+    bq.client.queue_result(pd.DataFrame([
+        {"task_id": "t0", "job_id": "j1", "keyword": "k0", "domain_id": 7, "domain": "x.com"},
+        {"task_id": "t1", "job_id": "j1", "keyword": "k1", "domain_id": 7, "domain": "x.com"},
+    ]))
+    m = store.lookup_tasks(endpoint="serp_google_organic", task_ids=["t0", "t1", "t2"])
+    assert m["t0"]["job_id"] == "j1" and m["t0"]["domain_id"] == 7 and m["t0"]["keyword"] == "k0"
+    assert m["t1"]["domain"] == "x.com"
+    assert "t2" not in m  # untracked -> caller attributes to sentinel
+
+
+def test_lookup_tasks_empty_ids_is_noop():
+    store, bq = _store()
+    assert store.lookup_tasks(endpoint="x", task_ids=[]) == {}
+    assert bq.client.queries == []
+
+
 # ---- resilience: retries ----
 
 class _FakeResult:
