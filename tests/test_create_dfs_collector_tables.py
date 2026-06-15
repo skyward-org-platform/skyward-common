@@ -19,8 +19,8 @@ def _load():
 
 
 JOB_SUMMARY_COLS = {
-    "job_id", "endpoint", "total_tasks", "fetched_count", "failed_count",
-    "status", "submitted_at", "last_updated", "notes",
+    "job_id", "endpoint", "domain_id", "domain", "total_tasks", "fetched_count",
+    "failed_count", "status", "submitted_at", "last_updated", "notes",
 }
 TASK_LOG_COLS = {
     "task_id", "job_id", "endpoint", "keyword", "submitted_at", "fetched_at",

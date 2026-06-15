@@ -21,6 +21,8 @@ JOB_SUMMARY_DDL = f"""
 CREATE TABLE IF NOT EXISTS `{PROJECT_DEFAULT}.{DATASET}.dfs_job_summary` (
   job_id        STRING    NOT NULL OPTIONS(description="Producer run job_id; 'd4s_standard_unattributed' for collector-drained tasks with no producer."),
   endpoint      STRING    NOT NULL OPTIONS(description="Endpoint key, e.g. 'serp_google_organic'. Distinct row per (job_id, endpoint)."),
+  domain_id     INT64              OPTIONS(description="Client/project domain_id for the run; collector stamps it onto the canonical rows (DFS doesn't know it)."),
+  domain        STRING             OPTIONS(description="Client/project domain for the run; collector stamps it onto the canonical rows."),
   total_tasks   INT64              OPTIONS(description="Tasks the producer posted for this (job_id, endpoint); written at submit."),
   fetched_count INT64              OPTIONS(description="Tasks the collector has fetched results for; incremented per collector cycle."),
   failed_count  INT64              OPTIONS(description="Tasks that resolved to a failure status."),

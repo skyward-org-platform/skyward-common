@@ -92,8 +92,19 @@ class TrackingStore:
 
     # ----- producer: submit -----
 
-    def submit(self, *, job_id: str, endpoint: str, tasks: list[dict]) -> None:
+    def submit(
+        self,
+        *,
+        job_id: str,
+        endpoint: str,
+        tasks: list[dict],
+        domain_id: int | None = None,
+        domain: str | None = None,
+    ) -> None:
         """Record a freshly-posted batch: load pending task rows, upsert the summary.
+
+        `domain_id`/`domain` are the run's attribution context — stored on the summary so the
+        collector can stamp them onto canonical rows (DFS itself doesn't know the domain).
 
         Each BQ op is retried independently. Load jobs are atomic (retry-safe); the summary
         MERGE is idempotent on (job_id, endpoint), so re-running submit converges.
@@ -136,15 +147,17 @@ class TrackingStore:
         USING (SELECT @job_id AS job_id, @endpoint AS endpoint) S
         ON T.job_id = S.job_id AND T.endpoint = S.endpoint
         WHEN MATCHED THEN UPDATE SET
-          total_tasks = @total, status = 'pending',
-          submitted_at = @ts, last_updated = @ts
+          total_tasks = @total, domain_id = @domain_id, domain = @domain,
+          status = 'pending', submitted_at = @ts, last_updated = @ts
         WHEN NOT MATCHED THEN INSERT
-          (job_id, endpoint, total_tasks, fetched_count, failed_count, status, submitted_at, last_updated)
-          VALUES (@job_id, @endpoint, @total, 0, 0, 'pending', @ts, @ts)
+          (job_id, endpoint, domain_id, domain, total_tasks, fetched_count, failed_count, status, submitted_at, last_updated)
+          VALUES (@job_id, @endpoint, @domain_id, @domain, @total, 0, 0, 'pending', @ts, @ts)
         """
         self._query(merge, [
             bigquery.ScalarQueryParameter("job_id", "STRING", job_id),
             bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint),
+            bigquery.ScalarQueryParameter("domain_id", "INT64", domain_id),
+            bigquery.ScalarQueryParameter("domain", "STRING", domain),
             bigquery.ScalarQueryParameter("total", "INT64", len(unique)),
             bigquery.ScalarQueryParameter("ts", "TIMESTAMP", ts.to_pydatetime()),
         ], label="submit.merge_summary")

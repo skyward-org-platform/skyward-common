@@ -61,6 +61,17 @@ def test_submit_upserts_one_summary_row_with_total():
 
 # ---- completion_pct() ----
 
+def test_submit_records_domain_context():
+    store, bq = _store()
+    store.submit(job_id="x", endpoint="serp_google_organic", tasks=_tasks(2),
+                 domain_id=42, domain="busbank.com")
+    merge = [c for c in bq.client.queries if "dfs_job_summary" in c["sql"]][0]
+    params = _scalar_params(merge["job_config"])
+    assert params.get("domain_id") == 42
+    assert params.get("domain") == "busbank.com"
+    assert "domain_id" in merge["sql"] and "domain" in merge["sql"]
+
+
 def test_completion_pct_returns_fetched_over_total():
     store, bq = _store()
     bq.client.queue_result(pd.DataFrame([{"total_tasks": 10, "fetched_count": 7}]))
