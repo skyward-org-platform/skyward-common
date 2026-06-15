@@ -74,10 +74,11 @@ def test_completion_pct_empty_row_is_zero():
     assert store.completion_pct(job_id="x", endpoint="serp_google_organic") == 0.0
 
 
-def test_completion_pct_zero_total_is_zero():
+def test_completion_pct_zero_total_is_complete():
+    # empty submit (0 tasks) reads as complete, so the producer doesn't hang forever
     store, bq = _store()
     bq.client.queue_result(pd.DataFrame([{"total_tasks": 0, "fetched_count": 0}]))
-    assert store.completion_pct(job_id="x", endpoint="serp_google_organic") == 0.0
+    assert store.completion_pct(job_id="x", endpoint="serp_google_organic") == 1.0
 
 
 # ---- mark_fetched() ----
@@ -109,3 +110,97 @@ def test_mark_fetched_empty_is_noop():
     store.mark_fetched(endpoint="serp_google_organic", results=[])
     assert bq.client.queries == []
     assert bq.client.loaded_tables == []
+
+
+def test_submit_dedupes_duplicate_task_ids_within_call():
+    store, bq = _store()
+    tasks = [{"task_id": "t0", "keyword": "a"}, {"task_id": "t0", "keyword": "a2"},
+             {"task_id": "t1", "keyword": "b"}]
+    store.submit(job_id="x", endpoint="serp_google_organic", tasks=tasks)
+    loaded = [t for t in bq.client.loaded_tables if str(t["table_ref"]).endswith("dfs_task_log")][0]["df"]
+    assert sorted(loaded["task_id"]) == ["t0", "t1"]  # 3 in -> 2 unique
+    merge = [c for c in bq.client.queries if "dfs_job_summary" in c["sql"]][0]
+    assert _scalar_params(merge["job_config"]).get("total") == 2
+
+
+def test_submit_empty_tasks_skips_load_writes_zero_total():
+    store, bq = _store()
+    store.submit(job_id="x", endpoint="serp_google_organic", tasks=[])
+    # no task_log load for zero tasks
+    assert [t for t in bq.client.loaded_tables if str(t["table_ref"]).endswith("dfs_task_log")] == []
+    # one summary MERGE with total=0
+    merges = [c for c in bq.client.queries if "dfs_job_summary" in c["sql"]]
+    assert len(merges) == 1
+    assert _scalar_params(merges[0]["job_config"]).get("total") == 0
+
+
+# ---- resilience: retries ----
+
+class _FakeResult:
+    def __init__(self, df=None):
+        self._df = pd.DataFrame() if df is None else df
+
+    def result(self):
+        return self
+
+    def to_dataframe(self):
+        return self._df
+
+
+class _FlakyClient:
+    """Raises `exc` on the first `fail_times` query() calls, then succeeds."""
+
+    def __init__(self, fail_times, exc):
+        self.project = "data-hub-468216"
+        self._fail_times = fail_times
+        self._exc = exc
+        self.calls = 0
+
+    def query(self, sql, job_config=None):
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            raise self._exc
+        return _FakeResult()
+
+    def load_table_from_dataframe(self, df, ref, job_config=None):
+        return _FakeResult()
+
+
+class _FlakyBQ:
+    def __init__(self, fail_times, exc):
+        self.client = _FlakyClient(fail_times, exc)
+
+
+def _flaky_store(fail_times, exc, **kw):
+    bq = _FlakyBQ(fail_times, exc)
+    return TrackingStore(bq, retry_base_delay=0.0, _sleep=lambda *_: None, **kw), bq
+
+
+def test_retry_recovers_from_transient_error():
+    from google.api_core import exceptions as gexc
+    store, bq = _flaky_store(2, gexc.ServiceUnavailable("503 backend"))
+    store.completion_pct(job_id="x", endpoint="serp_google_organic")  # must not raise
+    assert bq.client.calls == 3  # 2 failures + 1 success
+
+
+def test_retry_raises_after_exhaustion():
+    from google.api_core import exceptions as gexc
+    import pytest
+    store, bq = _flaky_store(99, gexc.ServiceUnavailable("503"), max_retries=3)
+    with pytest.raises(gexc.ServiceUnavailable):
+        store.completion_pct(job_id="x", endpoint="serp_google_organic")
+    assert bq.client.calls == 3
+
+
+def test_non_retryable_error_raises_immediately():
+    import pytest
+    store, bq = _flaky_store(99, ValueError("bad sql"))
+    with pytest.raises(ValueError):
+        store.completion_pct(job_id="x", endpoint="serp_google_organic")
+    assert bq.client.calls == 1
+
+
+def test_serialize_conflict_message_is_retryable():
+    store, bq = _flaky_store(1, RuntimeError("Could not serialize access to table due to concurrent update"))
+    store.completion_pct(job_id="x", endpoint="serp_google_organic")  # must not raise
+    assert bq.client.calls == 2
