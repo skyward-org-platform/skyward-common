@@ -1,6 +1,7 @@
 """Tests for LLMSession wrapper."""
 
 from pydantic import BaseModel
+from skyward.llm import LLMResult
 
 
 class SampleResponse(BaseModel):
@@ -10,7 +11,20 @@ class SampleResponse(BaseModel):
 class FakeProvider:
     def __init__(self):
         self.calls = []
-        self.next_response = ("default response", 100, 50)
+        self._next_content = "default response"
+        self._next_input_tokens = 100
+        self._next_output_tokens = 50
+
+    @property
+    def next_response(self):
+        return (self._next_content, self._next_input_tokens, self._next_output_tokens)
+
+    @next_response.setter
+    def next_response(self, value):
+        content, in_tok, out_tok = value
+        self._next_content = content
+        self._next_input_tokens = in_tok
+        self._next_output_tokens = out_tok
 
     @property
     def name(self):
@@ -18,7 +32,11 @@ class FakeProvider:
 
     def call(self, messages, model, **kwargs):
         self.calls.append({"messages": list(messages), "model": model, **kwargs})
-        return self.next_response
+        return LLMResult(
+            content=self._next_content,
+            input_tokens=self._next_input_tokens,
+            output_tokens=self._next_output_tokens,
+        )
 
 
 class TestSessionBasics:

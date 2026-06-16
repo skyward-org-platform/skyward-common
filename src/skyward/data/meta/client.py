@@ -640,6 +640,170 @@ class MetaClient:
         )
 
     # ══════════════════════════════════════════════════════════════════════════
+    # Site competitors (meta.site_competitors) — directional, manual
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _normalize_priority(self, priority: str) -> str:
+        """Uppercase + validate a priority against VALID_PRIORITIES."""
+        priority = (priority or "NORMAL").strip().upper()
+        if priority not in self.VALID_PRIORITIES:
+            raise ValueError(
+                f"Invalid priority '{priority}'. Must be one of: {sorted(self.VALID_PRIORITIES)}"
+            )
+        return priority
+
+    def get_site_competitors(self, domain_id: int) -> pd.DataFrame:
+        """Competitor domains for a single site (forward direction)."""
+        return self.sb.query(
+            """
+            SELECT sc.competitor_domain_id, d.domain, d.domain_name, sc.priority, sc.notes
+            FROM meta.site_competitors sc
+            JOIN meta.domains d ON sc.competitor_domain_id = d.domain_id
+            WHERE sc.domain_id = %(domain_id)s
+            ORDER BY d.domain
+            """,
+            {"domain_id": domain_id},
+        )
+
+    def add_site_competitor(self, domain_id: int, competitor_domain_id: int,
+                            priority: str = "NORMAL", notes: Optional[str] = None) -> None:
+        """Add a directed site -> competitor relationship. Idempotent."""
+        if domain_id == competitor_domain_id:
+            raise ValueError("A site cannot be its own competitor")
+        priority = self._normalize_priority(priority)
+        self.sb.execute(
+            """
+            INSERT INTO meta.site_competitors (domain_id, competitor_domain_id, priority, notes)
+            VALUES (%(domain_id)s, %(competitor_domain_id)s, %(priority)s, %(notes)s)
+            ON CONFLICT (domain_id, competitor_domain_id) DO NOTHING
+            """,
+            {"domain_id": domain_id, "competitor_domain_id": competitor_domain_id,
+             "priority": priority, "notes": notes},
+        )
+
+    def get_sites_competing_with(self, competitor_domain_id: int) -> pd.DataFrame:
+        """Reverse lookup: which sites list this domain as a competitor."""
+        return self.sb.query(
+            """
+            SELECT sc.domain_id, d.domain, d.domain_name, sc.priority
+            FROM meta.site_competitors sc
+            JOIN meta.domains d ON sc.domain_id = d.domain_id
+            WHERE sc.competitor_domain_id = %(competitor_domain_id)s
+            ORDER BY d.domain
+            """,
+            {"competitor_domain_id": competitor_domain_id},
+        )
+
+    def add_site_competitors(self, domain_id: int, competitor_domain_ids: List[int],
+                             priority: str = "NORMAL") -> int:
+        """Bulk-add competitors for one site. Skips self-references and existing
+        rows (ON CONFLICT). Returns the number of non-self ids submitted."""
+        priority = self._normalize_priority(priority)
+        ids = [int(c) for c in competitor_domain_ids if int(c) != int(domain_id)]
+        if not ids:
+            return 0
+        self.sb.execute(
+            """
+            INSERT INTO meta.site_competitors (domain_id, competitor_domain_id, priority)
+            SELECT %(domain_id)s, cid, %(priority)s
+            FROM unnest(%(ids)s::bigint[]) AS cid
+            ON CONFLICT (domain_id, competitor_domain_id) DO NOTHING
+            """,
+            {"domain_id": domain_id, "priority": priority, "ids": ids},
+        )
+        return len(ids)
+
+    def remove_site_competitor(self, domain_id: int, competitor_domain_id: int) -> None:
+        """Remove a single directed site -> competitor relationship."""
+        self.sb.execute(
+            "DELETE FROM meta.site_competitors "
+            "WHERE domain_id = %(domain_id)s AND competitor_domain_id = %(competitor_domain_id)s",
+            {"domain_id": domain_id, "competitor_domain_id": competitor_domain_id},
+        )
+
+    def set_site_competitor_priority(self, domain_id: int, competitor_domain_id: int,
+                                     priority: str) -> None:
+        """Update the priority on an existing site -> competitor relationship."""
+        priority = self._normalize_priority(priority)
+        self.sb.execute(
+            "UPDATE meta.site_competitors SET priority = %(priority)s "
+            "WHERE domain_id = %(domain_id)s AND competitor_domain_id = %(competitor_domain_id)s",
+            {"priority": priority, "domain_id": domain_id,
+             "competitor_domain_id": competitor_domain_id},
+        )
+
+    def add_site_competitor_by_domain(self, site_domain: str, competitor_domain: str,
+                                      priority: str = "NORMAL") -> tuple[int, int]:
+        """Resolve (creating if needed) both domains, then link them. Returns
+        (site_domain_id, competitor_domain_id)."""
+        site_id = self.add_domains([site_domain])[0]["domain_id"]
+        comp_id = self.add_domains([competitor_domain])[0]["domain_id"]
+        self.add_site_competitor(site_id, comp_id, priority=priority)
+        return site_id, comp_id
+
+    def set_site_competitors(self, domain_id: int, competitor_domain_ids: List[int],
+                             priority: str = "NORMAL") -> None:
+        """Declaratively sync a site's competitor set: delete rows not in the
+        given list, then add any missing ones (existing rows are left as-is)."""
+        priority = self._normalize_priority(priority)
+        ids = [int(c) for c in competitor_domain_ids if int(c) != int(domain_id)]
+        self.sb.execute(
+            "DELETE FROM meta.site_competitors "
+            "WHERE domain_id = %(domain_id)s "
+            "AND NOT (competitor_domain_id = ANY(%(ids)s::bigint[]))",
+            {"domain_id": domain_id, "ids": ids},
+        )
+        if ids:
+            self.add_site_competitors(domain_id, ids, priority=priority)
+
+    def copy_site_competitors(self, from_domain_id: int, to_domain_id: int) -> int:
+        """Copy the competitor set (with priorities) from one site to another.
+        Skips self-references and existing rows. Returns rows inserted."""
+        rows = self.sb.execute(
+            """
+            INSERT INTO meta.site_competitors (domain_id, competitor_domain_id, priority)
+            SELECT %(to_id)s, sc.competitor_domain_id, sc.priority
+            FROM meta.site_competitors sc
+            WHERE sc.domain_id = %(from_id)s
+              AND sc.competitor_domain_id <> %(to_id)s
+            ON CONFLICT (domain_id, competitor_domain_id) DO NOTHING
+            RETURNING competitor_domain_id
+            """,
+            {"from_id": from_domain_id, "to_id": to_domain_id},
+        )
+        return len(rows or [])
+
+    def get_client_competitors(self, client_id: int) -> pd.DataFrame:
+        """All distinct competitor domains across the client's owned sites.
+
+        Bridge for consumers that previously read the client-level
+        is_competitor flag. Ownership is client_domains.is_competitor = FALSE.
+        """
+        return self.sb.query(
+            """
+            SELECT DISTINCT sc.competitor_domain_id, d.domain, d.domain_name
+            FROM meta.client_domains own
+            JOIN meta.site_competitors sc ON sc.domain_id = own.domain_id
+            JOIN meta.domains d ON d.domain_id = sc.competitor_domain_id
+            WHERE own.client_id = %(client_id)s
+              AND own.is_competitor = FALSE
+            ORDER BY d.domain
+            """,
+            {"client_id": client_id},
+        )
+
+    def set_client_domain_competitor(self, client_id: int, domain_id: int,
+                                     is_competitor: bool) -> None:
+        """Flip the legacy client_domains.is_competitor flag on an existing link
+        without raw SQL. (Legacy flag is retained during the site_competitors
+        transition; see docs/superpowers/specs/2026-06-15-site-competitors-design.md.)"""
+        self.sb.execute(
+            "UPDATE meta.client_domains SET is_competitor = %(is_competitor)s "
+            "WHERE client_id = %(client_id)s AND domain_id = %(domain_id)s",
+            {"is_competitor": is_competitor, "client_id": client_id, "domain_id": domain_id},
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # Dataset catalog (source of truth for dataset metadata)
     # ══════════════════════════════════════════════════════════════════════════
 

@@ -2,6 +2,7 @@
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
 from skyward.cli import cli
+from skyward.llm import LLMResult
 
 
 def test_llm_call_command_exists():
@@ -47,7 +48,7 @@ def test_llm_chat_has_all_options():
 def test_llm_call_loads_dotenv(mock_fmt, mock_cost, mock_get_provider, mock_dotenv):
     """CLI should call load_dotenv so .env API keys are available."""
     fake_provider = MagicMock()
-    fake_provider.call.return_value = ("ok", 1, 1)
+    fake_provider.call.return_value = LLMResult(content="ok", input_tokens=1, output_tokens=1)
     mock_get_provider.return_value = fake_provider
 
     runner = CliRunner()
@@ -60,7 +61,7 @@ def test_llm_call_loads_dotenv(mock_fmt, mock_cost, mock_get_provider, mock_dote
 @patch("skyward.llm.format_cost", return_value="$0.0042")
 def test_llm_call_invokes_provider(mock_format, mock_cost, mock_get_provider):
     fake_provider = MagicMock()
-    fake_provider.call.return_value = ("Hello world!", 10, 20)
+    fake_provider.call.return_value = LLMResult(content="Hello world!", input_tokens=10, output_tokens=20)
     mock_get_provider.return_value = fake_provider
 
     runner = CliRunner()

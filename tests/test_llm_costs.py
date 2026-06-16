@@ -237,6 +237,28 @@ class TestSummarizeCosts:
         assert result["verify_cost"] == pytest.approx(verify_expected)
 
 
+class TestCacheAwareCost:
+
+    def test_cache_read_tokens_add_cost_at_discount(self):
+        """cache_read_tokens should add cost above base, but at a discount vs full input rate."""
+        from skyward.llm.costs import ANTHROPIC_COSTS, CACHE_READ_MULTIPLIER
+        model = "claude-sonnet-4-20250514"
+        provider = "anthropic"
+        # Base cost: 1000 input tokens, 0 output, 0 cache
+        base_cost = calculate_cost(1000, 0, model, provider)
+        # Cost with 1000 cache-read tokens on top
+        with_cache = calculate_cost(1000, 0, model, provider, cache_read_tokens=1000)
+        # Cache reads are cheaper than regular input (0.1x for Anthropic)
+        input_rate = ANTHROPIC_COSTS[model][0]
+        cache_rate = input_rate * CACHE_READ_MULTIPLIER[provider]
+        expected_cache_surcharge = 1000 * cache_rate / 1_000_000
+        assert with_cache == pytest.approx(base_cost + expected_cache_surcharge)
+        # Sanity: cache reads are strictly cheaper than the same number of regular input tokens
+        full_input_surcharge = 1000 * input_rate / 1_000_000
+        assert expected_cache_surcharge < full_input_surcharge
+        assert with_cache > base_cost
+
+
 class TestAnthropicAndGrokCosts:
 
     def test_anthropic_sonnet_pricing(self):
@@ -264,3 +286,58 @@ class TestAnthropicAndGrokCosts:
             cost = calculate_cost(1_000_000, 0, model, "grok")
             input_price = GROK_COSTS[model][0]
             assert cost == pytest.approx(input_price)
+
+
+class TestGpt5FamilyPricing:
+    """Regression for ClickUp 86bac83u0 — gpt-5 family was using gpt-4o-mini rates
+    and undercounting ~3x. Rates verified vs OpenAI/Anthropic pricing Jun 2026."""
+
+    def test_gpt5_mini_not_gpt4o_mini_rates(self):
+        # Acceptance #1: ~$39.51, NOT the old-bug $12.96 (gpt-4o-mini rates)
+        cost = calculate_cost(14_770_070, 17_912_485, "gpt-5-mini-2025-08-07", "openai")
+        assert cost == pytest.approx(39.51, abs=0.02)
+        assert cost > 30
+
+    def test_date_suffix_stripped_to_family_rate(self):
+        suffixed = calculate_cost(1_000_000, 0, "gpt-5-mini-2025-08-07", "openai")
+        family = calculate_cost(1_000_000, 0, "gpt-5-mini", "openai")
+        assert suffixed == family == pytest.approx(0.25)
+
+    def test_gpt5_family_rates(self):
+        assert calculate_cost(1_000_000, 1_000_000, "gpt-5", "openai") == pytest.approx(11.25)
+        assert calculate_cost(1_000_000, 1_000_000, "gpt-5-mini", "openai") == pytest.approx(2.25)
+        assert calculate_cost(1_000_000, 1_000_000, "gpt-5-nano", "openai") == pytest.approx(0.45)
+
+    def test_gpt4o_family_rates(self):
+        assert calculate_cost(1_000_000, 1_000_000, "gpt-4o", "openai") == pytest.approx(12.50)
+        assert calculate_cost(1_000_000, 1_000_000, "gpt-4o-mini", "openai") == pytest.approx(0.75)
+
+    def test_openai_cached_input_subtracted_and_discounted(self):
+        # input_tokens INCLUDES cached (OpenAI). Cached billed at 10% for gpt-5-mini.
+        # ~$67.60, matching OpenAI billing line items.
+        cost = calculate_cost(
+            23_820_972, 32_926_818, "gpt-5-mini-2025-08-07", "openai",
+            cache_read_tokens=18_713_984,
+        )
+        assert cost == pytest.approx(67.60, abs=0.05)
+
+    def test_gpt5_cached_cheaper_than_uncached(self):
+        uncached = calculate_cost(2_000_000, 0, "gpt-5-mini", "openai")
+        cached = calculate_cost(2_000_000, 0, "gpt-5-mini", "openai", cache_read_tokens=1_000_000)
+        assert cached < uncached
+
+    def test_current_anthropic_models_priced(self):
+        for model, (inp, out) in [
+            ("claude-opus-4-8", (5.0, 25.0)),
+            ("claude-sonnet-4-6", (3.0, 15.0)),
+            ("claude-haiku-4-5-20251001", (1.0, 5.0)),
+        ]:
+            assert calculate_cost(1_000_000, 1_000_000, model, "anthropic") == pytest.approx(inp + out)
+
+    def test_anthropic_cache_read_and_write(self):
+        # sonnet-4-6: input 3, cache read 0.30 (0.1x), cache write 3.75 (1.25x)
+        cost = calculate_cost(
+            1_000_000, 0, "claude-sonnet-4-6", "anthropic",
+            cache_read_tokens=1_000_000, cache_write_tokens=1_000_000,
+        )
+        assert cost == pytest.approx(3.0 + 0.30 + 3.75)

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from pydantic import BaseModel
 
 from skyward.llm.providers import LLMProvider
+from skyward.llm import LLMResult
 
 
 class SampleResponse(BaseModel):
@@ -34,13 +35,13 @@ class TestLLMProviderInterface:
             def name(self):
                 return "complete"
             def call(self, messages, model, **kwargs):
-                return ("hello", 10, 5)
+                return LLMResult(content="hello", input_tokens=10, output_tokens=5)
         provider = Complete()
         assert provider.name == "complete"
-        result, in_tok, out_tok = provider.call([], "test-model")
-        assert result == "hello"
-        assert in_tok == 10
-        assert out_tok == 5
+        r = provider.call([], "test-model")
+        assert r.content == "hello"
+        assert r.input_tokens == 10
+        assert r.output_tokens == 5
 
 
 class MockOpenAIUsage:
@@ -78,28 +79,28 @@ class TestOpenAIProvider:
         provider, mock_client = self._make_provider()
         usage = MockOpenAIUsage(100, 50)
         mock_client.chat.completions.create.return_value = MockChatCompletion("hello world", usage)
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             model="gpt-4o",
         )
-        assert result == "hello world"
-        assert in_tok == 100
-        assert out_tok == 50
+        assert r.content == "hello world"
+        assert r.input_tokens == 100
+        assert r.output_tokens == 50
 
     def test_call_structured_returns_pydantic_model(self):
         provider, mock_client = self._make_provider()
         parsed = SampleResponse(answer="yes", confidence=0.95)
         usage = MockOpenAIUsage(200, 100)
         mock_client.responses.parse.return_value = MockResponsesParsed(parsed, usage)
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "question"}],
             model="gpt-4o",
             response_model=SampleResponse,
         )
-        assert isinstance(result, SampleResponse)
-        assert result.answer == "yes"
-        assert in_tok == 200
-        assert out_tok == 100
+        assert isinstance(r.content, SampleResponse)
+        assert r.content.answer == "yes"
+        assert r.input_tokens == 200
+        assert r.output_tokens == 100
 
     def test_provider_kwargs_forwarded_to_text(self):
         provider, mock_client = self._make_provider()
@@ -141,6 +142,33 @@ class TestOpenAIProvider:
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         assert "temperature" not in call_kwargs
 
+    def test_reasoning_model_uses_max_completion_tokens(self):
+        """Reasoning models (gpt-5*/o1*/o3*) require max_completion_tokens."""
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        mock_client.chat.completions.create.return_value = MockChatCompletion("ok", usage)
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-5",
+            max_tokens=50,
+        )
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs.get("max_completion_tokens") == 50
+        assert "max_tokens" not in call_kwargs
+
+    def test_non_reasoning_model_uses_max_tokens(self):
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        mock_client.chat.completions.create.return_value = MockChatCompletion("ok", usage)
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-4o",
+            max_tokens=50,
+        )
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs.get("max_tokens") == 50
+        assert "max_completion_tokens" not in call_kwargs
+
     def test_init_with_api_key_creates_client(self):
         from skyward.llm.providers import OpenAIProvider
         with patch("skyward.llm.providers.OpenAI") as mock_openai_cls:
@@ -169,13 +197,13 @@ class TestOpenAIProvider:
             ConnectionError("transient"),
             MockChatCompletion("recovered", usage),
         ]
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             model="gpt-4o",
             max_retries=2,
             retry_delay=0,
         )
-        assert result == "recovered"
+        assert r.content == "recovered"
         assert mock_client.chat.completions.create.call_count == 2
 
     def test_raises_after_max_retries_exhausted(self):
@@ -220,13 +248,13 @@ class TestGeminiProvider:
             mock_client.models.generate_content.return_value = self._make_mock_response(
                 text="hello world", prompt_tokens=100, completion_tokens=50,
             )
-            result, in_tok, out_tok = provider.call(
+            r = provider.call(
                 messages=[{"role": "user", "content": "hi"}],
                 model="gemini-2.0-flash",
             )
-            assert result == "hello world"
-            assert in_tok == 100
-            assert out_tok == 50
+            assert r.content == "hello world"
+            assert r.input_tokens == 100
+            assert r.output_tokens == 50
 
     def test_call_structured_returns_pydantic_model(self):
         import json
@@ -236,16 +264,16 @@ class TestGeminiProvider:
             mock_client.models.generate_content.return_value = self._make_mock_response(
                 text=response_json, prompt_tokens=200, completion_tokens=100,
             )
-            result, in_tok, out_tok = provider.call(
+            r = provider.call(
                 messages=[{"role": "user", "content": "question"}],
                 model="gemini-2.0-flash",
                 response_model=SampleResponse,
             )
-            assert isinstance(result, SampleResponse)
-            assert result.answer == "yes"
-            assert result.confidence == 0.95
-            assert in_tok == 200
-            assert out_tok == 100
+            assert isinstance(r.content, SampleResponse)
+            assert r.content.answer == "yes"
+            assert r.content.confidence == 0.95
+            assert r.input_tokens == 200
+            assert r.output_tokens == 100
 
     def test_client_created_once_in_init(self):
         with patch("skyward.llm.providers.genai") as mock_genai:
@@ -345,13 +373,13 @@ class TestGeminiProvider:
                 ConnectionError("transient"),
                 self._make_mock_response(text="recovered"),
             ]
-            result, in_tok, out_tok = provider.call(
+            r = provider.call(
                 messages=[{"role": "user", "content": "hi"}],
                 model="gemini-2.0-flash",
                 max_retries=2,
                 retry_delay=0,
             )
-            assert result == "recovered"
+            assert r.content == "recovered"
             assert mock_client.models.generate_content.call_count == 2
 
     def test_raises_after_max_retries_exhausted(self):
@@ -395,13 +423,13 @@ class TestPerplexityProvider:
         provider, mock_client = self._make_provider()
         usage = MockOpenAIUsage(100, 50)
         mock_client.chat.completions.create.return_value = MockChatCompletion("hello world", usage)
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             model="sonar",
         )
-        assert result == "hello world"
-        assert in_tok == 100
-        assert out_tok == 50
+        assert r.content == "hello world"
+        assert r.input_tokens == 100
+        assert r.output_tokens == 50
 
     def test_call_structured_returns_pydantic_model(self):
         import json
@@ -409,7 +437,7 @@ class TestPerplexityProvider:
         usage = MockOpenAIUsage(200, 100)
         response_json = json.dumps({"answer": "yes", "confidence": 0.95})
         mock_client.chat.completions.create.return_value = MockChatCompletion(response_json, usage)
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[
                 {"role": "system", "content": "Be helpful."},
                 {"role": "user", "content": "question"},
@@ -417,11 +445,11 @@ class TestPerplexityProvider:
             model="sonar",
             response_model=SampleResponse,
         )
-        assert isinstance(result, SampleResponse)
-        assert result.answer == "yes"
-        assert result.confidence == 0.95
-        assert in_tok == 200
-        assert out_tok == 100
+        assert isinstance(r.content, SampleResponse)
+        assert r.content.answer == "yes"
+        assert r.content.confidence == 0.95
+        assert r.input_tokens == 200
+        assert r.output_tokens == 100
 
     def test_tools_kwarg_filtered_out(self):
         provider, mock_client = self._make_provider()
@@ -459,13 +487,13 @@ class TestPerplexityProvider:
             ConnectionError("transient"),
             MockChatCompletion("recovered", usage),
         ]
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             model="sonar",
             max_retries=2,
             retry_delay=0,
         )
-        assert result == "recovered"
+        assert r.content == "recovered"
         assert mock_client.chat.completions.create.call_count == 2
 
     def test_raises_after_max_retries_exhausted(self):
@@ -496,12 +524,12 @@ class TestPerplexityProvider:
         usage = MockOpenAIUsage(10, 5)
         response_json = json.dumps({"answer": "4", "confidence": 1.0})
         mock_client.chat.completions.create.return_value = MockChatCompletion(response_json, usage)
-        result, _, _ = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "What is 2+2?"}],
             model="sonar",
             response_model=SampleResponse,
         )
-        assert isinstance(result, SampleResponse)
+        assert isinstance(r.content, SampleResponse)
         # Verify a system message was prepended with the schema
         sent_msgs = mock_client.chat.completions.create.call_args[1]["messages"]
         assert sent_msgs[0]["role"] == "system"
@@ -518,6 +546,20 @@ class TestAnthropicProvider:
             provider = AnthropicProvider(api_key="sk-ant-test")
         return provider, mock_client
 
+    def _make_text_block(self, text):
+        """Create a mock Anthropic text block with .type and .text."""
+        block = MagicMock()
+        block.type = "text"
+        block.text = text
+        return block
+
+    def _make_tool_use_block(self, input_data):
+        """Create a mock Anthropic tool_use block with .type and .input."""
+        block = MagicMock()
+        block.type = "tool_use"
+        block.input = input_data
+        return block
+
     def test_name_property(self):
         provider, _ = self._make_provider()
         assert provider.name == "anthropic"
@@ -525,22 +567,22 @@ class TestAnthropicProvider:
     def test_call_text_returns_string(self):
         provider, mock_client = self._make_provider()
         response = MagicMock()
-        response.content = [MagicMock(text="hello")]
+        response.content = [self._make_text_block("hello")]
         response.usage.input_tokens = 120
         response.usage.output_tokens = 40
         mock_client.messages.create.return_value = response
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             model="claude-sonnet-4-20250514",
         )
-        assert result == "hello"
-        assert in_tok == 120
-        assert out_tok == 40
+        assert r.content == "hello"
+        assert r.input_tokens == 120
+        assert r.output_tokens == 40
 
     def test_call_text_with_system_message(self):
         provider, mock_client = self._make_provider()
         response = MagicMock()
-        response.content = [MagicMock(text="hi there")]
+        response.content = [self._make_text_block("hi there")]
         response.usage.input_tokens = 50
         response.usage.output_tokens = 10
         mock_client.messages.create.return_value = response
@@ -560,29 +602,29 @@ class TestAnthropicProvider:
     def test_call_structured_returns_pydantic_model(self):
         provider, mock_client = self._make_provider()
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(type="tool_use", input={"answer": "yes", "confidence": 0.95})]
+        mock_response.content = [self._make_tool_use_block({"answer": "yes", "confidence": 0.95})]
         mock_response.usage.input_tokens = 200
         mock_response.usage.output_tokens = 100
         mock_client.messages.create.return_value = mock_response
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "question"}],
             model="claude-sonnet-4-20250514",
             response_model=SampleResponse,
         )
-        assert isinstance(result, SampleResponse)
-        assert result.answer == "yes"
-        assert in_tok == 200
-        assert out_tok == 100
+        assert isinstance(r.content, SampleResponse)
+        assert r.content.answer == "yes"
+        assert r.input_tokens == 200
+        assert r.output_tokens == 100
 
     def test_call_structured_uses_tools(self):
         """Anthropic structured output uses tools with tool_choice, not messages.parse."""
         provider, mock_client = self._make_provider()
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(type="tool_use", input={"answer": "yes", "confidence": 0.95})]
+        mock_response.content = [self._make_tool_use_block({"answer": "yes", "confidence": 0.95})]
         mock_response.usage.input_tokens = 200
         mock_response.usage.output_tokens = 100
         mock_client.messages.create.return_value = mock_response
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "question"}],
             model="claude-sonnet-4-20250514",
             response_model=SampleResponse,
@@ -590,13 +632,13 @@ class TestAnthropicProvider:
         call_kwargs = mock_client.messages.create.call_args[1]
         assert "tools" in call_kwargs, f"Expected tools, got keys: {list(call_kwargs.keys())}"
         assert call_kwargs["tool_choice"]["type"] == "tool"
-        assert isinstance(result, SampleResponse)
-        assert result.answer == "yes"
+        assert isinstance(r.content, SampleResponse)
+        assert r.content.answer == "yes"
 
     def test_provider_kwargs_forwarded(self):
         provider, mock_client = self._make_provider()
         response = MagicMock()
-        response.content = [MagicMock(text="ok")]
+        response.content = [self._make_text_block("ok")]
         response.usage.input_tokens = 10
         response.usage.output_tokens = 5
         mock_client.messages.create.return_value = response
@@ -625,7 +667,7 @@ class TestAnthropicProvider:
     def test_max_tokens_defaults_to_4096(self):
         provider, mock_client = self._make_provider()
         response = MagicMock()
-        response.content = [MagicMock(text="ok")]
+        response.content = [self._make_text_block("ok")]
         response.usage.input_tokens = 10
         response.usage.output_tokens = 5
         mock_client.messages.create.return_value = response
@@ -639,20 +681,20 @@ class TestAnthropicProvider:
     def test_retries_on_transient_error(self):
         provider, mock_client = self._make_provider()
         response = MagicMock()
-        response.content = [MagicMock(text="recovered")]
+        response.content = [self._make_text_block("recovered")]
         response.usage.input_tokens = 10
         response.usage.output_tokens = 5
         mock_client.messages.create.side_effect = [
             ConnectionError("transient"),
             response,
         ]
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             model="claude-sonnet-4-20250514",
             max_retries=2,
             retry_delay=0,
         )
-        assert result == "recovered"
+        assert r.content == "recovered"
         assert mock_client.messages.create.call_count == 2
 
     def test_raises_after_max_retries_exhausted(self):
@@ -665,6 +707,68 @@ class TestAnthropicProvider:
                 max_retries=2,
                 retry_delay=0,
             )
+
+    def test_anthropic_joins_multiple_text_blocks(self):
+        """Defect 1 fix: all text blocks are joined, not just content[0].text."""
+        provider, mock_client = self._make_provider()
+        response = MagicMock()
+        block1 = MagicMock()
+        block1.type = "text"
+        block1.text = "Hello "
+        block2 = MagicMock()
+        block2.type = "text"
+        block2.text = "world"
+        response.content = [block1, block2]
+        response.usage.input_tokens = 10
+        response.usage.output_tokens = 5
+        mock_client.messages.create.return_value = response
+        r = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="claude-sonnet-4-20250514",
+        )
+        assert r.content == "Hello world"
+
+    def test_anthropic_finds_tool_use_block_not_at_index_0(self):
+        """Defect 2 fix: tool_use block is found by type, not assumed at index 0."""
+        provider, mock_client = self._make_provider()
+        mock_response = MagicMock()
+        # A non-text block first (e.g., thinking block), then the tool_use block
+        thinking_block = MagicMock()
+        thinking_block.type = "thinking"
+        thinking_block.thinking = "let me reason about this"
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.input = {"answer": "found_it", "confidence": 0.99}
+        mock_response.content = [thinking_block, tool_block]
+        mock_response.usage.input_tokens = 50
+        mock_response.usage.output_tokens = 20
+        mock_client.messages.create.return_value = mock_response
+        r = provider.call(
+            messages=[{"role": "user", "content": "question"}],
+            model="claude-sonnet-4-20250514",
+            response_model=SampleResponse,
+        )
+        assert isinstance(r.content, SampleResponse)
+        assert r.content.answer == "found_it"
+        assert r.content.confidence == 0.99
+
+    def test_anthropic_captures_thinking_as_reasoning_text(self):
+        """Extended-thinking blocks populate reasoning_text; content stays text."""
+        provider, mock_client = self._make_provider()
+        thinking = MagicMock()
+        thinking.type = "thinking"
+        thinking.thinking = "23*17 = 391."
+        text = MagicMock()
+        text.type = "text"
+        text.text = "391"
+        resp = MagicMock()
+        resp.content = [thinking, text]
+        resp.usage.input_tokens = 10
+        resp.usage.output_tokens = 5
+        mock_client.messages.create.return_value = resp
+        r = provider.call([{"role": "user", "content": "23*17?"}], "claude-sonnet-4-6")
+        assert r.content == "391"
+        assert r.reasoning_text == "23*17 = 391."
 
 
 class TestGrokProvider:
@@ -685,13 +789,13 @@ class TestGrokProvider:
         provider, mock_client = self._make_provider()
         usage = MockOpenAIUsage(100, 50)
         mock_client.chat.completions.create.return_value = MockChatCompletion("hello world", usage)
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             model="grok-3",
         )
-        assert result == "hello world"
-        assert in_tok == 100
-        assert out_tok == 50
+        assert r.content == "hello world"
+        assert r.input_tokens == 100
+        assert r.output_tokens == 50
 
     def test_call_structured_returns_pydantic_model(self):
         import json
@@ -699,7 +803,7 @@ class TestGrokProvider:
         usage = MockOpenAIUsage(200, 100)
         response_json = json.dumps({"answer": "yes", "confidence": 0.95})
         mock_client.chat.completions.create.return_value = MockChatCompletion(response_json, usage)
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[
                 {"role": "system", "content": "Be helpful."},
                 {"role": "user", "content": "question"},
@@ -707,11 +811,11 @@ class TestGrokProvider:
             model="grok-3",
             response_model=SampleResponse,
         )
-        assert isinstance(result, SampleResponse)
-        assert result.answer == "yes"
-        assert result.confidence == 0.95
-        assert in_tok == 200
-        assert out_tok == 100
+        assert isinstance(r.content, SampleResponse)
+        assert r.content.answer == "yes"
+        assert r.content.confidence == 0.95
+        assert r.input_tokens == 200
+        assert r.output_tokens == 100
 
     def test_structured_injects_json_schema_into_system(self):
         """Grok should inject JSON schema into system message for structured output."""
@@ -781,13 +885,13 @@ class TestGrokProvider:
             ConnectionError("transient"),
             MockChatCompletion("recovered", usage),
         ]
-        result, in_tok, out_tok = provider.call(
+        r = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             model="grok-3",
             max_retries=2,
             retry_delay=0,
         )
-        assert result == "recovered"
+        assert r.content == "recovered"
         assert mock_client.chat.completions.create.call_count == 2
 
     def test_raises_after_max_retries_exhausted(self):
@@ -893,12 +997,12 @@ class TestBackwardsCompatibility:
         usage = MockOpenAIUsage(100, 50)
         mock_client.responses.parse.return_value = MockResponsesParsed(parsed, usage)
 
-        result, in_tok, out_tok = provider.call_structured(
+        r = provider.call_structured(
             messages=[{"role": "user", "content": "q"}],
             response_model=SampleResponse,
             model="gpt-4o",
         )
-        assert isinstance(result, SampleResponse)
+        assert isinstance(r.content, SampleResponse)
 
     def test_call_text_delegates_to_call(self):
         from skyward.llm.providers import OpenAIProvider
@@ -908,11 +1012,11 @@ class TestBackwardsCompatibility:
         usage = MockOpenAIUsage(100, 50)
         mock_client.chat.completions.create.return_value = MockChatCompletion("hello", usage)
 
-        result, in_tok, out_tok = provider.call_text(
+        r = provider.call_text(
             messages=[{"role": "user", "content": "hi"}],
             model="gpt-4o",
         )
-        assert result == "hello"
+        assert r.content == "hello"
 
 
 class TestLLMExports:

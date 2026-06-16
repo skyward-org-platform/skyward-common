@@ -3,6 +3,8 @@
 from skyward.llm.providers import (
     # Base class
     LLMProvider,
+    # Result object
+    LLMResult,
     # Providers
     OpenAIProvider,
     GeminiProvider,
@@ -41,6 +43,7 @@ from skyward.llm.costs import (
 __all__ = [
     # Providers
     "LLMProvider",
+    "LLMResult",
     "OpenAIProvider",
     "GeminiProvider",
     "PerplexityProvider",

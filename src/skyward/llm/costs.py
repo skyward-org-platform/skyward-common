@@ -4,6 +4,7 @@ Token cost calculators for various LLM providers.
 Costs are in USD per million tokens, updated December 2024.
 """
 
+import re
 from typing import Dict, Tuple
 
 
@@ -16,9 +17,9 @@ OPENAI_COSTS: Dict[str, Tuple[float, float]] = {
     "gpt-4.5-preview": (75.00, 150.00),
     "gpt-4-turbo": (10.00, 30.00),
     "gpt-3.5-turbo": (0.50, 1.50),
-    # GPT-5 family
+    # GPT-5 family (rates verified vs developers.openai.com/api/docs/pricing, Jun 2026)
     "gpt-5": (1.25, 10.00),
-    "gpt-5-mini": (0.50, 2.00),
+    "gpt-5-mini": (0.25, 2.00),   # was wrongly 0.50 input — undercounted/overcounted spend
     "gpt-5-nano": (0.05, 0.40),
     "gpt-5.1": (1.25, 10.00),
     "gpt-5.2": (1.75, 14.00),
@@ -35,8 +36,14 @@ GEMINI_COSTS: Dict[str, Tuple[float, float]] = {
     "gemini-3-pro-preview": (2.00, 12.00),
 }
 
-# Anthropic pricing (per 1M tokens)
+# Anthropic pricing (per 1M tokens) — verified vs platform.claude.com/docs pricing, Jun 2026
 ANTHROPIC_COSTS: Dict[str, Tuple[float, float]] = {
+    # Current models
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-sonnet-4-5": (3.00, 15.00),
+    "claude-haiku-4-5-20251001": (1.00, 5.00),
+    # Legacy / retired (kept for historical cost calc of old llm_log rows)
     "claude-opus-4-20250514": (15.00, 75.00),
     "claude-sonnet-4-20250514": (3.00, 15.00),
     "claude-haiku-3-5-20241022": (0.80, 4.00),
@@ -57,49 +64,104 @@ PERPLEXITY_COSTS: Dict[str, Tuple[float, float]] = {
 }
 
 
+# Explicit per-model cached-input (cache-read) rates per 1M tokens, used where the
+# discount isn't a single provider-wide multiplier. Verified Jun 2026:
+#   OpenAI gpt-5 family bills cache reads at 10% of input; gpt-4o family at 50%.
+#   Anthropic cache hits = 10% of input.
+CACHED_INPUT_COSTS: Dict[str, float] = {
+    # OpenAI
+    "gpt-5": 0.125, "gpt-5-mini": 0.025, "gpt-5-nano": 0.005,
+    "gpt-4o": 1.25, "gpt-4o-mini": 0.075,
+    # Anthropic (cache read = 0.1x input)
+    "claude-opus-4-8": 0.50, "claude-sonnet-4-6": 0.30, "claude-sonnet-4-5": 0.30,
+    "claude-haiku-4-5-20251001": 0.10,
+}
+
+# Fallback cache-read discount (fraction of input rate) when a model is not in
+# CACHED_INPUT_COSTS, plus the cache-write (creation) multiplier, per provider.
+CACHE_READ_MULTIPLIER: Dict[str, float] = {
+    "anthropic": 0.1, "openai": 0.5, "gemini": 0.25, "grok": 0.25, "perplexity": 1.0,
+}
+CACHE_WRITE_MULTIPLIER: Dict[str, float] = {  # Anthropic 5m cache write = 1.25x input
+    "anthropic": 1.25, "openai": 1.0, "gemini": 1.0, "grok": 1.0, "perplexity": 1.0,
+}
+
+# Providers whose reported input_tokens INCLUDE cached tokens — for these, cache
+# reads are subtracted from input so they aren't billed twice. Anthropic reports
+# cached tokens separately, so it is NOT in this set.
+_INPUT_INCLUDES_CACHE = {"openai", "gemini", "perplexity", "grok"}
+
+_PROVIDER_TABLES = {
+    "openai": (OPENAI_COSTS, (2.50, 10.00)),
+    "gemini": (GEMINI_COSTS, (0.30, 2.50)),
+    "perplexity": (PERPLEXITY_COSTS, (1.00, 1.00)),
+    "anthropic": (ANTHROPIC_COSTS, (3.00, 15.00)),
+    "grok": (GROK_COSTS, (3.00, 15.00)),
+}
+
+_MODEL_DATE_SUFFIX = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+
+def _strip_model_suffix(model: str) -> str:
+    """Strip a trailing -YYYY-MM-DD date suffix (e.g. gpt-5-mini-2025-08-07 -> gpt-5-mini)."""
+    return _MODEL_DATE_SUFFIX.sub("", model or "")
+
+
 def calculate_cost(
     input_tokens: int,
     output_tokens: int,
     model: str,
     provider: str = "openai",
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> float:
     """
-    Calculate the cost in USD for a given number of tokens.
+    Calculate the cost in USD for a call.
 
     Parameters
     ----------
     input_tokens : int
-        Number of input tokens
+        Provider-reported prompt token count. For OpenAI/Gemini/Perplexity/Grok
+        this INCLUDES cached tokens (so cache reads are subtracted before billing
+        the standard input rate). For Anthropic, cached tokens are reported
+        separately and input_tokens is billed in full.
     output_tokens : int
-        Number of output tokens
+        Output tokens.
     model : str
-        Model name
+        Model id; a trailing date suffix (``-YYYY-MM-DD``) is matched to its family.
     provider : str
-        Provider name: "openai", "gemini", or "perplexity"
+        "openai", "gemini", "perplexity", "anthropic", or "grok".
+    cache_read_tokens : int
+        Prompt-cache read (hit) tokens, billed at the model's cached-input rate.
+    cache_write_tokens : int
+        Prompt-cache write/creation tokens (Anthropic), billed at the write rate.
 
     Returns
     -------
     float
-        Cost in USD
+        Cost in USD.
     """
-    if provider == "openai":
-        costs = OPENAI_COSTS.get(model, (2.50, 10.00))  # Default to gpt-4o
-    elif provider == "gemini":
-        costs = GEMINI_COSTS.get(model, (0.30, 2.50))  # Default to 2.5-flash
-    elif provider == "perplexity":
-        costs = PERPLEXITY_COSTS.get(model, (1.00, 1.00))  # Default to sonar
-    elif provider == "anthropic":
-        costs = ANTHROPIC_COSTS.get(model, (3.00, 15.00))  # Default to sonnet
-    elif provider == "grok":
-        costs = GROK_COSTS.get(model, (3.00, 15.00))  # Default to grok-3
-    else:
-        # Unknown provider, use conservative estimate
-        costs = (2.50, 10.00)
+    base = _strip_model_suffix(model)
+    table, defaults = _PROVIDER_TABLES.get(provider, (None, (2.50, 10.00)))
+    input_cost, output_cost = table.get(base, defaults) if table is not None else defaults
 
-    input_cost, output_cost = costs
-    total_cost = (input_tokens * input_cost / 1_000_000) + (
+    # cached-input (read) rate per 1M tokens
+    cache_read_cost = CACHED_INPUT_COSTS.get(
+        base, input_cost * CACHE_READ_MULTIPLIER.get(provider, 1.0)
+    )
+
+    billable_input = input_tokens
+    if provider in _INPUT_INCLUDES_CACHE and cache_read_tokens:
+        billable_input = max(0, input_tokens - cache_read_tokens)
+
+    total_cost = (billable_input * input_cost / 1_000_000) + (
         output_tokens * output_cost / 1_000_000
     )
+    if cache_read_tokens:
+        total_cost += cache_read_tokens * cache_read_cost / 1_000_000
+    if cache_write_tokens:
+        write_cost = input_cost * CACHE_WRITE_MULTIPLIER.get(provider, 1.0)
+        total_cost += cache_write_tokens * write_cost / 1_000_000
     return total_cost
 
 

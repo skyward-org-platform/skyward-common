@@ -38,11 +38,12 @@ class LLMSession:
         if self.system_prompt:
             call_messages.append({"role": "system", "content": self.system_prompt})
         call_messages.extend(self._messages)
-        result, in_tok, out_tok = self.provider.call(
+        llm_result = self.provider.call(
             call_messages, model, **kwargs
         )
-        self._total_input_tokens += in_tok
-        self._total_output_tokens += out_tok
+        result = llm_result.content
+        self._total_input_tokens += llm_result.input_tokens
+        self._total_output_tokens += llm_result.output_tokens
         if isinstance(result, BaseModel):
             assistant_content = result.model_dump_json()
         else:
@@ -79,7 +80,7 @@ class LLMSession:
         conversation_text = "\n".join(
             f"{msg['role'].upper()}: {msg['content']}" for msg in self._messages
         )
-        summary_result, _, _ = summarizer.call(
+        summary_result = summarizer.call(
             messages=[
                 {"role": "system", "content": (
                     "Summarize the following conversation concisely. "
@@ -89,7 +90,7 @@ class LLMSession:
                 {"role": "user", "content": conversation_text},
             ],
             model=self._summarizer_model,
-        )
+        ).content
         self._messages[:] = [
             {"role": "assistant", "content": f"[Summary of prior conversation]\n{summary_result}"}
         ]
