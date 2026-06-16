@@ -60,7 +60,7 @@ cfg = load_config()
 - ALWAYS use `BigQueryClient` (`skyward.data.bigquery`) for all data warehouse operations.
 - ALWAYS log uploads via `bq_client.log_upload_event()` after successful data insertion.
 - ALWAYS use `skyward.llm` providers for LLM calls — never raw API clients directly.
-- ALWAYS return `(result, input_tokens, output_tokens)` from LLM calls for token tracking.
+- LLM calls return an `LLMResult`; read `.content` for the output and `.input_tokens`/`.output_tokens` (plus `.cache_read_tokens`/`.cache_write_tokens`) for token/cost tracking.
 - ALWAYS use batch reads and writes with BigQuery. NEVER issue individual DML statements per row in a loop.
 
 ## LLM Call Pattern
@@ -71,7 +71,7 @@ All LLM calls must use the provider abstraction with retry logic and structured 
 from skyward.llm import get_provider
 
 provider = get_provider("openai")  # reads OPENAI_API_KEY from env
-result, in_tokens, out_tokens = provider.call(
+result = provider.call(
     messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -79,9 +79,18 @@ result, in_tokens, out_tokens = provider.call(
     model="gpt-4o",
     response_model=MyPydanticModel,  # optional — omit for plain text
 )
+# result is an LLMResult:
+result.content          # parsed model (if response_model) or full text
+result.input_tokens     # for token tracking
+result.output_tokens
+result.cache_read_tokens, result.cache_write_tokens   # prompt-cache usage
+result.latency_ms, result.model, result.stop_reason
+result.raw_text         # provider text pre-parse
+result.reasoning_text   # reasoning/thinking content (None on non-reasoning models)
+result.raw              # untouched SDK response
 ```
 
-Supported providers: `openai`, `gemini`, `perplexity`, `anthropic`, `grok`. All share the same `call()` signature.
+Supported providers: `openai`, `gemini`, `perplexity`, `anthropic`, `grok`. All share the same `call()` signature and all return an `LLMResult`. Pass `cache_read_tokens`/`cache_write_tokens` from the result into `calculate_cost(...)` so cached requests are priced correctly.
 
 ## BigQuery Batch Operations
 
