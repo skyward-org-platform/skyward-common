@@ -80,13 +80,13 @@ class TestOpenAILive:
 class TestGeminiLive:
     def test_call_text(self):
         from skyward.llm.providers import GeminiProvider
-        r = GeminiProvider().call(BASIC_MESSAGES, "gemini-2.0-flash")
+        r = GeminiProvider().call(BASIC_MESSAGES, "gemini-2.5-flash")
         _assert_text_result(r)
 
     def test_call_structured(self):
         from skyward.llm.providers import GeminiProvider
         _assert_structured_result(
-            GeminiProvider().call(BASIC_MESSAGES, "gemini-2.0-flash", response_model=SimpleAnswer)
+            GeminiProvider().call(BASIC_MESSAGES, "gemini-2.5-flash", response_model=SimpleAnswer)
         )
 
 
