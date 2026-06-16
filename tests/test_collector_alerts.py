@@ -101,6 +101,17 @@ def test_job_complete_success_vs_degraded():
     assert "⚠️" in msgs[1] and "Failed: 2" in msgs[1]  # any failure -> degraded
 
 
+def test_bare_alerter_is_disabled_under_test_guard():
+    # Regression: a bare Alerter() (what run_forever builds with no injected alerter) must be
+    # DISABLED during tests — the _no_real_slack autouse guard strips SLACK_WEBHOOK_* so nothing
+    # can post to a real channel. Previously a live webhook in .env leaked alerts to ops_alerts.
+    import os
+    assert not any(k.startswith("SLACK_WEBHOOK_") for k in os.environ)
+    a = Alerter(now=lambda: 0.0, vm_name="h")  # no send, no webhook -> must be disabled
+    a.startup()
+    a.fire("k", title="x")  # must not attempt a real send (would raise via the guard)
+
+
 def test_classify_failure():
     from google.api_core import exceptions as gexc
     assert classify_failure(gexc.ServiceUnavailable("x"))[0] == "bigquery"

@@ -1,4 +1,5 @@
 # tests/conftest.py
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -8,6 +9,27 @@ import pytest
 # Register the ephemeral-Postgres fixtures (pg_client, _pg_schema) so
 # Supabase-backed tests can use them. They skip when TEST_DATABASE_URL is unset.
 pytest_plugins = ["tests.conftest_pg"]
+
+
+@pytest.fixture(autouse=True)
+def _no_real_slack(monkeypatch):
+    """Hard guard: NO test may ever post to Slack.
+
+    `.env` is loaded into the process during tests, so `SLACK_WEBHOOK_*` can be live —
+    a bare `Alerter()` (e.g. the one `run_forever` builds when no alerter is injected)
+    would then post to the real channel. Strip those env vars so the Alerter defaults to
+    disabled, and make the underlying sender raise if anything still tries to send.
+    """
+    for key in [k for k in os.environ if k.startswith("SLACK_WEBHOOK_")]:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("DFS_COLLECTOR_ALERT_CHANNEL", raising=False)
+
+    import skyward.notifications as _notif
+
+    def _blocked(*_a, **_k):
+        raise RuntimeError("send_slack invoked during tests — Slack must be stubbed/disabled")
+
+    monkeypatch.setattr(_notif, "send_slack", _blocked)
 
 
 class FakeLoadJob:

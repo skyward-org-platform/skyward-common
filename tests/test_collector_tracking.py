@@ -172,6 +172,42 @@ def test_mark_fetched_empty_is_noop():
     assert bq.client.loaded_tables == []
 
 
+def test_mark_fetched_upserts_untracked_tasks():
+    # MERGE must INSERT untracked (orphan) tasks under the sentinel job so they're recorded as
+    # resolved and not re-fetched next cycle.
+    store, bq = _store()
+    store.mark_fetched(endpoint="serp_google_organic", results=[
+        {"task_id": "orphan", "status": "fetched", "dfs_status_code": 20000, "result_rows": 5, "attempts": 1},
+    ])
+    merge = [c for c in bq.client.queries
+             if "dfs_task_log" in c["sql"] and "MERGE" in c["sql"].upper()][0]
+    assert "WHEN NOT MATCHED THEN INSERT" in merge["sql"].upper()
+    params = {p.name: getattr(p, "value", None) for p in merge["job_config"].query_parameters}
+    assert params.get("sentinel") == "d4s_standard_unattributed"
+    assert params.get("endpoint") == "serp_google_organic"
+
+
+def test_mark_fetched_scopes_recompute_to_touched_jobs():
+    store, bq = _store()
+    results = [{"task_id": "t0", "status": "fetched", "dfs_status_code": 20000, "result_rows": 3, "attempts": 1}]
+    store.mark_fetched(endpoint="serp_google_organic", results=results, job_ids=["j1", "j2"])
+    upd = [c for c in bq.client.queries
+           if "dfs_job_summary" in c["sql"] and "UPDATE" in c["sql"].upper()][0]
+    assert "job_id IN UNNEST(@job_ids)" in upd["sql"]
+    arr = [p for p in upd["job_config"].query_parameters if p.name == "job_ids"][0]
+    assert list(arr.values) == ["j1", "j2"]
+
+
+def test_mark_fetched_recompute_unscoped_without_job_ids():
+    # Legacy/back-compat: no job_ids -> recompute the whole endpoint (no IN UNNEST scope).
+    store, bq = _store()
+    results = [{"task_id": "t0", "status": "fetched", "dfs_status_code": 20000, "result_rows": 3, "attempts": 1}]
+    store.mark_fetched(endpoint="serp_google_organic", results=results)
+    upd = [c for c in bq.client.queries
+           if "dfs_job_summary" in c["sql"] and "UPDATE" in c["sql"].upper()][0]
+    assert "@job_ids" not in upd["sql"]
+
+
 def test_submit_dedupes_duplicate_task_ids_within_call():
     store, bq = _store()
     tasks = [{"task_id": "t0", "keyword": "a"}, {"task_id": "t0", "keyword": "a2"},
@@ -199,13 +235,22 @@ def test_submit_empty_tasks_skips_load_writes_zero_total():
 def test_lookup_tasks_maps_to_job_and_domain():
     store, bq = _store()
     bq.client.queue_result(pd.DataFrame([
-        {"task_id": "t0", "job_id": "j1", "keyword": "k0", "domain_id": 7, "domain": "x.com"},
-        {"task_id": "t1", "job_id": "j1", "keyword": "k1", "domain_id": 7, "domain": "x.com"},
+        {"task_id": "t0", "job_id": "j1", "keyword": "k0", "resolved": 0, "domain_id": 7, "domain": "x.com"},
+        {"task_id": "t1", "job_id": "j1", "keyword": "k1", "resolved": 1, "domain_id": 7, "domain": "x.com"},
     ]))
     m = store.lookup_tasks(endpoint="serp_google_organic", task_ids=["t0", "t1", "t2"])
     assert m["t0"]["job_id"] == "j1" and m["t0"]["domain_id"] == 7 and m["t0"]["keyword"] == "k0"
     assert m["t1"]["domain"] == "x.com"
+    assert m["t0"]["resolved"] is False and m["t1"]["resolved"] is True  # drives the skip guard
     assert "t2" not in m  # untracked -> caller attributes to sentinel
+
+
+def test_lookup_tasks_scans_only_recent_partitions():
+    store, bq = _store()
+    bq.client.queue_result(pd.DataFrame())
+    store.lookup_tasks(endpoint="serp_google_organic", task_ids=["t0"])
+    sql = [c for c in bq.client.queries if "dfs_task_log" in c["sql"]][0]["sql"]
+    assert "INTERVAL 7 DAY" in sql and "submitted_at" in sql  # partition pruning
 
 
 def test_lookup_tasks_empty_ids_is_noop():
