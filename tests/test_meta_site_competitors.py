@@ -33,3 +33,124 @@ def test_site_competitors_table_accepts_directed_row(pg_client):
     assert df.iloc[0]["domain_id"] == a
     assert df.iloc[0]["competitor_domain_id"] == b
     assert df.iloc[0]["priority"] == "HIGH"
+
+
+@requires_pg
+def test_add_and_get_site_competitor(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    comp = meta.add_domain("rival.com")
+    meta.add_site_competitor(site, comp, priority="HIGH")
+    df = meta.get_site_competitors(site)
+    assert list(df["competitor_domain_id"]) == [comp]
+    assert list(df["domain"]) == ["rival.com"]
+    assert df.iloc[0]["priority"] == "HIGH"
+
+
+@requires_pg
+def test_add_site_competitor_rejects_self(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    with pytest.raises(ValueError):
+        meta.add_site_competitor(site, site)
+
+
+@requires_pg
+def test_add_site_competitor_invalid_priority_raises(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    comp = meta.add_domain("rival.com")
+    with pytest.raises(ValueError):
+        meta.add_site_competitor(site, comp, priority="SOMETIMES")
+
+
+@requires_pg
+def test_add_site_competitor_idempotent(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    comp = meta.add_domain("rival.com")
+    meta.add_site_competitor(site, comp)
+    meta.add_site_competitor(site, comp)
+    assert len(meta.get_site_competitors(site)) == 1
+
+
+@requires_pg
+def test_get_site_competitors_empty(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    assert meta.get_site_competitors(site).empty
+
+
+@requires_pg
+def test_directionality_is_not_symmetric(pg_client):
+    meta = MetaClient(pg_client)
+    a = meta.add_domain("acme.com")
+    b = meta.add_domain("rival.com")
+    meta.add_site_competitor(a, b)
+    assert list(meta.get_site_competitors(a)["competitor_domain_id"]) == [b]
+    assert meta.get_site_competitors(b).empty
+
+
+@requires_pg
+def test_get_sites_competing_with(pg_client):
+    meta = MetaClient(pg_client)
+    a = meta.add_domain("acme.com")
+    b = meta.add_domain("buster.com")
+    rival = meta.add_domain("rival.com")
+    meta.add_site_competitor(a, rival)
+    meta.add_site_competitor(b, rival)
+    df = meta.get_sites_competing_with(rival)
+    assert set(df["domain_id"]) == {a, b}
+
+
+@requires_pg
+def test_add_site_competitors_bulk_skips_self(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    c1 = meta.add_domain("r1.com")
+    c2 = meta.add_domain("r2.com")
+    n = meta.add_site_competitors(site, [c1, c2, site], priority="LOW")
+    assert n == 2
+    df = meta.get_site_competitors(site)
+    assert set(df["competitor_domain_id"]) == {c1, c2}
+    assert set(df["priority"]) == {"LOW"}
+
+
+@requires_pg
+def test_add_site_competitors_empty_returns_zero(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    assert meta.add_site_competitors(site, []) == 0
+
+
+@requires_pg
+def test_remove_site_competitor(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    comp = meta.add_domain("rival.com")
+    meta.add_site_competitor(site, comp)
+    meta.remove_site_competitor(site, comp)
+    assert meta.get_site_competitors(site).empty
+
+
+@requires_pg
+def test_set_site_competitor_priority(pg_client):
+    meta = MetaClient(pg_client)
+    site = meta.add_domain("acme.com")
+    comp = meta.add_domain("rival.com")
+    meta.add_site_competitor(site, comp, priority="NORMAL")
+    meta.set_site_competitor_priority(site, comp, "VERY HIGH")
+    assert meta.get_site_competitors(site).iloc[0]["priority"] == "VERY HIGH"
+
+
+@requires_pg
+def test_add_site_competitor_by_domain_creates_domains(pg_client):
+    meta = MetaClient(pg_client)
+    site_id, comp_id = meta.add_site_competitor_by_domain(
+        "https://www.acme.com/", "rival.com", priority="HIGH"
+    )
+    assert meta.get_domain("acme.com")["domain_id"] == site_id
+    assert meta.get_domain("rival.com")["domain_id"] == comp_id
+    df = meta.get_site_competitors(site_id)
+    assert list(df["competitor_domain_id"]) == [comp_id]
+    assert df.iloc[0]["priority"] == "HIGH"
