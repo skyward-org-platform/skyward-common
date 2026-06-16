@@ -142,6 +142,33 @@ class TestOpenAIProvider:
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         assert "temperature" not in call_kwargs
 
+    def test_reasoning_model_uses_max_completion_tokens(self):
+        """Reasoning models (gpt-5*/o1*/o3*) require max_completion_tokens."""
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        mock_client.chat.completions.create.return_value = MockChatCompletion("ok", usage)
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-5",
+            max_tokens=50,
+        )
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs.get("max_completion_tokens") == 50
+        assert "max_tokens" not in call_kwargs
+
+    def test_non_reasoning_model_uses_max_tokens(self):
+        provider, mock_client = self._make_provider()
+        usage = MockOpenAIUsage(10, 5)
+        mock_client.chat.completions.create.return_value = MockChatCompletion("ok", usage)
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-4o",
+            max_tokens=50,
+        )
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs.get("max_tokens") == 50
+        assert "max_completion_tokens" not in call_kwargs
+
     def test_init_with_api_key_creates_client(self):
         from skyward.llm.providers import OpenAIProvider
         with patch("skyward.llm.providers.OpenAI") as mock_openai_cls:

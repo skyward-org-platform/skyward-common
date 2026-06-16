@@ -188,10 +188,13 @@ class OpenAIProvider(LLMProvider):
             "messages": messages,
             **provider_kwargs,
         }
-        if temperature is not None and model not in NO_TEMPERATURE_MODELS:
+        # Reasoning models (gpt-5*, o1*, o3*) reject `temperature` and require
+        # `max_completion_tokens` instead of `max_tokens` on chat.completions.
+        is_reasoning = model in NO_TEMPERATURE_MODELS or model.startswith(("gpt-5", "o1", "o3"))
+        if temperature is not None and not is_reasoning:
             args["temperature"] = temperature
         if max_tokens:
-            args["max_tokens"] = max_tokens
+            args["max_completion_tokens" if is_reasoning else "max_tokens"] = max_tokens
 
         t0 = time.monotonic()
         response = self._client.chat.completions.create(**args)
@@ -236,8 +239,18 @@ class OpenAIProvider(LLMProvider):
         usage = response.usage
         details = getattr(usage, "input_tokens_details", None)
         cache_read = getattr(details, "cached_tokens", 0) or 0
-        reasoning = getattr(response, "output_reasoning", None)
-        reasoning_text = getattr(reasoning, "summary", None) if reasoning is not None else None
+        # Reasoning summary lives in output items of type "reasoning", each
+        # carrying a `summary` list of parts with `.text`. (There is no
+        # top-level `output_reasoning` attribute.) Summary may be empty even
+        # when the model reasoned — then reasoning_text stays None.
+        reasoning_parts = []
+        for item in getattr(response, "output", None) or []:
+            if getattr(item, "type", None) == "reasoning":
+                for part in getattr(item, "summary", None) or []:
+                    text = getattr(part, "text", None)
+                    if text:
+                        reasoning_parts.append(text)
+        reasoning_text = "".join(reasoning_parts) or None
         return LLMResult(
             content=response.output_parsed,
             input_tokens=usage.input_tokens,

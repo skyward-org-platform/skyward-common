@@ -75,6 +75,31 @@ class TestOpenAILive:
             OpenAIProvider().call(BASIC_MESSAGES, "gpt-4o-mini", response_model=SimpleAnswer)
         )
 
+    def test_reasoning_text_populated(self):
+        """A reasoning model with a requested summary populates reasoning_text."""
+        from skyward.llm.providers import OpenAIProvider
+        r = OpenAIProvider().call(
+            [{"role": "user", "content": "What is 2+2? Reason briefly, then answer."}],
+            "gpt-5-mini",
+            response_model=SimpleAnswer,
+            reasoning={"summary": "detailed"},
+        )
+        assert isinstance(r.content, SimpleAnswer)
+        assert r.reasoning_text is not None and len(r.reasoning_text) > 0
+
+    def test_reasoning_model_text_with_max_tokens(self):
+        """Reasoning model via text path + max_tokens must not error (uses
+        max_completion_tokens under the hood)."""
+        from skyward.llm.providers import OpenAIProvider
+        from skyward.llm.providers import LLMResult
+        r = OpenAIProvider().call(
+            [{"role": "user", "content": "Reply with one word: ok"}],
+            "gpt-5-mini",
+            max_tokens=200,
+        )
+        assert isinstance(r, LLMResult)
+        assert r.output_tokens > 0
+
 
 @requires_gemini
 class TestGeminiLive:
