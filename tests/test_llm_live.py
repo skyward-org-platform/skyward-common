@@ -2,10 +2,17 @@
 
 Skipped unless the corresponding API key env var is set.
 Run with: uv run python -m pytest tests/test_llm_live.py -v
+
+These exercise the REAL provider SDKs and therefore validate the field
+assumptions the LLMResult refactor depends on (token counts, latency,
+raw_text, and — best-effort — cache/reasoning fields). Mocked unit tests
+cannot catch a wrong SDK attribute name; these can.
 """
 import os
 import pytest
 from pydantic import BaseModel
+
+from skyward.llm.providers import LLMResult
 
 
 class SimpleAnswer(BaseModel):
@@ -35,99 +42,93 @@ BASIC_MESSAGES = [
 ]
 
 
+def _assert_text_result(r):
+    """Common checks for a successful text call's LLMResult."""
+    assert isinstance(r, LLMResult)
+    assert isinstance(r.content, str) and len(r.content) > 0
+    assert r.input_tokens > 0 and r.output_tokens > 0
+    # latency is measured around every SDK call (defect 4)
+    assert r.latency_ms is not None and r.latency_ms >= 0
+    # text path exposes the pre-parse raw text
+    assert r.raw_text is not None and len(r.raw_text) > 0
+    # cache token fields always exist (>=0), even when unused
+    assert r.cache_read_tokens >= 0 and r.cache_write_tokens >= 0
+
+
+def _assert_structured_result(r):
+    assert isinstance(r, LLMResult)
+    assert isinstance(r.content, SimpleAnswer)
+    assert len(r.content.answer) > 0
+    assert r.input_tokens > 0 and r.output_tokens > 0
+    assert r.latency_ms is not None and r.latency_ms >= 0
+
+
 @requires_openai
 class TestOpenAILive:
     def test_call_text(self):
         from skyward.llm.providers import OpenAIProvider
-        p = OpenAIProvider()
-        result, in_tok, out_tok = p.call(BASIC_MESSAGES, "gpt-4o-mini")
-        assert isinstance(result, str)
-        assert len(result) > 0
-        assert in_tok > 0 and out_tok > 0
+        _assert_text_result(OpenAIProvider().call(BASIC_MESSAGES, "gpt-4o-mini"))
 
     def test_call_structured(self):
         from skyward.llm.providers import OpenAIProvider
-        p = OpenAIProvider()
-        result, in_tok, out_tok = p.call(
-            BASIC_MESSAGES, "gpt-4o-mini", response_model=SimpleAnswer,
+        _assert_structured_result(
+            OpenAIProvider().call(BASIC_MESSAGES, "gpt-4o-mini", response_model=SimpleAnswer)
         )
-        assert isinstance(result, SimpleAnswer)
-        assert len(result.answer) > 0
 
 
 @requires_gemini
 class TestGeminiLive:
     def test_call_text(self):
         from skyward.llm.providers import GeminiProvider
-        p = GeminiProvider()
-        result, in_tok, out_tok = p.call(BASIC_MESSAGES, "gemini-2.0-flash")
-        assert isinstance(result, str)
-        assert len(result) > 0
+        r = GeminiProvider().call(BASIC_MESSAGES, "gemini-2.0-flash")
+        _assert_text_result(r)
 
     def test_call_structured(self):
         from skyward.llm.providers import GeminiProvider
-        p = GeminiProvider()
-        result, in_tok, out_tok = p.call(
-            BASIC_MESSAGES, "gemini-2.0-flash", response_model=SimpleAnswer,
+        _assert_structured_result(
+            GeminiProvider().call(BASIC_MESSAGES, "gemini-2.0-flash", response_model=SimpleAnswer)
         )
-        assert isinstance(result, SimpleAnswer)
-        assert len(result.answer) > 0
 
 
 @requires_perplexity
 class TestPerplexityLive:
     def test_call_text(self):
         from skyward.llm.providers import PerplexityProvider
-        p = PerplexityProvider()
-        result, in_tok, out_tok = p.call(BASIC_MESSAGES, "sonar")
-        assert isinstance(result, str)
-        assert len(result) > 0
+        _assert_text_result(PerplexityProvider().call(BASIC_MESSAGES, "sonar"))
 
     def test_call_structured(self):
         from skyward.llm.providers import PerplexityProvider
-        p = PerplexityProvider()
-        result, in_tok, out_tok = p.call(
-            BASIC_MESSAGES, "sonar", response_model=SimpleAnswer,
-        )
-        assert isinstance(result, SimpleAnswer)
+        r = PerplexityProvider().call(BASIC_MESSAGES, "sonar", response_model=SimpleAnswer)
+        assert isinstance(r, LLMResult)
+        assert isinstance(r.content, SimpleAnswer)
 
 
 @requires_anthropic
 class TestAnthropicLive:
     def test_call_text(self):
         from skyward.llm.providers import AnthropicProvider
-        p = AnthropicProvider()
-        result, in_tok, out_tok = p.call(BASIC_MESSAGES, "claude-sonnet-4-20250514")
-        assert isinstance(result, str)
-        assert len(result) > 0
-        assert in_tok > 0 and out_tok > 0
+        _assert_text_result(AnthropicProvider().call(BASIC_MESSAGES, "claude-sonnet-4-20250514"))
 
     def test_call_structured(self):
         from skyward.llm.providers import AnthropicProvider
-        p = AnthropicProvider()
-        result, in_tok, out_tok = p.call(
-            BASIC_MESSAGES, "claude-sonnet-4-20250514", response_model=SimpleAnswer,
+        _assert_structured_result(
+            AnthropicProvider().call(
+                BASIC_MESSAGES, "claude-sonnet-4-20250514", response_model=SimpleAnswer
+            )
         )
-        assert isinstance(result, SimpleAnswer)
-        assert len(result.answer) > 0
 
 
 @requires_grok
 class TestGrokLive:
     def test_call_text(self):
         from skyward.llm.providers import GrokProvider
-        p = GrokProvider()
-        result, in_tok, out_tok = p.call(BASIC_MESSAGES, "grok-3-mini")
-        assert isinstance(result, str)
-        assert len(result) > 0
+        _assert_text_result(GrokProvider().call(BASIC_MESSAGES, "grok-3-mini"))
 
     def test_call_structured(self):
         from skyward.llm.providers import GrokProvider
-        p = GrokProvider()
-        result, in_tok, out_tok = p.call(
-            BASIC_MESSAGES, "grok-3-mini", response_model=SimpleAnswer,
-        )
-        assert isinstance(result, SimpleAnswer)
+        r = GrokProvider().call(BASIC_MESSAGES, "grok-3-mini", response_model=SimpleAnswer)
+        assert isinstance(r, LLMResult)
+        assert isinstance(r.content, SimpleAnswer)
 
 
 @requires_openai
@@ -143,6 +144,7 @@ class TestSessionLive:
             summarize_after_tokens=None,
         )
 
+        # session.send() still returns the content (string), not LLMResult
         r1 = session.send("My name is Alice.", model="gpt-4o-mini")
         assert isinstance(r1, str)
         assert len(session.messages) == 2
@@ -151,3 +153,6 @@ class TestSessionLive:
         assert isinstance(r2, str)
         assert "alice" in r2.lower()
         assert len(session.messages) == 4
+        # token tracking accumulated from LLMResult fields
+        assert session.total_input_tokens > 0
+        assert session.total_output_tokens > 0
