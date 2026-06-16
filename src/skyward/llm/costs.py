@@ -57,11 +57,25 @@ PERPLEXITY_COSTS: Dict[str, Tuple[float, float]] = {
 }
 
 
+# Cache pricing as a multiplier of the standard input rate, per provider.
+# Anthropic bills cache writes at 1.25x input and cache reads at 0.1x input,
+# and reports cached tokens SEPARATELY from input_tokens. Other providers
+# discount cached input reads (~0.25x) and fold them into input_tokens.
+CACHE_READ_MULTIPLIER: Dict[str, float] = {
+    "anthropic": 0.1, "openai": 0.25, "gemini": 0.25, "grok": 0.25, "perplexity": 1.0,
+}
+CACHE_WRITE_MULTIPLIER: Dict[str, float] = {
+    "anthropic": 1.25, "openai": 1.0, "gemini": 1.0, "grok": 1.0, "perplexity": 1.0,
+}
+
+
 def calculate_cost(
     input_tokens: int,
     output_tokens: int,
     model: str,
     provider: str = "openai",
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> float:
     """
     Calculate the cost in USD for a given number of tokens.
@@ -69,18 +83,29 @@ def calculate_cost(
     Parameters
     ----------
     input_tokens : int
-        Number of input tokens
+        Number of (uncached) input tokens billed at the standard input rate.
     output_tokens : int
-        Number of output tokens
+        Number of output tokens.
     model : str
-        Model name
+        Model name.
     provider : str
-        Provider name: "openai", "gemini", or "perplexity"
+        Provider name: "openai", "gemini", "perplexity", "anthropic", "grok".
+    cache_read_tokens : int
+        Prompt-cache read tokens, billed at a provider-specific discount.
+    cache_write_tokens : int
+        Prompt-cache write/creation tokens (Anthropic; billed at a premium).
 
     Returns
     -------
     float
-        Cost in USD
+        Cost in USD.
+
+    Notes
+    -----
+    Cache cost is added on top of ``input_tokens`` using the provider's
+    cache multiplier of the input rate. This is exact for Anthropic (which
+    reports cached tokens separately) and a close approximation for providers
+    that fold cached tokens into ``input_tokens``.
     """
     if provider == "openai":
         costs = OPENAI_COSTS.get(model, (2.50, 10.00))  # Default to gpt-4o
@@ -100,6 +125,12 @@ def calculate_cost(
     total_cost = (input_tokens * input_cost / 1_000_000) + (
         output_tokens * output_cost / 1_000_000
     )
+    if cache_read_tokens:
+        rate = input_cost * CACHE_READ_MULTIPLIER.get(provider, 1.0)
+        total_cost += cache_read_tokens * rate / 1_000_000
+    if cache_write_tokens:
+        rate = input_cost * CACHE_WRITE_MULTIPLIER.get(provider, 1.0)
+        total_cost += cache_write_tokens * rate / 1_000_000
     return total_cost
 
 

@@ -313,7 +313,8 @@ def llm_call(provider, model, message, system, temperature, max_tokens, api_key)
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
 
-    result, in_tok, out_tok = p.call(messages, model, **kwargs)
+    r = p.call(messages, model, **kwargs)
+    result, in_tok, out_tok = r.content, r.input_tokens, r.output_tokens
 
     click.echo(result)
     click.echo(f"\n--- {in_tok} in / {out_tok} out | {format_cost(calculate_cost(in_tok, out_tok, model, provider))} ---")

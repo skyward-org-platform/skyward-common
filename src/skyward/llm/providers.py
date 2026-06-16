@@ -9,6 +9,7 @@ Supports:
 
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
 from anthropic import Anthropic
@@ -26,6 +27,29 @@ DEFAULT_RETRY_DELAY: int = 2  # seconds between retries
 
 # OpenAI models that don't support the temperature parameter (reasoning models)
 NO_TEMPERATURE_MODELS = {"gpt-5.2-pro", "gpt-5-mini", "gpt-5-nano", "o1", "o1-mini", "o1-preview"}
+
+
+@dataclass
+class LLMResult:
+    """Full result of an LLM call.
+
+    ``provider.call()`` returns this for every provider. ``content`` is the
+    parsed Pydantic model (when ``response_model`` is given) or the full text
+    (all content blocks joined). The remaining fields carry everything the
+    old ``(content, input_tokens, output_tokens)`` tuple discarded.
+    """
+
+    content: Any
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    latency_ms: Optional[int] = None
+    model: Optional[str] = None
+    stop_reason: Optional[str] = None
+    raw_text: Optional[str] = None       # provider text pre-parse (None when N/A)
+    reasoning_text: Optional[str] = None  # reasoning/thinking content; None otherwise
+    raw: Any = field(default=None, repr=False)  # untouched SDK response
 
 
 class LLMProvider(ABC):
@@ -49,7 +73,7 @@ class LLMProvider(ABC):
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay: float = DEFAULT_RETRY_DELAY,
         **provider_kwargs: Any,
-    ) -> Tuple[Any, int, int]:
+    ) -> "LLMResult":
         """
         Call the LLM.
 
@@ -74,19 +98,21 @@ class LLMProvider(ABC):
 
         Returns
         -------
-        Tuple[T | str, int, int]
-            (parsed_model_or_text, input_tokens, output_tokens)
+        LLMResult
+            Full result object; ``.content`` is the parsed model (when
+            ``response_model`` is given) or the full text, plus token/cache/
+            latency/reasoning metadata.
         """
         ...
 
     def call_structured(self, messages, response_model, model, temperature=0.7,
                        max_tokens=None, **kwargs):
-        """Legacy method. Use call(response_model=...) instead."""
+        """Legacy alias. Returns an LLMResult (use call(response_model=...))."""
         return self.call(messages, model, response_model=response_model,
                         temperature=temperature, max_tokens=max_tokens, **kwargs)
 
     def call_text(self, messages, model, temperature=0.7, max_tokens=None, **kwargs):
-        """Legacy method. Use call() instead."""
+        """Legacy alias. Returns an LLMResult (use call())."""
         return self.call(messages, model, temperature=temperature,
                         max_tokens=max_tokens, **kwargs)
 
@@ -122,7 +148,7 @@ class OpenAIProvider(LLMProvider):
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay: float = DEFAULT_RETRY_DELAY,
         **provider_kwargs: Any,
-    ) -> Tuple[Any, int, int]:
+    ) -> "LLMResult":
         """Call the OpenAI API."""
         for attempt in range(1, max_retries + 1):
             try:
@@ -156,7 +182,7 @@ class OpenAIProvider(LLMProvider):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         **provider_kwargs: Any,
-    ) -> Tuple[str, int, int]:
+    ) -> "LLMResult":
         args: Dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -167,11 +193,23 @@ class OpenAIProvider(LLMProvider):
         if max_tokens:
             args["max_tokens"] = max_tokens
 
+        t0 = time.monotonic()
         response = self._client.chat.completions.create(**args)
-        return (
-            response.choices[0].message.content,
-            response.usage.prompt_tokens,
-            response.usage.completion_tokens,
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        usage = response.usage
+        details = getattr(usage, "prompt_tokens_details", None)
+        cache_read = getattr(details, "cached_tokens", 0) or 0
+        choice = response.choices[0]
+        return LLMResult(
+            content=choice.message.content,
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
+            cache_read_tokens=cache_read,
+            latency_ms=latency_ms,
+            model=getattr(response, "model", model),
+            stop_reason=getattr(choice, "finish_reason", None),
+            raw_text=choice.message.content,
+            raw=response,
         )
 
     def _call_structured(
@@ -182,7 +220,7 @@ class OpenAIProvider(LLMProvider):
         *,
         temperature: Optional[float] = None,
         **provider_kwargs: Any,
-    ) -> Tuple[T, int, int]:
+    ) -> "LLMResult":
         parse_args: Dict[str, Any] = {
             "model": model,
             "input": messages,
@@ -192,11 +230,25 @@ class OpenAIProvider(LLMProvider):
         if temperature is not None and model not in NO_TEMPERATURE_MODELS:
             parse_args["temperature"] = temperature
 
+        t0 = time.monotonic()
         response = self._client.responses.parse(**parse_args)
-        return (
-            response.output_parsed,
-            response.usage.input_tokens,
-            response.usage.output_tokens,
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        usage = response.usage
+        details = getattr(usage, "input_tokens_details", None)
+        cache_read = getattr(details, "cached_tokens", 0) or 0
+        reasoning = getattr(response, "output_reasoning", None)
+        reasoning_text = getattr(reasoning, "summary", None) if reasoning is not None else None
+        return LLMResult(
+            content=response.output_parsed,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_tokens=cache_read,
+            latency_ms=latency_ms,
+            model=getattr(response, "model", model),
+            stop_reason=getattr(response, "status", None),
+            raw_text=getattr(response, "output_text", None),
+            reasoning_text=reasoning_text,
+            raw=response,
         )
 
 
@@ -244,7 +296,7 @@ class GeminiProvider(LLMProvider):
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay: float = DEFAULT_RETRY_DELAY,
         **provider_kwargs: Any,
-    ) -> Tuple[Any, int, int]:
+    ) -> "LLMResult":
         """Call the Gemini API."""
         import json
         from google.genai import types
@@ -278,20 +330,35 @@ class GeminiProvider(LLMProvider):
 
         for attempt in range(1, max_retries + 1):
             try:
+                t0 = time.monotonic()
                 response = self._client.models.generate_content(
                     model=model,
                     contents=contents,
                     config=config,
                 )
+                latency_ms = int((time.monotonic() - t0) * 1000)
 
-                in_tokens = response.usage_metadata.prompt_token_count or 0
-                out_tokens = response.usage_metadata.candidates_token_count or 0
+                usage = response.usage_metadata
+                in_tokens = usage.prompt_token_count or 0
+                out_tokens = usage.candidates_token_count or 0
+                cache_read = getattr(usage, "cached_content_token_count", 0) or 0
+                raw_text = response.text
 
-                if response_model is not None:
-                    parsed = response_model.model_validate(json.loads(response.text))
-                    return parsed, in_tokens, out_tokens
-
-                return response.text, in_tokens, out_tokens
+                content = (
+                    response_model.model_validate(json.loads(raw_text))
+                    if response_model is not None
+                    else raw_text
+                )
+                return LLMResult(
+                    content=content,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                    cache_read_tokens=cache_read,
+                    latency_ms=latency_ms,
+                    model=getattr(response, "model_version", None) or model,
+                    raw_text=raw_text,
+                    raw=response,
+                )
 
             except Exception as e:
                 if attempt < max_retries:
@@ -342,7 +409,7 @@ class PerplexityProvider(LLMProvider):
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay: float = DEFAULT_RETRY_DELAY,
         **provider_kwargs: Any,
-    ) -> Tuple[Any, int, int]:
+    ) -> "LLMResult":
         """Call the Perplexity API."""
         import json
 
@@ -383,25 +450,36 @@ class PerplexityProvider(LLMProvider):
                 if max_tokens:
                     args["max_tokens"] = max_tokens
 
+                t0 = time.monotonic()
                 response = self._client.chat.completions.create(**args)
+                latency_ms = int((time.monotonic() - t0) * 1000)
 
-                in_tokens = response.usage.prompt_tokens or 0
-                out_tokens = response.usage.completion_tokens or 0
+                usage = response.usage
+                in_tokens = usage.prompt_tokens or 0
+                out_tokens = usage.completion_tokens or 0
+                choice = response.choices[0]
+                msg_content = choice.message.content
 
                 if response_model is not None:
-                    text = response.choices[0].message.content
+                    text = msg_content
                     # Extract JSON from response (might be wrapped in markdown)
                     if "```json" in text:
                         text = text.split("```json")[1].split("```")[0]
                     elif "```" in text:
                         text = text.split("```")[1].split("```")[0]
-                    parsed = response_model.model_validate(json.loads(text.strip()))
-                    return parsed, in_tokens, out_tokens
+                    content = response_model.model_validate(json.loads(text.strip()))
+                else:
+                    content = msg_content
 
-                return (
-                    response.choices[0].message.content,
-                    in_tokens,
-                    out_tokens,
+                return LLMResult(
+                    content=content,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                    latency_ms=latency_ms,
+                    model=getattr(response, "model", model),
+                    stop_reason=getattr(choice, "finish_reason", None),
+                    raw_text=msg_content,
+                    raw=response,
                 )
 
             except Exception as e:
@@ -438,14 +516,29 @@ class GrokProvider(LLMProvider):
             messages = self._inject_json_schema(messages, response_model)
         for attempt in range(1, max_retries + 1):
             try:
+                t0 = time.monotonic()
                 response = self._client.chat.completions.create(model=model, messages=messages, **kwargs)
-                in_tokens = response.usage.prompt_tokens or 0
-                out_tokens = response.usage.completion_tokens or 0
-                text = response.choices[0].message.content
-                if response_model is not None:
-                    parsed = response_model.model_validate(json.loads(text.strip()))
-                    return parsed, in_tokens, out_tokens
-                return text, in_tokens, out_tokens
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                usage = response.usage
+                in_tokens = usage.prompt_tokens or 0
+                out_tokens = usage.completion_tokens or 0
+                choice = response.choices[0]
+                text = choice.message.content
+                content = (
+                    response_model.model_validate(json.loads(text.strip()))
+                    if response_model is not None
+                    else text
+                )
+                return LLMResult(
+                    content=content,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                    latency_ms=latency_ms,
+                    model=getattr(response, "model", model),
+                    stop_reason=getattr(choice, "finish_reason", None),
+                    raw_text=text,
+                    raw=response,
+                )
             except Exception as e:
                 if attempt < max_retries:
                     time.sleep(retry_delay)
@@ -512,12 +605,40 @@ class AnthropicProvider(LLMProvider):
                         "input_schema": schema,
                     }]
                     args["tool_choice"] = {"type": "tool", "name": tool_name}
-                    response = self._client.messages.create(**args)
-                    tool_input = response.content[0].input
-                    parsed = response_model.model_validate(tool_input)
-                    return parsed, response.usage.input_tokens, response.usage.output_tokens
+
+                t0 = time.monotonic()
                 response = self._client.messages.create(**args)
-                return response.content[0].text, response.usage.input_tokens, response.usage.output_tokens
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                usage = response.usage
+
+                if response_model is not None:
+                    # Defect 2 fix: locate the tool_use block by type, not index 0
+                    tool_block = next(
+                        b for b in response.content
+                        if getattr(b, "type", None) == "tool_use"
+                    )
+                    content = response_model.model_validate(tool_block.input)
+                    raw_text = None
+                else:
+                    # Defect 1 fix: join ALL text blocks (was content[0].text)
+                    raw_text = "".join(
+                        b.text for b in response.content
+                        if getattr(b, "type", None) == "text"
+                    )
+                    content = raw_text
+
+                return LLMResult(
+                    content=content,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+                    cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                    latency_ms=latency_ms,
+                    model=getattr(response, "model", model),
+                    stop_reason=getattr(response, "stop_reason", None),
+                    raw_text=raw_text,
+                    raw=response,
+                )
             except Exception as e:
                 if attempt < max_retries:
                     time.sleep(retry_delay)
