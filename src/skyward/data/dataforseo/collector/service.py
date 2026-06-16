@@ -54,25 +54,61 @@ def _task_status_code(raw) -> int | None:
     return ((raw.get("tasks") or [{}])[0] or {}).get("status_code")
 
 
-def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=None) -> dict:
-    """Drain one endpoint once. Returns {endpoint, ready, fetched, failed}."""
+def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=None,
+              pending=None, grace_s=600.0, now=time.monotonic) -> dict:
+    """Drain one endpoint once. Returns {endpoint, ready, skipped, deferred, fetched, failed}.
+
+    `pending` (task_id -> first-seen monotonic time) carries the unattributed grace state
+    across cycles; pass the same dict each call (run_forever keeps one per endpoint).
+    `grace_s` is how long a ready task with no dfs_task_log row is deferred before it's
+    treated as a genuine orphan and attributed to the sentinel — this absorbs the producer
+    race (DFS can mark a task ready before the producer's task_log write lands).
+    """
     bq_client = bq_client or client.bq_client
+    pending = pending if pending is not None else {}
     ready = fetch_ready_task_ids(client, handler.ready_url)
     if ready is None:
         raise CollectorDfsError(handler.key)
     if not ready:
-        return {"endpoint": handler.key, "ready": 0, "fetched": 0, "failed": 0}
+        pending.clear()  # nothing ready -> no outstanding grace state to hold
+        return {"endpoint": handler.key, "ready": 0, "skipped": 0, "deferred": 0,
+                "fetched": 0, "failed": 0}
 
     lookup = store.lookup_tasks(endpoint=handler.key, task_ids=ready)
+    ready_set = set(ready)
+    # Drop grace state for tasks that are no longer ready (collected/expired) so it can't grow.
+    for k in [k for k in pending if k not in ready_set]:
+        del pending[k]
 
     frames: list[pd.DataFrame] = []
     results: list[dict] = []
-    fetched = failed = 0
+    touched_jobs: set[str] = set()
+    fetched = failed = skipped = deferred = 0
 
     for tid in ready:
-        info = lookup.get(tid) or {
-            "job_id": SENTINEL_JOB_ID, "keyword": None, "domain_id": None, "domain": None,
-        }
+        info = lookup.get(tid)
+        # Already fetched/failed in a prior cycle: DFS keeps re-listing it in tasks_ready
+        # (eventual-consistency lag) and task_get is repeatable, so re-fetching here would
+        # re-append duplicate rows. Skip it — this is the primary double-write guard.
+        if info and info.get("resolved"):
+            skipped += 1
+            pending.pop(tid, None)
+            continue
+        if info is None:
+            # No dfs_task_log row (yet). Could be the producer-write race (its task_log write
+            # hasn't landed) or a genuine orphan. Defer within the grace window; only after it
+            # stays unattributable past grace_s do we bucket it to the sentinel.
+            first = pending.get(tid)
+            if first is None:
+                first = pending[tid] = now()
+            if (now() - first) < grace_s:
+                deferred += 1
+                continue
+            pending.pop(tid, None)
+            info = {"job_id": SENTINEL_JOB_ID, "keyword": None, "domain_id": None, "domain": None}
+        else:
+            pending.pop(tid, None)  # became attributable — clear any prior defer
+        touched_jobs.add(info["job_id"])
         raw = client._get(f"{client.BASE_URL}/{handler.get_url}/{tid}")
         status_code = _task_status_code(raw)
 
@@ -111,16 +147,22 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=
 
     # Mark statuses only after the canonical rows are durably written, so a crash before
     # this leaves the tasks 'pending' (the data is already in the canonical table; re-marking
-    # is idempotent) rather than 'fetched' with no data.
-    store.mark_fetched(endpoint=handler.key, results=results)
+    # is idempotent) rather than 'fetched' with no data. Scope the summary recompute to the
+    # jobs we touched this cycle (cheap as the task-log grows).
+    store.mark_fetched(endpoint=handler.key, results=results, job_ids=list(touched_jobs))
 
-    # Per-job 'done' alert: any job whose tasks are now all resolved (fires once via notified_at).
-    if alerter is not None:
-        for job in store.claim_completed_jobs(endpoint=handler.key):
+    # On each newly-completed job: (1) dedup-DELETE backstop — clears any crash-path duplicate
+    # rows (append succeeded, mark_fetched didn't, task re-fetched on restart) keyed on task_id
+    # within the last 2 days; (2) per-job 'done' alert (once, via notified_at). Dedup runs even
+    # without an alerter so the canonical table is always clean.
+    for job in store.claim_completed_jobs(endpoint=handler.key):
+        _dedup_canonical(bq_client, handler.canonical_table, job["job_id"])
+        if alerter is not None:
             alerter.job_complete(job_id=job["job_id"], endpoint=handler.key,
                                  succeeded=job["succeeded"], failed=job["failed"])
 
-    return {"endpoint": handler.key, "ready": len(ready), "fetched": fetched, "failed": failed}
+    return {"endpoint": handler.key, "ready": len(ready), "skipped": skipped,
+            "deferred": deferred, "fetched": fetched, "failed": failed}
 
 
 def _append_canonical(bq_client, table_name: str, df: pd.DataFrame) -> None:
@@ -139,8 +181,44 @@ def _append_canonical(bq_client, table_name: str, df: pd.DataFrame) -> None:
     )
 
 
+def _dedup_canonical(bq_client, table_name: str, job_id: str) -> None:
+    """Backstop: drop duplicate canonical rows for one job, keeping the latest upload per task.
+
+    A crash between the canonical write and `mark_fetched` can leave a task fetched-but-pending,
+    so it's re-fetched and re-appended on restart. This DELETE removes, for the given job, any
+    row whose `task_id` has a newer `upload_id` — i.e. keep only the most recent write per task.
+
+    Cheap and bounded: filtered to `job_id` (cluster key) within the last 2 days
+    (`ingest_timestamp` is the DAY partition key), so it prunes to a couple of partitions and
+    that job's blocks. Scoped to one job_id, so live-mode rows (other job_ids) are never touched.
+    """
+    from google.cloud import bigquery
+
+    full_table_id = f"{bq_client.client.project}.{DATASET}.{table_name}"
+    sql = f"""
+    DELETE FROM `{full_table_id}` T
+    WHERE T.job_id = @job_id
+      AND T.ingest_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)
+      AND EXISTS (
+        SELECT 1 FROM `{full_table_id}` U
+        WHERE U.task_id = T.task_id
+          AND U.job_id = T.job_id
+          AND U.ingest_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)
+          AND (U.ingest_timestamp > T.ingest_timestamp
+               OR (U.ingest_timestamp = T.ingest_timestamp AND U.upload_id > T.upload_id))
+      )
+    """
+    cfg = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("job_id", "STRING", job_id),
+    ])
+    run_with_retry(
+        lambda: bq_client.client.query(sql, job_config=cfg).result(),
+        label=f"dedup_canonical:{table_name}",
+    )
+
+
 def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
-                max_cycles=None, sleep=time.sleep, should_stop=None) -> None:
+                max_cycles=None, sleep=time.sleep, should_stop=None, grace_s=600.0) -> None:
     """Loop over all allowlisted endpoints each cycle, alerting on failures.
 
     One endpoint erroring never kills the loop. Per endpoint, failures alert (deduped) and a
@@ -150,6 +228,10 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
     from skyward.data.dataforseo.collector.alerts import Alerter, classify_failure
     alerter = alerter or Alerter()
 
+    # Per-endpoint grace state (task_id -> first-seen time) for unattributed tasks, kept across
+    # cycles so the producer-write race is absorbed rather than mis-bucketed to the sentinel.
+    pending: dict[str, dict] = {h.key: {} for h in handlers.values()}
+
     cycle = 0
     while max_cycles is None or cycle < max_cycles:
         if should_stop is not None and should_stop():
@@ -158,7 +240,8 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
         for handler in handlers.values():
             key = handler.key
             try:
-                stats = run_cycle(client, store, handler, alerter=alerter)
+                stats = run_cycle(client, store, handler, alerter=alerter,
+                                  pending=pending[key], grace_s=grace_s)
             except CollectorDfsError:
                 alerter.fire(f"dfs:{key}", title="DataForSEO Unreachable", fields={"Endpoint": key})
                 continue
@@ -174,9 +257,12 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
                                         ("bigquery", "BigQuery Recovered"),
                                         ("error", "Cycle Recovered")):
                 alerter.resolve(f"{ek}:{key}", title=recovered_title, fields={"Endpoint": key})
-            if stats["ready"] and stats["failed"] / stats["ready"] >= 0.5:
+            # Fail rate is over tasks actually processed this cycle (fetched + failed), not
+            # `ready` — `ready` now counts skipped (already-resolved, DFS-lingering) tasks too.
+            processed = stats["fetched"] + stats["failed"]
+            if processed and stats["failed"] / processed >= 0.5:
                 alerter.fire(f"failrate:{key}", title="High Fetch-Failure Rate",
-                             fields={"Endpoint": key, "Failed": f"{stats['failed']}/{stats['ready']}"})
+                             fields={"Endpoint": key, "Failed": f"{stats['failed']}/{processed}"})
             else:
                 alerter.resolve(f"failrate:{key}", title="Fetch-Failure Rate Recovered",
                                 fields={"Endpoint": key})
@@ -225,13 +311,15 @@ def main() -> None:  # pragma: no cover - thin wiring, exercised at deploy
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
 
+    import os
+    grace_s = float(os.environ.get("DFS_COLLECTOR_GRACE_S", 600))
     print(f"[collector] starting; endpoints={list(handlers)} "
-          f"poll_interval={client.config.task_poll_interval}s")
+          f"poll_interval={client.config.task_poll_interval}s grace_s={grace_s}")
     alerter.startup()
     try:
         run_forever(client, store, handlers, alerter=alerter,
                     poll_interval=client.config.task_poll_interval,
-                    should_stop=lambda: stop["flag"])
+                    should_stop=lambda: stop["flag"], grace_s=grace_s)
     except Exception as e:  # pragma: no cover - top-level safety net
         alerter.crash(f"collector crashed: {e!r}")
         raise

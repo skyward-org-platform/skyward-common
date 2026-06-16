@@ -32,8 +32,8 @@ class _FakeStore:
     def lookup_tasks(self, *, endpoint, task_ids):
         return {k: v for k, v in self._lookup.items() if k in task_ids}
 
-    def mark_fetched(self, *, endpoint, results):
-        self.marked = (endpoint, results)
+    def mark_fetched(self, *, endpoint, results, job_ids=None):
+        self.marked = (endpoint, results, job_ids)
 
     def claim_completed_jobs(self, *, endpoint):
         return self.completed
@@ -69,8 +69,10 @@ def test_run_cycle_writes_canonical_marks_and_attributes_unknown():
         "t1": {"job_id": "j1", "keyword": "k1", "domain_id": 7, "domain": "x.com"},
     })
 
-    stats = service.run_cycle(client, store, h)
-    assert stats == {"endpoint": "serp_google_organic", "ready": 3, "fetched": 3, "failed": 0}
+    # grace_s=0: an untracked ("unk") task is bucketed to the sentinel immediately (no defer)
+    stats = service.run_cycle(client, store, h, grace_s=0.0)
+    assert stats == {"endpoint": "serp_google_organic", "ready": 3, "skipped": 0,
+                     "deferred": 0, "fetched": 3, "failed": 0}
 
     loaded = [t for t in bq.client.loaded_tables if str(t["table_ref"]).endswith("serp-google-organic")]
     assert len(loaded) == 1
@@ -81,10 +83,66 @@ def test_run_cycle_writes_canonical_marks_and_attributes_unknown():
     unk = df[df["task_id"] == "unk"].iloc[0]
     assert unk["job_id"] == "d4s_standard_unattributed" and pd.isna(unk["domain_id"])
 
-    ep, results = store.marked
+    ep, results, job_ids = store.marked
     assert ep == "serp_google_organic"
     assert {r["task_id"] for r in results} == {"t0", "t1", "unk"}
     assert all(r["status"] == "fetched" for r in results)
+    # touched jobs are passed through so the summary recompute can be scoped
+    assert set(job_ids) == {"j1", "d4s_standard_unattributed"}
+
+
+def test_run_cycle_skips_already_resolved_tasks():
+    # A task DFS still lists in tasks_ready but that we already fetched must NOT be re-fetched
+    # (the double-write guard). It's skipped: no canonical row, not in the mark_fetched results.
+    bq = FakeBigQueryClient()
+    h = _handler()
+    client = _FakeClient(bq, _ready_then_get(h, ["t0", "t1"]))
+    store = _FakeStore({
+        "t0": {"job_id": "j1", "keyword": "k0", "domain_id": 7, "domain": "x.com", "resolved": True},
+        "t1": {"job_id": "j1", "keyword": "k1", "domain_id": 7, "domain": "x.com", "resolved": False},
+    })
+
+    stats = service.run_cycle(client, store, h)
+    assert stats == {"endpoint": "serp_google_organic", "ready": 2, "skipped": 1,
+                     "deferred": 0, "fetched": 1, "failed": 0}
+    df = [t for t in bq.client.loaded_tables
+          if str(t["table_ref"]).endswith("serp-google-organic")][0]["df"]
+    assert set(df["task_id"]) == {"t1"}  # t0 skipped, only t1 written
+    _, results, _ = store.marked
+    assert {r["task_id"] for r in results} == {"t1"}  # t0 not re-marked
+
+
+def test_run_cycle_defers_unattributed_within_grace():
+    # A ready task with no dfs_task_log row yet (producer-write race) is DEFERRED within the
+    # grace window — not fetched, not bucketed to the sentinel — so it can attribute correctly
+    # once the producer's write lands.
+    bq = FakeBigQueryClient()
+    h = _handler()
+    client = _FakeClient(bq, _ready_then_get(h, ["unk"]))
+    store = _FakeStore({})
+    pending, clock = {}, [1000.0]
+    stats = service.run_cycle(client, store, h, pending=pending, grace_s=120.0, now=lambda: clock[0])
+    assert stats["deferred"] == 1 and stats["fetched"] == 0
+    assert "unk" in pending  # grace state retained for next cycle
+    assert bq.client.loaded_tables == []  # nothing written while deferred
+    _, results, _ = store.marked
+    assert results == []  # not marked
+
+
+def test_run_cycle_attributes_unattributed_after_grace():
+    # Once a task has been unattributable past grace_s, it's a genuine orphan -> sentinel.
+    bq = FakeBigQueryClient()
+    h = _handler()
+    client = _FakeClient(bq, _ready_then_get(h, ["unk"]))
+    store = _FakeStore({})
+    clock = [1000.0]
+    pending = {"unk": 1000.0 - 200}  # first seen 200s ago, grace is 120s
+    stats = service.run_cycle(client, store, h, pending=pending, grace_s=120.0, now=lambda: clock[0])
+    assert stats["deferred"] == 0 and stats["fetched"] == 1
+    df = [t for t in bq.client.loaded_tables
+          if str(t["table_ref"]).endswith("serp-google-organic")][0]["df"]
+    assert df.iloc[0]["job_id"] == "d4s_standard_unattributed"
+    assert "unk" not in pending  # cleared after bucketing
 
 
 def test_run_cycle_fires_job_complete_for_finished_jobs():
@@ -96,6 +154,24 @@ def test_run_cycle_fires_job_complete_for_finished_jobs():
     al = _FakeAlerter()
     service.run_cycle(client, store, h, alerter=al)
     assert ("job_complete", "j1", 1, 0) in al.events
+    # the dedup backstop fires for the completed job, scoped to its job_id
+    dedup = [q for q in bq.client.queries
+             if "DELETE" in q["sql"].upper() and "serp-google-organic" in q["sql"]]
+    assert len(dedup) == 1
+    jp = [p for p in dedup[0]["job_config"].query_parameters if p.name == "job_id"][0]
+    assert jp.value == "j1"
+
+
+def test_dedup_canonical_prunes_and_keeps_latest_upload():
+    bq = FakeBigQueryClient()
+    service._dedup_canonical(bq, "serp-google-organic", "j1")
+    q = [c for c in bq.client.queries if "DELETE" in c["sql"].upper()][0]
+    sql = q["sql"]
+    assert "serp-google-organic" in sql
+    assert "INTERVAL 2 DAY" in sql and "ingest_timestamp" in sql  # partition pruning
+    assert "U.task_id = T.task_id" in sql and "U.upload_id > T.upload_id" in sql  # keep latest
+    jp = [p for p in q["job_config"].query_parameters if p.name == "job_id"][0]
+    assert jp.value == "j1"
 
 
 def test_run_cycle_no_alerter_skips_job_complete():
@@ -154,7 +230,7 @@ def test_run_forever_loops_and_survives_endpoint_errors(monkeypatch):
     boom = EndpointHandler(key="boom", ready_url="r", get_url="g", canonical_table="c",
                            parse=lambda *a: None, cast=lambda df: df)
     service.run_forever(None, None, {"serp_google_organic": _handler(), "boom": boom},
-                        poll_interval=0, max_cycles=2, sleep=lambda s: None)
+                        alerter=_FakeAlerter(), poll_interval=0, max_cycles=2, sleep=lambda s: None)
     assert calls.count("serp_google_organic") == 2
     assert calls.count("boom") == 2  # error in 'boom' did not kill the loop
 
