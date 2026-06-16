@@ -26,7 +26,7 @@ class FakeQueryResult:
     def result(self):
         return self
 
-    def to_dataframe(self):
+    def to_dataframe(self, **kwargs):  # accept create_bqstorage_client= etc.
         return self._df
 
 

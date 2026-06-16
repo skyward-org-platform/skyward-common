@@ -36,13 +36,16 @@ class Alerter:
     def __init__(
         self,
         *,
-        channel: str = ALERT_CHANNEL,
+        channel: str | None = None,
         cooldown_s: float = _DEFAULT_COOLDOWN_S,
         send: Callable[[str], None] | None = None,
         now: Callable[[], float] = time.monotonic,
         hostname: str | None = None,
         enabled: bool | None = None,
     ) -> None:
+        # Channel is env-configurable so we can point at a testing channel without a code
+        # change (DFS_COLLECTOR_ALERT_CHANNEL); the webhook is SLACK_WEBHOOK_<CHANNEL>.
+        channel = channel or os.environ.get("DFS_COLLECTOR_ALERT_CHANNEL") or ALERT_CHANNEL
         self._channel = channel
         self._cooldown = cooldown_s
         self._now = now

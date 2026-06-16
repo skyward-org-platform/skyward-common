@@ -197,7 +197,7 @@ class _FakeResult:
     def result(self):
         return self
 
-    def to_dataframe(self):
+    def to_dataframe(self, **kwargs):
         return self._df
 
 

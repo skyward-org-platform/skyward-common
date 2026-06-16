@@ -71,6 +71,15 @@ def test_post_swallows_send_errors():
     a.fire("k", "x")  # must not raise
 
 
+def test_channel_is_env_configurable(monkeypatch):
+    monkeypatch.setenv("DFS_COLLECTOR_ALERT_CHANNEL", "ops_alerts_test")
+    a = Alerter(send=lambda _t: None, now=lambda: 0.0, hostname="h")
+    assert a._channel == "ops_alerts_test"
+    # explicit arg still wins over env
+    b = Alerter(channel="explicit", send=lambda _t: None, now=lambda: 0.0, hostname="h")
+    assert b._channel == "explicit"
+
+
 def test_classify_failure():
     from google.api_core import exceptions as gexc
     assert classify_failure(gexc.ServiceUnavailable("x"))[0] == "bigquery"

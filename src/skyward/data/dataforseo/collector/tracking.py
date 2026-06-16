@@ -200,7 +200,7 @@ class TrackingStore:
             bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint),
         ])
         df = self._retry(
-            lambda: self._bq.client.query(sql, job_config=cfg).result().to_dataframe(),
+            lambda: self._bq.client.query(sql, job_config=cfg).result().to_dataframe(create_bqstorage_client=False),
             label="completion_pct",
         )
         if df.empty:
@@ -231,7 +231,7 @@ class TrackingStore:
         """
         cfg = bigquery.QueryJobConfig(query_parameters=params)
         df = self._retry(
-            lambda: self._bq.client.query(sql, job_config=cfg).result().to_dataframe(),
+            lambda: self._bq.client.query(sql, job_config=cfg).result().to_dataframe(create_bqstorage_client=False),
             label="job_status",
         )
         out = []
@@ -275,7 +275,7 @@ class TrackingStore:
             bigquery.ArrayQueryParameter("ids", "STRING", list(task_ids)),
         ])
         df = self._retry(
-            lambda: self._bq.client.query(sql, job_config=cfg).result().to_dataframe(),
+            lambda: self._bq.client.query(sql, job_config=cfg).result().to_dataframe(create_bqstorage_client=False),
             label="lookup_tasks",
         )
         out: dict[str, dict] = {}
