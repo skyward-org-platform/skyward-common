@@ -9,6 +9,7 @@ prefer the POST/GET workflow via post_all().
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import time
 from typing import Any
@@ -16,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from skyward.data.dataforseo.base import BaseEndpoint, _UNSET
+from skyward.data.dataforseo.collector.producer import parse_task_post, submit_and_wait
 from skyward.data.dataforseo.exceptions import IncompleteTaskError
 from skyward.functions import _validate_job_id
 
@@ -26,6 +28,7 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
     READY_URL = "keywords_data/google_ads/search_volume/tasks_ready"
     GET_URL = "keywords_data/google_ads/search_volume/task_get"
     TABLE_NAME = "keywords_data-google_ads-search_volume"
+    COLLECTOR_ENDPOINT_KEY = "keywords_data_google_ads_search_volume"
 
     def _build_payload(self, target: str | list[str], **kwargs) -> list[dict]:
         keywords = [target] if isinstance(target, str) else target
@@ -353,6 +356,61 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
 
         return df
 
+    def _post_all_collector(
+        self,
+        targets: list[str],
+        *,
+        job_id: str,
+        resolved: dict | None,
+        proceed_at_pct: float = 1.0,
+        keywords_per_task: int = 1000,
+        location_code: int | None = None,
+        language_name: str = "English",
+    ) -> dict:
+        """Collector path: task_post keyword batches, record tracking rows, wait on BQ.
+
+        One task covers ~keywords_per_task keywords, so tracking is at task granularity
+        (the canonical table holds the per-keyword rows). Returns a receipt incl. 40200
+        reject counts. The collector drains results into the canonical table.
+        """
+        location_code = location_code or self.config.location_code
+        url = f"{self._client.BASE_URL}/{self.POST_URL}"
+
+        posted: list[dict] = []
+        rejected_payment = 0
+        rejected_other = 0
+        for i in range(0, len(targets), keywords_per_task):
+            chunk = targets[i:i + keywords_per_task]
+            payload = [{
+                "keywords": chunk,
+                "language_name": language_name,
+                "location_code": location_code,
+            }]
+            parsed = parse_task_post(self._client._post(url, payload))
+            posted.extend(parsed["posted"])
+            rejected_payment += parsed["rejected_payment"]
+            rejected_other += parsed["rejected_other"]
+
+        if rejected_payment:
+            print(f"[search_volume] WARNING: DFS rejected {rejected_payment} posts at submit "
+                  f"(40200 Payment Required — likely balance). Those batches were skipped "
+                  f"(not charged, not queued); rerun them later.")
+
+        summary = submit_and_wait(
+            bq_client=self._client.bq_client,
+            job_id=job_id,
+            endpoint_key=self.COLLECTOR_ENDPOINT_KEY,
+            posted_tasks=posted,
+            proceed_at_pct=proceed_at_pct,
+            poll_interval=self.config.task_poll_interval,
+            max_wait=self.config.task_total_timeout,
+            domain_id=(resolved or {}).get("domain_id"),
+            domain=(resolved or {}).get("domain"),
+        )
+        summary["rejected_payment"] = rejected_payment
+        summary["rejected_other"] = rejected_other
+        return summary
+
     async def post_all(
         self,
         targets: list[str],
@@ -365,9 +423,16 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         location_code: int | None = None,
         language_name: str = "English",
         keywords_per_task: int = 1000,
+        use_collector: bool | None = None,
+        proceed_at_pct: float = 1.0,
         **kwargs,
-    ) -> pd.DataFrame:
-        """Multi-batch POST/GET. Chunks targets, submits all, polls, retrieves in parallel."""
+    ):
+        """Multi-batch POST/GET.
+
+        Legacy (default): poll in-process, returns a DataFrame.
+        Collector mode (`use_collector=True` or `config.use_collector`): submit + track and
+        wait on dfs_job_summary; returns a summary receipt dict. See ClickUp 86bac9q9y.
+        """
         _validate_job_id(job_id)
 
         # Resolve domain
@@ -379,6 +444,15 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
             resolved = self._resolve_domain(domain, _UNSET, interactive)
         else:
             resolved = self._resolve_domain(_UNSET, domain_id, interactive)
+
+        use_collector = self.config.use_collector if use_collector is None else use_collector
+        if use_collector:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, functools.partial(
+                self._post_all_collector, targets, job_id=job_id, resolved=resolved,
+                proceed_at_pct=proceed_at_pct, keywords_per_task=keywords_per_task,
+                location_code=location_code, language_name=language_name,
+            ))
 
         # 1. Chunk + submit
         chunks = [targets[i : i + keywords_per_task] for i in range(0, len(targets), keywords_per_task)]

@@ -17,6 +17,7 @@ import pandas as pd
 import requests
 
 from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.data.dataforseo.collector.producer import parse_task_post, submit_and_wait
 from skyward.functions import _validate_job_id
 
 
@@ -28,6 +29,7 @@ class SerpGoogleOrganic(BaseEndpoint):
     FIXED_URL = "serp/google/organic/tasks_fixed"
     ENDPOINT_BASE = "serp/google/organic"
     TABLE_NAME = "serp-google-organic"
+    COLLECTOR_ENDPOINT_KEY = "serp_google_organic"
 
     def _build_payload(self, target: str, **kwargs) -> list[dict]:
         payload = {
@@ -283,7 +285,66 @@ class SerpGoogleOrganic(BaseEndpoint):
 
         return combined
 
-    async def post_all(self, *args, **kwargs) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def _post_all_collector(
+        self,
+        targets: list[str],
+        *,
+        job_id: str,
+        resolved: dict | None,
+        proceed_at_pct: float = 1.0,
+        batch_size: int = 100,
+        location_code: int | None = None,
+        language_code: int | None = None,
+        depth: int | None = None,
+        debug: bool | None = None,
+    ) -> dict:
+        """Collector path: task_post in chunks, record tracking rows, wait on BQ.
+
+        Does NOT fetch/parse/upload results — the always-on collector drains them into the
+        canonical table. Returns a receipt incl. 40200 (Payment Required) reject counts.
+        """
+        debug = debug if debug is not None else self.config.debug
+        location_code = location_code or self.config.location_code
+        language_code = language_code or self.config.language_code
+        batch_size = min(batch_size, 100)
+
+        url = f"{self._client.BASE_URL}/{self.POST_URL}"
+        base = {"location_code": location_code, "language_code": language_code}
+        if depth is not None:
+            base["depth"] = depth
+
+        posted: list[dict] = []
+        rejected_payment = 0
+        rejected_other = 0
+        for i in range(0, len(targets), batch_size):
+            chunk = targets[i:i + batch_size]
+            payload = [{"keyword": kw, "tag": kw, **base} for kw in chunk]
+            parsed = parse_task_post(self._client._post(url, payload))
+            posted.extend(parsed["posted"])
+            rejected_payment += parsed["rejected_payment"]
+            rejected_other += parsed["rejected_other"]
+
+        if rejected_payment:
+            print(f"[serp_google_organic] WARNING: DFS rejected {rejected_payment} posts at "
+                  f"submit (40200 Payment Required — likely balance). Those keywords were "
+                  f"skipped (not charged, not queued); rerun them later.")
+
+        summary = submit_and_wait(
+            bq_client=self._client.bq_client,
+            job_id=job_id,
+            endpoint_key=self.COLLECTOR_ENDPOINT_KEY,
+            posted_tasks=posted,
+            proceed_at_pct=proceed_at_pct,
+            poll_interval=self.config.task_poll_interval,
+            max_wait=self.config.task_total_timeout,
+            domain_id=(resolved or {}).get("domain_id"),
+            domain=(resolved or {}).get("domain"),
+        )
+        summary["rejected_payment"] = rejected_payment
+        summary["rejected_other"] = rejected_other
+        return summary
+
+    async def post_all(self, *args, **kwargs):
         """Async wrapper — delegates to _post_all_sync in a thread executor
         so callers can `await` uniformly across all endpoints."""
         loop = asyncio.get_event_loop()
@@ -309,10 +370,26 @@ class SerpGoogleOrganic(BaseEndpoint):
         language_code: str | None = None,
         debug: bool | None = None,
         depth: int | None = None,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """High-volume POST/GET. Returns (results_df, failed_df)."""
+        use_collector: bool | None = None,
+        proceed_at_pct: float = 1.0,
+    ):
+        """High-volume POST/GET.
+
+        Legacy (default): in-process poll, returns (results_df, failed_df).
+        Collector mode (`use_collector=True` or `config.use_collector`): submit + track in
+        BQ and wait on dfs_job_summary; returns a summary receipt dict (data lands in the
+        canonical table via the collector service). See ClickUp 86bac9q9y.
+        """
         _validate_job_id(job_id)
         resolved = self._resolve_domain(domain, domain_id, interactive)
+
+        use_collector = self.config.use_collector if use_collector is None else use_collector
+        if use_collector:
+            return self._post_all_collector(
+                targets, job_id=job_id, resolved=resolved, proceed_at_pct=proceed_at_pct,
+                batch_size=batch_size, location_code=location_code,
+                language_code=language_code, depth=depth, debug=debug,
+            )
 
         if batch_size > 100:
             batch_size = 100
