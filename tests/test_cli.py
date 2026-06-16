@@ -385,6 +385,37 @@ def test_get_hub_does_lazy_import():
 
 
 @patch("skyward.cli._get_hub")
+def test_add_site_competitor_cli(mock_get_hub):
+    hub = mock_get_hub.return_value
+    hub.add_site_competitor_by_domain.return_value = (1, 2)
+    from click.testing import CliRunner
+    from skyward.cli import cli
+    result = CliRunner().invoke(cli, [
+        "meta", "add-site-competitor",
+        "--site", "acme.com", "--competitor", "rival.com", "--priority", "HIGH",
+    ])
+    assert result.exit_code == 0
+    hub.add_site_competitor_by_domain.assert_called_once_with(
+        "acme.com", "rival.com", priority="HIGH"
+    )
+
+
+@patch("skyward.cli._get_hub")
+def test_list_site_competitors_cli(mock_get_hub):
+    import pandas as pd
+    hub = mock_get_hub.return_value
+    hub.get_domain.return_value = {"domain_id": 1, "domain": "acme.com"}
+    hub.get_site_competitors.return_value = pd.DataFrame(
+        [{"competitor_domain_id": 2, "domain": "rival.com", "priority": "HIGH"}]
+    )
+    from click.testing import CliRunner
+    from skyward.cli import cli
+    result = CliRunner().invoke(cli, ["meta", "list-site-competitors", "--site", "acme.com"])
+    assert result.exit_code == 0
+    hub.get_site_competitors.assert_called_once_with(1)
+
+
+@patch("skyward.cli._get_hub")
 def test_list_clients_table(mock_get_hub):
     hub = MagicMock()
     mock_get_hub.return_value = hub

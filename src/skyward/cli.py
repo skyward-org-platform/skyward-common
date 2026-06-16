@@ -79,7 +79,7 @@ def meta_deactivate_client(client_id, cascade):
 
 @meta.command("list-domains")
 @click.option("--client-id", required=True, type=int, help="Client ID.")
-@click.option("--competitors-only", is_flag=True, default=False, help="Only show competitor domains.")
+@click.option("--competitors-only", is_flag=True, default=False, help="[DEPRECATED: client-level flag; use list-site-competitors] Only show competitor domains.")
 @click.option("--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format.")
 def meta_list_domains(client_id, competitors_only, fmt):
     """List domains for a client."""
@@ -133,7 +133,7 @@ _PRIORITY_CHOICES = click.Choice(
 @meta.command("add-domain")
 @click.option("--domain", required=True, help="Domain to add (single).")
 @click.option("--client-id", default=None, type=int, help="Optional client ID to link the domain to.")
-@click.option("--competitor", is_flag=True, default=False, help="Mark as competitor (only with --client-id).")
+@click.option("--competitor", is_flag=True, default=False, help="[DEPRECATED: use add-site-competitor] Mark as competitor (only with --client-id).")
 @click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Priority (only with --client-id).")
 def meta_add_domain(domain, client_id, competitor, priority):
     """Add a single domain, optionally linking to a client."""
@@ -147,7 +147,7 @@ def meta_add_domain(domain, client_id, competitor, priority):
 @meta.command("add-domains")
 @click.option("--client-id", default=None, type=int, help="Optional client ID to link the domains to.")
 @click.option("--domains", required=True, help="Comma-separated list of domains.")
-@click.option("--competitor", is_flag=True, default=False, help="Mark as competitor domains (only with --client-id).")
+@click.option("--competitor", is_flag=True, default=False, help="[DEPRECATED: use add-site-competitor] Mark as competitor domains (only with --client-id).")
 @click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Priority (only with --client-id).")
 def meta_add_domains(client_id, domains, competitor, priority):
     """Bulk-add domains, optionally linking to a client."""
@@ -155,6 +155,49 @@ def meta_add_domains(client_id, domains, competitor, priority):
     domain_list = [d.strip() for d in domains.split(",")]
     result = hub.add_domains(domains=domain_list, client_id=client_id, is_competitor=competitor, priority=priority.upper())
     click.echo(f"Added {len(result)} domain(s)")
+
+
+@meta.command("list-site-competitors")
+@click.option("--site", required=True, help="Site domain (exact match) whose competitors to list.")
+@click.option("--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format.")
+def meta_list_site_competitors(site, fmt):
+    """List competitor domains for a site (forward direction)."""
+    hub = _get_hub()
+    rec = hub.get_domain(site)
+    if rec is None:
+        click.echo(f"Domain '{site}' not found", err=True)
+        raise click.exceptions.Exit(1)
+    df = hub.get_site_competitors(rec["domain_id"])
+    if fmt == "json":
+        click.echo(df.to_json(orient="records", indent=2))
+    else:
+        click.echo(df.to_string(index=False))
+
+
+@meta.command("add-site-competitor")
+@click.option("--site", required=True, help="Site domain (created if missing).")
+@click.option("--competitor", required=True, help="Competitor domain (created if missing).")
+@click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Priority.")
+def meta_add_site_competitor(site, competitor, priority):
+    """Add a directed site -> competitor relationship."""
+    hub = _get_hub()
+    site_id, comp_id = hub.add_site_competitor_by_domain(site, competitor, priority=priority.upper())
+    click.echo(f"Linked site {site_id} -> competitor {comp_id}")
+
+
+@meta.command("remove-site-competitor")
+@click.option("--site", required=True, help="Site domain (exact match).")
+@click.option("--competitor", required=True, help="Competitor domain (exact match).")
+def meta_remove_site_competitor(site, competitor):
+    """Remove a directed site -> competitor relationship."""
+    hub = _get_hub()
+    site_rec = hub.get_domain(site)
+    comp_rec = hub.get_domain(competitor)
+    if site_rec is None or comp_rec is None:
+        click.echo("Site or competitor domain not found", err=True)
+        raise click.exceptions.Exit(1)
+    hub.remove_site_competitor(site_rec["domain_id"], comp_rec["domain_id"])
+    click.echo("Removed")
 
 
 @meta.command("list-projects")
