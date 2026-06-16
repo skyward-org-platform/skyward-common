@@ -52,13 +52,9 @@ def _vm_name() -> str:
         return socket.gethostname()
 
 
-def _uptime() -> str:
-    try:
-        with open("/proc/uptime") as f:
-            mins = float(f.read().split()[0]) / 60
-        return f"{int(mins // 60)}h {int(mins % 60):02d}m"
-    except Exception:
-        return "unknown"
+def _fmt_uptime(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60):02d}m"
 
 
 class Alerter:
@@ -69,6 +65,7 @@ class Alerter:
         cooldown_s: float = _DEFAULT_COOLDOWN_S,
         send: Callable[[str], None] | None = None,
         now: Callable[[], float] = time.monotonic,
+        wall: Callable[[], float] = time.time,
         vm_name: str | None = None,
         enabled: bool | None = None,
     ) -> None:
@@ -77,6 +74,8 @@ class Alerter:
         self._channel = channel
         self._cooldown = cooldown_s
         self._now = now
+        self._wall = wall
+        self._start_epoch = wall()  # when this collector instance started (for uptime)
         self._vm = vm_name or _vm_name()
         self._send = send or self._default_send
         self._active: dict[str, float] = {}  # firing key -> last-sent monotonic time
@@ -136,8 +135,9 @@ class Alerter:
         self._post(f"\U0001f7e2 *DFS Collector VM Started*\nVM: {self._vm}")
 
     def shutdown(self, reason: str = "signal") -> None:
+        uptime = _fmt_uptime(self._wall() - self._start_epoch)
         self._post(
-            f"\U0001f534 *DFS Collector VM Shutting Down*\nVM: {self._vm}\nUptime: {_uptime()}"
+            f"\U0001f534 *DFS Collector VM Shutting Down*\nVM: {self._vm}\nUptime: {uptime}"
         )
 
     def crash(self, message: str) -> None:

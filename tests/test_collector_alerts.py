@@ -60,6 +60,15 @@ def test_lifecycle_messages_sf_style():
     assert all("VM: testvm" in m for m in msgs)
 
 
+def test_shutdown_uptime_is_since_instance_start():
+    wall = [1000.0]
+    msgs: list[str] = []
+    a = Alerter(send=msgs.append, now=lambda: 0.0, wall=lambda: wall[0], vm_name="v")
+    wall[0] = 1000.0 + 3 * 3600 + 25 * 60  # 3h 25m after this instance started
+    a.shutdown()
+    assert "Uptime: 3h 25m" in msgs[0]
+
+
 def test_disabled_is_noop():
     a = Alerter(now=lambda: 0.0, vm_name="h", enabled=False)  # no send, no webhook
     a.fire("k", title="x")
