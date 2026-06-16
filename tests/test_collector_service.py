@@ -139,10 +139,10 @@ class _FakeAlerter:
     def __init__(self):
         self.events = []
 
-    def fire(self, key, message, **kw):
+    def fire(self, key, **kw):
         self.events.append(("fire", key))
 
-    def resolve(self, key, message=None):
+    def resolve(self, key, **kw):
         self.events.append(("resolve", key))
 
     def startup(self):

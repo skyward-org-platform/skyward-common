@@ -153,22 +153,26 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
             try:
                 stats = run_cycle(client, store, handler)
             except CollectorDfsError:
-                alerter.fire(f"dfs:{key}", f"can't reach DataForSEO ({key})")
+                alerter.fire(f"dfs:{key}", title="DataForSEO Unreachable", fields={"Endpoint": key})
                 continue
             except Exception as e:  # noqa: BLE001 - never let one endpoint kill the loop
                 suffix, label = classify_failure(e)
-                alerter.fire(f"{suffix}:{key}", f"collector {label} on {key}: {e!r}")
+                alerter.fire(f"{suffix}:{key}", title=label,
+                             fields={"Endpoint": key, "Error": repr(e)})
                 print(f"[collector] cycle {cycle} {key} ERROR: {e!r}")
                 continue
 
             # success — clear any prior failure alerts for this endpoint
-            for ek in ("dfs", "bigquery", "error"):
-                alerter.resolve(f"{ek}:{key}")
+            for ek, recovered_title in (("dfs", "DataForSEO Reachable Again"),
+                                        ("bigquery", "BigQuery Recovered"),
+                                        ("error", "Cycle Recovered")):
+                alerter.resolve(f"{ek}:{key}", title=recovered_title, fields={"Endpoint": key})
             if stats["ready"] and stats["failed"] / stats["ready"] >= 0.5:
-                alerter.fire(f"failrate:{key}",
-                             f"{stats['failed']}/{stats['ready']} {key} fetches failing")
+                alerter.fire(f"failrate:{key}", title="High Fetch-Failure Rate",
+                             fields={"Endpoint": key, "Failed": f"{stats['failed']}/{stats['ready']}"})
             else:
-                alerter.resolve(f"failrate:{key}")
+                alerter.resolve(f"failrate:{key}", title="Fetch-Failure Rate Recovered",
+                                fields={"Endpoint": key})
             if stats["ready"]:
                 print(f"[collector] cycle {cycle} {stats}")
 
