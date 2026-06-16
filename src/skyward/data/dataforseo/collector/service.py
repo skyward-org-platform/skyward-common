@@ -178,7 +178,16 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
 
         alerter.heartbeat()
         if max_cycles is None or cycle < max_cycles:
-            sleep(poll_interval)
+            # Interruptible sleep: check should_stop ~every second so a SIGTERM (systemd
+            # stop/reboot) breaks promptly and the shutdown alert fires right away, instead
+            # of waiting out the full poll interval.
+            slept = 0.0
+            while slept < poll_interval:
+                if should_stop is not None and should_stop():
+                    return
+                step = min(1.0, poll_interval - slept)
+                sleep(step)
+                slept += step
 
 
 def main() -> None:  # pragma: no cover - thin wiring, exercised at deploy

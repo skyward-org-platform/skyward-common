@@ -207,6 +207,22 @@ def test_run_forever_should_stop_breaks_before_cycle(monkeypatch):
     assert calls == []
 
 
+def test_run_forever_sleep_is_interruptible_by_should_stop(monkeypatch):
+    monkeypatch.setattr(service, "run_cycle",
+                        lambda *a, **k: {"endpoint": "e", "ready": 0, "fetched": 0, "failed": 0})
+    flag = {"stop": False}
+    steps = {"n": 0}
+
+    def fake_sleep(_s):
+        steps["n"] += 1
+        flag["stop"] = True  # request stop after the first 1s step
+
+    service.run_forever(None, None, {"serp_google_organic": _handler()}, alerter=_FakeAlerter(),
+                        max_cycles=None, poll_interval=30, sleep=fake_sleep,
+                        should_stop=lambda: flag["stop"])
+    assert steps["n"] <= 2  # broke out mid-sleep, didn't wait the full 30s
+
+
 def test_build_allowlist_has_both_standard_endpoints():
     client = DataForSEOClient(username="u", password="p", bq_client=FakeBigQueryClient(),
                               config=ClientConfig())
