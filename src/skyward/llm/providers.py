@@ -600,7 +600,7 @@ class AnthropicProvider(LLMProvider):
     def name(self) -> str:
         return "anthropic"
 
-    def call(self, messages, model="claude-sonnet-4-20250514", *, response_model=None,
+    def call(self, messages, model="claude-sonnet-4-6", *, response_model=None,
              max_retries=DEFAULT_MAX_RETRIES, retry_delay=DEFAULT_RETRY_DELAY, **kwargs):
         system_prompt, filtered = self._extract_system(messages)
         args = {"model": model, "messages": filtered, "max_tokens": 4096, **kwargs}
@@ -640,6 +640,13 @@ class AnthropicProvider(LLMProvider):
                     )
                     content = raw_text
 
+                # Extended-thinking content lives in `thinking` blocks; capture it
+                # as reasoning_text (else it's silently dropped).
+                reasoning_text = "".join(
+                    b.thinking for b in response.content
+                    if getattr(b, "type", None) == "thinking" and getattr(b, "thinking", None)
+                ) or None
+
                 return LLMResult(
                     content=content,
                     input_tokens=usage.input_tokens,
@@ -650,6 +657,7 @@ class AnthropicProvider(LLMProvider):
                     model=getattr(response, "model", model),
                     stop_reason=getattr(response, "stop_reason", None),
                     raw_text=raw_text,
+                    reasoning_text=reasoning_text,
                     raw=response,
                 )
             except Exception as e:

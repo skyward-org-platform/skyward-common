@@ -132,15 +132,28 @@ class TestPerplexityLive:
 class TestAnthropicLive:
     def test_call_text(self):
         from skyward.llm.providers import AnthropicProvider
-        _assert_text_result(AnthropicProvider().call(BASIC_MESSAGES, "claude-sonnet-4-20250514"))
+        _assert_text_result(AnthropicProvider().call(BASIC_MESSAGES, "claude-sonnet-4-6"))
 
     def test_call_structured(self):
         from skyward.llm.providers import AnthropicProvider
         _assert_structured_result(
             AnthropicProvider().call(
-                BASIC_MESSAGES, "claude-sonnet-4-20250514", response_model=SimpleAnswer
+                BASIC_MESSAGES, "claude-sonnet-4-6", response_model=SimpleAnswer
             )
         )
+
+    def test_thinking_block_skipped_in_content_and_captured_as_reasoning(self):
+        """Defect 1 live: thinking block precedes text; content is text-only,
+        and the thinking content is captured in reasoning_text."""
+        from skyward.llm.providers import AnthropicProvider
+        r = AnthropicProvider().call(
+            [{"role": "user", "content": "What is 23*17? Think, then answer."}],
+            "claude-sonnet-4-6",
+            thinking={"type": "enabled", "budget_tokens": 1024},
+            max_tokens=2048,
+        )
+        assert isinstance(r.content, str) and len(r.content) > 0
+        assert r.reasoning_text is not None and len(r.reasoning_text) > 0
 
 
 @requires_grok

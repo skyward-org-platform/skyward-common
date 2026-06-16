@@ -735,6 +735,7 @@ class TestAnthropicProvider:
         # A non-text block first (e.g., thinking block), then the tool_use block
         thinking_block = MagicMock()
         thinking_block.type = "thinking"
+        thinking_block.thinking = "let me reason about this"
         tool_block = MagicMock()
         tool_block.type = "tool_use"
         tool_block.input = {"answer": "found_it", "confidence": 0.99}
@@ -750,6 +751,24 @@ class TestAnthropicProvider:
         assert isinstance(r.content, SampleResponse)
         assert r.content.answer == "found_it"
         assert r.content.confidence == 0.99
+
+    def test_anthropic_captures_thinking_as_reasoning_text(self):
+        """Extended-thinking blocks populate reasoning_text; content stays text."""
+        provider, mock_client = self._make_provider()
+        thinking = MagicMock()
+        thinking.type = "thinking"
+        thinking.thinking = "23*17 = 391."
+        text = MagicMock()
+        text.type = "text"
+        text.text = "391"
+        resp = MagicMock()
+        resp.content = [thinking, text]
+        resp.usage.input_tokens = 10
+        resp.usage.output_tokens = 5
+        mock_client.messages.create.return_value = resp
+        r = provider.call([{"role": "user", "content": "23*17?"}], "claude-sonnet-4-6")
+        assert r.content == "391"
+        assert r.reasoning_text == "23*17 = 391."
 
 
 class TestGrokProvider:
