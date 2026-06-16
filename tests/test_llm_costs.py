@@ -237,6 +237,28 @@ class TestSummarizeCosts:
         assert result["verify_cost"] == pytest.approx(verify_expected)
 
 
+class TestCacheAwareCost:
+
+    def test_cache_read_tokens_add_cost_at_discount(self):
+        """cache_read_tokens should add cost above base, but at a discount vs full input rate."""
+        from skyward.llm.costs import ANTHROPIC_COSTS, CACHE_READ_MULTIPLIER
+        model = "claude-sonnet-4-20250514"
+        provider = "anthropic"
+        # Base cost: 1000 input tokens, 0 output, 0 cache
+        base_cost = calculate_cost(1000, 0, model, provider)
+        # Cost with 1000 cache-read tokens on top
+        with_cache = calculate_cost(1000, 0, model, provider, cache_read_tokens=1000)
+        # Cache reads are cheaper than regular input (0.1x for Anthropic)
+        input_rate = ANTHROPIC_COSTS[model][0]
+        cache_rate = input_rate * CACHE_READ_MULTIPLIER[provider]
+        expected_cache_surcharge = 1000 * cache_rate / 1_000_000
+        assert with_cache == pytest.approx(base_cost + expected_cache_surcharge)
+        # Sanity: cache reads are strictly cheaper than the same number of regular input tokens
+        full_input_surcharge = 1000 * input_rate / 1_000_000
+        assert expected_cache_surcharge < full_input_surcharge
+        assert with_cache > base_cost
+
+
 class TestAnthropicAndGrokCosts:
 
     def test_anthropic_sonnet_pricing(self):
