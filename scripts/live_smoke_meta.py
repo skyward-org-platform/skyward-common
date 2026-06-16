@@ -98,6 +98,16 @@ def main():
         d2 = hub.add_domain("zzlive2.com", client_id=cid, is_competitor=True, priority="LOW")
         check("add_domain singular", isinstance(d2, int) and "zzlive2.com" in list(hub.get_client_domains(cid)["domain"]))
         check("add_domain is_competitor link", hub.get_client_domains(cid, is_competitor=True).iloc[0]["domain"] == "zzlive2.com")
+
+        # site competitors (site -> site)
+        sc_site = hub.add_domain("zzlive_site.com", client_id=cid)
+        sc_comp = hub.add_domain("zzlive_comp.com")
+        hub.add_site_competitor(sc_site, sc_comp, priority="HIGH")
+        check("add_site_competitor", sc_comp in list(hub.get_site_competitors(sc_site)["competitor_domain_id"]))
+        check("get_client_competitors", sc_comp in list(hub.get_client_competitors(cid)["competitor_domain_id"]))
+        hub.remove_site_competitor(sc_site, sc_comp)
+        check("remove_site_competitor", hub.get_site_competitors(sc_site).empty)
+
         hub.update_domains_batch([{"domain_id": d2, "domain_name": "ZZ Two", "is_active": False, "notes": "b"}])
         check("update_domains_batch", hub.get_domain("zzlive2.com")["domain_name"] == "ZZ Two")
 
