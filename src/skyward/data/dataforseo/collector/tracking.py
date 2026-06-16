@@ -252,22 +252,35 @@ class TrackingStore:
         return out
 
     def lookup_tasks(self, *, endpoint: str, task_ids: list[str]) -> dict[str, dict]:
-        """Map task_ids (for one endpoint) to their {job_id, keyword, domain_id, domain}.
+        """Map task_ids (for one endpoint) to {job_id, keyword, domain_id, domain, resolved}.
 
         Joins dfs_task_log -> dfs_job_summary for the run's domain context. task_ids absent
         from the result are untracked (the collector attributes those to the sentinel job).
+        `resolved` is True when the task is already 'fetched'/'failed' — the collector skips
+        those even when DFS keeps re-listing them in tasks_ready (eventual-consistency lag),
+        which is what prevents the double-write.
+
+        Scans only the last 7 days (partition pruning on `submitted_at`); standard-mode tasks
+        resolve within minutes–hours, so anything older is effectively dead and treated as
+        untracked. Keeps the per-cycle lookup cheap as the table grows.
         """
         if not task_ids:
             return {}
         from google.cloud import bigquery
 
         sql = f"""
-        SELECT l.task_id, ANY_VALUE(l.job_id) AS job_id, ANY_VALUE(l.keyword) AS keyword,
-               ANY_VALUE(s.domain_id) AS domain_id, ANY_VALUE(s.domain) AS domain
+        SELECT l.task_id,
+               ANY_VALUE(l.job_id) AS job_id,
+               ANY_VALUE(l.keyword) AS keyword,
+               MAX(IF(l.status != 'pending', 1, 0)) AS resolved,
+               ANY_VALUE(s.domain_id) AS domain_id,
+               ANY_VALUE(s.domain) AS domain
         FROM `{self._table(TASK_LOG_TABLE)}` l
         LEFT JOIN `{self._table(JOB_SUMMARY_TABLE)}` s
           ON l.job_id = s.job_id AND l.endpoint = s.endpoint
-        WHERE l.endpoint = @endpoint AND l.task_id IN UNNEST(@ids)
+        WHERE l.endpoint = @endpoint
+          AND l.task_id IN UNNEST(@ids)
+          AND l.submitted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
         GROUP BY l.task_id
         """
         cfg = bigquery.QueryJobConfig(query_parameters=[
@@ -285,17 +298,26 @@ class TrackingStore:
                 "keyword": None if pd.isna(r["keyword"]) else r["keyword"],
                 "domain_id": None if pd.isna(r["domain_id"]) else int(r["domain_id"]),
                 "domain": None if pd.isna(r["domain"]) else r["domain"],
+                "resolved": bool(r["resolved"]),
             }
         return out
 
     # ----- collector: batch status update -----
 
-    def mark_fetched(self, *, endpoint: str, results: list[dict]) -> None:
+    def mark_fetched(
+        self, *, endpoint: str, results: list[dict], job_ids: list[str] | None = None
+    ) -> None:
         """Batch-update task rows from a collector cycle, then recompute affected summaries.
 
         `results`: dicts with task_id, status, dfs_status_code, result_rows, attempts.
-        Idempotent: MERGE keys on task_id and the summary recomputes from the task-log, so a
-        retried/duplicated call yields the same counts.
+        `job_ids`: the distinct job_ids touched this cycle. When given, the summary recompute
+        is scoped to them (`job_id IN UNNEST`), so it prunes on the cluster key instead of
+        re-aggregating the endpoint's entire history every cycle. None = recompute all (legacy).
+
+        Idempotent: the task-log MERGE keys on task_id; the summary recomputes from the
+        task-log, so a retried/duplicated call yields the same counts. Untracked task_ids
+        (collector-drained orphans with no producer row) are INSERTed under the sentinel job
+        so they're recorded as resolved and not re-fetched next cycle.
         """
         if not results:
             return
@@ -316,6 +338,9 @@ class TrackingStore:
         rows_param = bigquery.ArrayQueryParameter("rows", "STRUCT", elements)
         ts_param = bigquery.ScalarQueryParameter("ts", "TIMESTAMP", ts.to_pydatetime())
 
+        # Upsert: MATCHED rows (tracked tasks) get their status/result updated; NOT MATCHED
+        # rows (untracked orphans) are inserted under the sentinel job so the next cycle's
+        # lookup sees them as resolved and skips them (no re-fetch, no double-write).
         merge = f"""
         MERGE `{self._table(TASK_LOG_TABLE)}` T
         USING UNNEST(@rows) S
@@ -326,10 +351,26 @@ class TrackingStore:
           dfs_status_code = S.dfs_status_code,
           result_rows = S.result_rows,
           attempts = S.attempts
+        WHEN NOT MATCHED THEN INSERT
+          (task_id, job_id, endpoint, keyword, submitted_at, fetched_at, status, dfs_status_code, result_rows, attempts)
+          VALUES (S.task_id, @sentinel, @endpoint, NULL, @ts, @ts, S.status, S.dfs_status_code, S.result_rows, S.attempts)
         """
-        self._query(merge, [rows_param, ts_param], label="mark_fetched.merge_task_log")
+        self._query(merge, [
+            rows_param, ts_param,
+            bigquery.ScalarQueryParameter("sentinel", "STRING", SENTINEL_JOB_ID),
+            bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint),
+        ], label="mark_fetched.merge_task_log")
 
-        # Recompute summary counts/status from dfs_task_log (source of truth) for this endpoint.
+        # Recompute summary counts/status from dfs_task_log (source of truth). Scope to the
+        # touched job_ids when provided so we don't re-scan the endpoint's whole history.
+        touched = [j for j in (job_ids or []) if j and j != SENTINEL_JOB_ID]
+        scope = "AND job_id IN UNNEST(@job_ids)" if touched else ""
+        params = [
+            bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint),
+            ts_param,
+        ]
+        if touched:
+            params.append(bigquery.ArrayQueryParameter("job_ids", "STRING", touched))
         update = f"""
         UPDATE `{self._table(JOB_SUMMARY_TABLE)}` S
         SET fetched_count = c.fetched,
@@ -344,15 +385,12 @@ class TrackingStore:
                  COUNT(DISTINCT IF(status = 'fetched', task_id, NULL)) AS fetched,
                  COUNT(DISTINCT IF(STARTS_WITH(status, 'failed'), task_id, NULL)) AS failed
           FROM `{self._table(TASK_LOG_TABLE)}`
-          WHERE endpoint = @endpoint
+          WHERE endpoint = @endpoint {scope}
           GROUP BY job_id, endpoint
         ) c
         WHERE S.job_id = c.job_id AND S.endpoint = c.endpoint
         """
-        self._query(update, [
-            bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint),
-            ts_param,
-        ], label="mark_fetched.update_summary")
+        self._query(update, params, label="mark_fetched.update_summary")
 
     def claim_completed_jobs(self, *, endpoint: str) -> list[dict]:
         """Newly-completed jobs for an endpoint (status='done', not yet alerted).

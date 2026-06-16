@@ -51,8 +51,17 @@ CREATE TABLE IF NOT EXISTS `{PROJECT_DEFAULT}.{DATASET}.dfs_task_log` (
 )
 PARTITION BY DATE(submitted_at)
 CLUSTER BY endpoint, status, job_id
-OPTIONS(description="Per-task ledger for standard-mode DFS runs. Collector's 'what's still pending on endpoint X' query and the recovery source-of-truth.")
+OPTIONS(
+  partition_expiration_days=30,
+  description="Per-task ledger for standard-mode DFS runs. Collector's 'what's still pending on endpoint X' query and the recovery source-of-truth. Partitions auto-expire after 30 days (tasks resolve in minutes-hours; lookups only scan the last 7)."
+)
 """.strip()
+
+# Applied to the already-existing table (CREATE IF NOT EXISTS won't change a live table's options).
+TASK_LOG_EXPIRATION_ALTER = (
+    f"ALTER TABLE `{PROJECT_DEFAULT}.{DATASET}.dfs_task_log` "
+    f"SET OPTIONS(partition_expiration_days=30)"
+)
 
 
 def _make_bq(project: str | None):
@@ -74,12 +83,16 @@ def cli(yes: bool, project: str | None):
         click.echo("[dry-run] Would execute:\n")
         click.echo(JOB_SUMMARY_DDL)
         click.echo("\n" + TASK_LOG_DDL)
+        click.echo("\n" + TASK_LOG_EXPIRATION_ALTER)
         click.echo("\n[dry-run] Re-run with --yes to create both tables.")
         return
 
     for label, ddl in (("dfs_job_summary", JOB_SUMMARY_DDL), ("dfs_task_log", TASK_LOG_DDL)):
         click.echo(f"[exec] Creating {DATASET}.{label} ...")
         bq.client.query(ddl).result()
+    # Ensure 30-day partition expiration even on a pre-existing dfs_task_log (idempotent).
+    click.echo("[exec] Applying 30-day partition expiration to dfs_task_log ...")
+    bq.client.query(TASK_LOG_EXPIRATION_ALTER).result()
     click.echo("[exec] Done (CREATE TABLE IF NOT EXISTS — no-op if they already existed).")
 
 
