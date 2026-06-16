@@ -82,6 +82,16 @@ def test_channel_is_env_configurable(monkeypatch):
     assert b._channel == "explicit"
 
 
+def test_job_complete_success_vs_degraded():
+    clock = [0.0]
+    a, msgs = _alerter(clock)
+    a.job_complete(job_id="j1", endpoint="serp_google_organic", succeeded=10, failed=0)
+    a.job_complete(job_id="j2", endpoint="serp_google_organic", succeeded=8, failed=2)
+    assert "✅" in msgs[0] and "Job Complete" in msgs[0]
+    assert "Job ID: j1" in msgs[0] and "Succeeded: 10" in msgs[0] and "Failed: 0" in msgs[0]
+    assert "⚠️" in msgs[1] and "Failed: 2" in msgs[1]  # any failure -> degraded
+
+
 def test_classify_failure():
     from google.api_core import exceptions as gexc
     assert classify_failure(gexc.ServiceUnavailable("x"))[0] == "bigquery"

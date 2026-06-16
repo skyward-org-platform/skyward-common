@@ -115,6 +115,32 @@ def test_job_status_empty_when_unknown():
     assert store.job_status(job_id="nope") == []
 
 
+# ---- claim_completed_jobs() ----
+
+def test_claim_completed_jobs_returns_and_stamps():
+    store, bq = _store()
+    bq.client.queue_result(pd.DataFrame([
+        {"job_id": "j1", "fetched_count": 10, "failed_count": 0},
+        {"job_id": "j2", "fetched_count": 8, "failed_count": 2},
+    ]))
+    jobs = store.claim_completed_jobs(endpoint="serp_google_organic")
+    assert {j["job_id"] for j in jobs} == {"j1", "j2"}
+    j1 = next(j for j in jobs if j["job_id"] == "j1")
+    assert j1["succeeded"] == 10 and j1["failed"] == 0
+    # the SELECT scopes to done + unnotified + excludes the sentinel
+    sel = [c for c in bq.client.queries if "SELECT" in c["sql"].upper()][0]["sql"]
+    assert "status = 'done'" in sel and "notified_at IS NULL" in sel and "@sentinel" in sel
+    # an UPDATE stamping notified_at was issued
+    assert any("UPDATE" in c["sql"].upper() and "notified_at" in c["sql"] for c in bq.client.queries)
+
+
+def test_claim_completed_jobs_empty_no_update():
+    store, bq = _store()
+    bq.client.queue_result(pd.DataFrame())
+    assert store.claim_completed_jobs(endpoint="x") == []
+    assert not any("UPDATE" in c["sql"].upper() and "notified_at" in c["sql"] for c in bq.client.queries)
+
+
 # ---- mark_fetched() ----
 
 def test_mark_fetched_one_merge_and_one_summary_update():

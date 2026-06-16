@@ -54,7 +54,7 @@ def _task_status_code(raw) -> int | None:
     return ((raw.get("tasks") or [{}])[0] or {}).get("status_code")
 
 
-def run_cycle(client, store: TrackingStore, handler, *, bq_client=None) -> dict:
+def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=None) -> dict:
     """Drain one endpoint once. Returns {endpoint, ready, fetched, failed}."""
     bq_client = bq_client or client.bq_client
     ready = fetch_ready_task_ids(client, handler.ready_url)
@@ -113,6 +113,13 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None) -> dict:
     # this leaves the tasks 'pending' (the data is already in the canonical table; re-marking
     # is idempotent) rather than 'fetched' with no data.
     store.mark_fetched(endpoint=handler.key, results=results)
+
+    # Per-job 'done' alert: any job whose tasks are now all resolved (fires once via notified_at).
+    if alerter is not None:
+        for job in store.claim_completed_jobs(endpoint=handler.key):
+            alerter.job_complete(job_id=job["job_id"], endpoint=handler.key,
+                                 succeeded=job["succeeded"], failed=job["failed"])
+
     return {"endpoint": handler.key, "ready": len(ready), "fetched": fetched, "failed": failed}
 
 
@@ -151,7 +158,7 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
         for handler in handlers.values():
             key = handler.key
             try:
-                stats = run_cycle(client, store, handler)
+                stats = run_cycle(client, store, handler, alerter=alerter)
             except CollectorDfsError:
                 alerter.fire(f"dfs:{key}", title="DataForSEO Unreachable", fields={"Endpoint": key})
                 continue

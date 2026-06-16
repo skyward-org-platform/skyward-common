@@ -353,3 +353,45 @@ class TrackingStore:
             bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint),
             ts_param,
         ], label="mark_fetched.update_summary")
+
+    def claim_completed_jobs(self, *, endpoint: str) -> list[dict]:
+        """Newly-completed jobs for an endpoint (status='done', not yet alerted).
+
+        Reads them, then stamps `notified_at` so each fires its 'Job Complete' alert exactly
+        once (persistent across collector restarts). Excludes the `_unattributed` sentinel —
+        those have no producer / no total_tasks to "complete". Returns
+        [{job_id, succeeded, failed}].
+        """
+        from google.cloud import bigquery
+
+        params = [
+            bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint),
+            bigquery.ScalarQueryParameter("sentinel", "STRING", SENTINEL_JOB_ID),
+        ]
+        where = ("endpoint = @endpoint AND status = 'done' "
+                 "AND notified_at IS NULL AND job_id != @sentinel")
+        sel = f"""
+        SELECT job_id, fetched_count, failed_count
+        FROM `{self._table(JOB_SUMMARY_TABLE)}`
+        WHERE {where}
+        """
+        cfg = bigquery.QueryJobConfig(query_parameters=params)
+        df = self._retry(
+            lambda: self._bq.client.query(sel, job_config=cfg).result().to_dataframe(create_bqstorage_client=False),
+            label="claim_completed.select",
+        )
+        if df.empty:
+            return []
+        jobs = [{
+            "job_id": r["job_id"],
+            "succeeded": int(r["fetched_count"] or 0),
+            "failed": int(r["failed_count"] or 0),
+        } for _, r in df.iterrows()]
+
+        ts = pd.Timestamp.now("UTC")
+        self._query(
+            f"UPDATE `{self._table(JOB_SUMMARY_TABLE)}` SET notified_at = @ts WHERE {where}",
+            params + [bigquery.ScalarQueryParameter("ts", "TIMESTAMP", ts.to_pydatetime())],
+            label="claim_completed.update",
+        )
+        return jobs

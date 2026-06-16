@@ -27,12 +27,16 @@ class _FakeStore:
     def __init__(self, lookup):
         self._lookup = lookup
         self.marked = None
+        self.completed = []  # jobs returned by claim_completed_jobs
 
     def lookup_tasks(self, *, endpoint, task_ids):
         return {k: v for k, v in self._lookup.items() if k in task_ids}
 
     def mark_fetched(self, *, endpoint, results):
         self.marked = (endpoint, results)
+
+    def claim_completed_jobs(self, *, endpoint):
+        return self.completed
 
 
 def _handler():
@@ -81,6 +85,26 @@ def test_run_cycle_writes_canonical_marks_and_attributes_unknown():
     assert ep == "serp_google_organic"
     assert {r["task_id"] for r in results} == {"t0", "t1", "unk"}
     assert all(r["status"] == "fetched" for r in results)
+
+
+def test_run_cycle_fires_job_complete_for_finished_jobs():
+    bq = FakeBigQueryClient()
+    h = _handler()
+    client = _FakeClient(bq, _ready_then_get(h, ["t0"]))
+    store = _FakeStore({"t0": {"job_id": "j1", "keyword": "k", "domain_id": None, "domain": None}})
+    store.completed = [{"job_id": "j1", "succeeded": 1, "failed": 0}]
+    al = _FakeAlerter()
+    service.run_cycle(client, store, h, alerter=al)
+    assert ("job_complete", "j1", 1, 0) in al.events
+
+
+def test_run_cycle_no_alerter_skips_job_complete():
+    bq = FakeBigQueryClient()
+    h = _handler()
+    client = _FakeClient(bq, _ready_then_get(h, ["t0"]))
+    store = _FakeStore({"t0": {"job_id": "j1", "keyword": "k", "domain_id": None, "domain": None}})
+    store.completed = [{"job_id": "j1", "succeeded": 1, "failed": 0}]
+    service.run_cycle(client, store, h)  # no alerter -> no claim/alert, no error
 
 
 def test_run_cycle_no_ready_is_noop():
@@ -156,6 +180,9 @@ class _FakeAlerter:
 
     def heartbeat(self):
         self.events.append(("heartbeat",))
+
+    def job_complete(self, *, job_id, endpoint, succeeded, failed):
+        self.events.append(("job_complete", job_id, succeeded, failed))
 
 
 def test_run_forever_alerts_on_dfs_unreachable_then_recovers(monkeypatch):

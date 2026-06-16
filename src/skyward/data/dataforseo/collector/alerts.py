@@ -117,6 +117,19 @@ class Alerter:
             del self._active[key]
             self._post(self._format("✅", title, fields))
 
+    def job_complete(self, *, job_id: str, endpoint: str, succeeded: int, failed: int) -> None:
+        """One-shot 'Job Complete' alert (claimed via notified_at, so no dedup needed).
+
+        ✅ when all tasks succeeded; ⚠️ when any failed, so degraded jobs stand out.
+        """
+        emoji = "⚠️" if failed else "✅"
+        self._post(self._format(emoji, "Job Complete", {
+            "Job ID": job_id,
+            "Endpoint": endpoint,
+            "Succeeded": succeeded,
+            "Failed": failed,
+        }))
+
     # ----- lifecycle (SF style) -----
 
     def startup(self) -> None:

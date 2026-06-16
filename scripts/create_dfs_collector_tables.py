@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS `{PROJECT_DEFAULT}.{DATASET}.dfs_job_summary` (
   status        STRING             OPTIONS(description="submitting | pending | done | partial."),
   submitted_at  TIMESTAMP          OPTIONS(description="When the producer finished submitting this job+endpoint."),
   last_updated  TIMESTAMP          OPTIONS(description="Touched by the collector each cycle it makes progress."),
-  notes         STRING             OPTIONS(description="Optional free-form (e.g. submit-time rejection counts).")
+  notes         STRING             OPTIONS(description="Optional free-form (e.g. submit-time rejection counts)."),
+  notified_at   TIMESTAMP          OPTIONS(description="Set when the job-complete Slack alert was sent; NULL = not yet alerted. Makes the per-job 'done' alert fire exactly once.")
 )
 CLUSTER BY job_id
 OPTIONS(description="Per-(job_id,endpoint) progress rollup for standard-mode DFS runs. Producer reads one tiny row to track completion.")
