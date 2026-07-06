@@ -149,8 +149,13 @@ class DataForSEOClient:
         session.auth = self._auth
         retry = Retry(
             total=self.config.max_retries,
-            backoff_factor=2,
+            backoff_factor=2,          # exponential: ~2s, 4s, 8s, 16s between retries
+            backoff_jitter=1.0,        # + up to 1s random jitter so concurrent workers (the
+                                       # collector fans out task_get across threads) don't all
+                                       # back off and retry in lockstep after a shared 429
+            backoff_max=30,            # cap any single backoff wait at 30s
             status_forcelist=[429, 500, 502, 503, 504],
+            respect_retry_after_header=True,  # obey DFS's Retry-After header on 429 when present
         )
         session.mount("https://", HTTPAdapter(max_retries=retry))
         return session

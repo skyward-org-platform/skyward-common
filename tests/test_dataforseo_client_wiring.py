@@ -33,3 +33,15 @@ def test_client_respects_custom_config():
     client = DataForSEOClient(username="u", password="p", config=cfg)
     assert client.config.location_code == 2036
     assert client.config.debug is True
+
+
+def test_session_retry_uses_jittered_exponential_backoff_on_rate_limits():
+    # 429/5xx are retried with exponential backoff + jitter, so the collector's concurrent
+    # task_get workers don't retry in lockstep and keep hammering the DFS rate limit.
+    client = DataForSEOClient(username="u", password="p")
+    retry = client._create_session().get_adapter("https://api.dataforseo.com").max_retries
+    assert 429 in retry.status_forcelist
+    assert retry.backoff_factor == 2          # exponential growth
+    assert retry.backoff_jitter > 0           # random jitter to decorrelate concurrent retries
+    assert retry.backoff_max <= 30            # single backoff wait is capped
+    assert retry.respect_retry_after_header is True  # honor DFS Retry-After on 429

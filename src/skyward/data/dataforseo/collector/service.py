@@ -11,6 +11,7 @@ Run locally:  python -m skyward.data.dataforseo.collector.service
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
@@ -20,6 +21,7 @@ from skyward.data.dataforseo.collector.tracking import (
 from skyward.functions import generate_upload_id
 
 _NOT_FOUND = 40401  # DFS task_get: Task Not Found (e.g. a task that was never queued)
+_READY_PAGE_CAP = 1000  # DFS tasks_ready returns at most this many ids per call; a full page => more backlog
 
 
 class CollectorDfsError(Exception):
@@ -55,7 +57,8 @@ def _task_status_code(raw) -> int | None:
 
 
 def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=None,
-              pending=None, grace_s=600.0, now=time.monotonic, flush_every=100) -> dict:
+              pending=None, grace_s=600.0, now=time.monotonic, flush_every=100,
+              fetch_workers=6) -> dict:
     """Drain one endpoint once. Returns {endpoint, ready, skipped, deferred, fetched, failed}.
 
     `pending` (task_id -> first-seen monotonic time) carries the unattributed grace state
@@ -67,6 +70,11 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=
     tasks rather than accumulating the whole cycle and concatenating once at the end (that
     end-of-cycle peak is what OOM-killed the collector on the 2 GB VM). Smaller batches also
     persist progress incrementally, so a crash/restart mid-cycle keeps what was already drained.
+    `fetch_workers` is how many task_get calls run concurrently — the throughput lever. task_get
+    is a read and the client is thread-safe (its live_all path fans out the same way), so this
+    turns the serial fetch (the bottleneck) into a parallel one. It's bounded by the flush batch
+    so memory stays capped, and kept well under the DFS account rate limit so live pulls aren't
+    starved.
     """
     bq_client = bq_client or client.bq_client
     pending = pending if pending is not None else {}
@@ -105,6 +113,9 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=
         results.clear()
         batch_jobs.clear()
 
+    # Phase 1 — classify every ready task (serial, no I/O). This reads the clock and mutates the
+    # grace `pending` state, so it must stay single-threaded; it only decides skip/defer/fetch.
+    to_fetch: list[tuple[str, dict]] = []
     for tid in ready:
         info = lookup.get(tid)
         # Already fetched/failed in a prior cycle: DFS keeps re-listing it in tasks_ready
@@ -128,43 +139,57 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=
             info = {"job_id": SENTINEL_JOB_ID, "keyword": None, "domain_id": None, "domain": None}
         else:
             pending.pop(tid, None)  # became attributable — clear any prior defer
-        batch_jobs.add(info["job_id"])
+        to_fetch.append((tid, info))
+
+    def _fetch_one(item: tuple[str, dict]) -> dict:
+        # Runs in a worker thread: one task_get + parse. Pure per-task work (no shared mutable
+        # state), so it's safe to run `fetch_workers` at a time.
+        tid, info = item
         raw = client._get(f"{client.BASE_URL}/{handler.get_url}/{tid}")
         status_code = _task_status_code(raw)
-
+        df = None
         if raw is None:
             status, n = "failed_other", 0
         elif status_code == _NOT_FOUND:
             status, n = "failed_not_found", 0
         else:
             try:
-                df = handler.parse(raw, info["keyword"])
-                if df is not None and not df.empty:
-                    df = handler.cast(df)
+                parsed = handler.parse(raw, info["keyword"])
+                if parsed is not None and not parsed.empty:
+                    parsed = handler.cast(parsed)
             except Exception:
-                df = None
-            n = 0 if (df is None or df.empty) else len(df)
+                parsed = None
+            n = 0 if (parsed is None or parsed.empty) else len(parsed)
             status = "fetched"  # a valid response with 0 rows is still "fetched"
             if n:
-                df = df.copy()
-                df["job_id"] = info["job_id"]
-                df["domain_id"] = info["domain_id"]
-                df["domain"] = info["domain"]
-                df["endpoint_mode"] = "standard"
-                frames.append(df)
+                parsed = parsed.copy()
+                parsed["job_id"] = info["job_id"]
+                parsed["domain_id"] = info["domain_id"]
+                parsed["domain"] = info["domain"]
+                parsed["endpoint_mode"] = "standard"
+                df = parsed
+        return {"tid": tid, "info": info, "status": status,
+                "status_code": status_code, "n": n, "df": df}
 
-        if status == "fetched":
-            fetched += 1
-        else:
-            failed += 1
-        results.append({
-            "task_id": tid, "status": status, "dfs_status_code": status_code,
-            "result_rows": n, "attempts": 1,
-        })
-        if len(results) >= flush_every:
-            _flush()
-
-    _flush()  # commit the final partial batch (also flushes when ready < flush_every)
+    # Phase 2 — fetch concurrently, one flush-sized chunk at a time. Chunking by `flush_every`
+    # keeps at most that many parsed frames resident before the batch is written, so the memory
+    # bound holds even though fetches now overlap. `ex.map` preserves order and the per-task
+    # accumulation below is single-threaded, so attribution/counting stay deterministic.
+    with ThreadPoolExecutor(max_workers=max(1, fetch_workers)) as ex:
+        for i in range(0, len(to_fetch), flush_every):
+            for r in ex.map(_fetch_one, to_fetch[i:i + flush_every]):
+                batch_jobs.add(r["info"]["job_id"])
+                if r["df"] is not None:
+                    frames.append(r["df"])
+                if r["status"] == "fetched":
+                    fetched += 1
+                else:
+                    failed += 1
+                results.append({
+                    "task_id": r["tid"], "status": r["status"],
+                    "dfs_status_code": r["status_code"], "result_rows": r["n"], "attempts": 1,
+                })
+            _flush()  # append canonical then mark_fetched for this chunk (order preserved)
 
     # On each newly-completed job: (1) dedup-DELETE backstop — clears any crash-path duplicate
     # rows (append succeeded, mark_fetched didn't, task re-fetched on restart) keyed on task_id
@@ -234,12 +259,16 @@ def _dedup_canonical(bq_client, table_name: str, job_id: str) -> None:
 
 def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
                 max_cycles=None, sleep=time.sleep, should_stop=None, grace_s=600.0,
-                flush_every=100) -> None:
+                flush_every=100, fetch_workers=6) -> None:
     """Loop over all allowlisted endpoints each cycle, alerting on failures.
 
     One endpoint erroring never kills the loop. Per endpoint, failures alert (deduped) and a
     later success resolves them. A heartbeat line is emitted once per loop. `should_stop()`
     (set by the SIGTERM handler) breaks the loop for a graceful shutdown.
+
+    When any endpoint returns a full tasks_ready page (`_READY_PAGE_CAP`), there is more backlog
+    waiting at DFS, so the inter-cycle `poll_interval` idle is skipped and the next cycle runs
+    immediately — draining a large backlog at fetch speed instead of one page per poll_interval.
     """
     from skyward.data.dataforseo.collector.alerts import Alerter, classify_failure
     alerter = alerter or Alerter()
@@ -253,11 +282,13 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
         if should_stop is not None and should_stop():
             break
         cycle += 1
+        max_ready = 0  # largest tasks_ready page this loop -> whether there's backlog to chase
         for handler in handlers.values():
             key = handler.key
             try:
                 stats = run_cycle(client, store, handler, alerter=alerter,
-                                  pending=pending[key], grace_s=grace_s, flush_every=flush_every)
+                                  pending=pending[key], grace_s=grace_s, flush_every=flush_every,
+                                  fetch_workers=fetch_workers)
             except CollectorDfsError:
                 alerter.fire(f"dfs:{key}", title="DataForSEO Unreachable", fields={"Endpoint": key})
                 continue
@@ -282,11 +313,14 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
             else:
                 alerter.resolve(f"failrate:{key}", title="Fetch-Failure Rate Recovered",
                                 fields={"Endpoint": key})
+            max_ready = max(max_ready, stats["ready"])
             if stats["ready"]:
                 print(f"[collector] cycle {cycle} {stats}")
 
         alerter.heartbeat()
-        if max_cycles is None or cycle < max_cycles:
+        # A full page means more is waiting -> poll again immediately; only idle when caught up.
+        backlog = max_ready >= _READY_PAGE_CAP
+        if not backlog and (max_cycles is None or cycle < max_cycles):
             # Interruptible sleep: check should_stop ~every second so a SIGTERM (systemd
             # stop/reboot) breaks promptly and the shutdown alert fires right away, instead
             # of waiting out the full poll interval.
@@ -333,13 +367,18 @@ def main() -> None:  # pragma: no cover - thin wiring, exercised at deploy
     # so a whole 1000-task cycle in memory OOM-kills the 2 GB VM; 100 caps the peak at ~160 MB.
     # Env-tunable so it can be retuned without a code redeploy.
     flush_every = int(os.environ.get("DFS_COLLECTOR_FLUSH_EVERY", 100))
+    # Concurrent task_get calls. Default 6 keeps throughput well under the DFS account rate
+    # limit (~2000 calls/min, shared with live pulls) while being ~8x the old serial fetch.
+    fetch_workers = int(os.environ.get("DFS_COLLECTOR_FETCH_WORKERS", 6))
     print(f"[collector] starting; endpoints={list(handlers)} "
-          f"poll_interval={client.config.task_poll_interval}s grace_s={grace_s} flush_every={flush_every}")
+          f"poll_interval={client.config.task_poll_interval}s grace_s={grace_s} "
+          f"flush_every={flush_every} fetch_workers={fetch_workers}")
     alerter.startup()
     try:
         run_forever(client, store, handlers, alerter=alerter,
                     poll_interval=client.config.task_poll_interval,
-                    should_stop=lambda: stop["flag"], grace_s=grace_s, flush_every=flush_every)
+                    should_stop=lambda: stop["flag"], grace_s=grace_s, flush_every=flush_every,
+                    fetch_workers=fetch_workers)
     except Exception as e:  # pragma: no cover - top-level safety net
         alerter.crash(f"collector crashed: {e!r}")
         raise

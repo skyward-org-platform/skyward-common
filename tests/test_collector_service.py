@@ -126,6 +126,68 @@ def test_run_cycle_flushes_incrementally_every_n_tasks():
     assert all(call["job_ids"] == ["j1"] for call in store.marks)
 
 
+def test_run_cycle_parallel_fetch_drains_all_and_attributes():
+    # With fetch_workers>1 the task_get calls run concurrently, but every task must still be
+    # fetched exactly once, attributed correctly, and written in flush-sized batches.
+    bq = FakeBigQueryClient()
+    h = _handler()
+    ids = [f"t{i}" for i in range(10)]
+    client = _FakeClient(bq, _ready_then_get(h, ids))
+    store = _AccumStore({i: {"job_id": "j1", "keyword": i, "domain_id": 1, "domain": "x.com"} for i in ids})
+
+    stats = service.run_cycle(client, store, h, flush_every=4, fetch_workers=4)
+    assert stats["fetched"] == 10 and stats["failed"] == 0
+
+    loaded = [t for t in bq.client.loaded_tables if str(t["table_ref"]).endswith("serp-google-organic")]
+    written = [tid for t in loaded for tid in t["df"]["task_id"]]
+    assert sorted(written) == sorted(ids)          # none lost, none duplicated
+    assert [len(t["df"]) for t in loaded] == [4, 4, 2]  # still batched by flush_every
+    marked = [r["task_id"] for call in store.marks for r in call["results"]]
+    assert sorted(marked) == sorted(ids)
+
+
+def test_run_cycle_parallel_still_skips_resolved_and_defers(monkeypatch):
+    # The grace/skip/sentinel classification is single-threaded and must survive parallelization:
+    # a resolved task is skipped (not re-fetched) and an unknown one defers within grace.
+    bq = FakeBigQueryClient()
+    h = _handler()
+    client = _FakeClient(bq, _ready_then_get(h, ["t0", "t1", "unk"]))
+    store = _AccumStore({
+        "t0": {"job_id": "j1", "keyword": "k0", "domain_id": 1, "domain": "x.com", "resolved": True},
+        "t1": {"job_id": "j1", "keyword": "k1", "domain_id": 1, "domain": "x.com"},
+    })
+    pending, clock = {}, [1000.0]
+    stats = service.run_cycle(client, store, h, flush_every=4, fetch_workers=4,
+                              pending=pending, grace_s=120.0, now=lambda: clock[0])
+    assert stats["skipped"] == 1 and stats["deferred"] == 1 and stats["fetched"] == 1
+    written = [tid for t in bq.client.loaded_tables
+               if str(t["table_ref"]).endswith("serp-google-organic") for tid in t["df"]["task_id"]]
+    assert written == ["t1"]  # t0 skipped (resolved), unk deferred, only t1 fetched
+    assert "unk" in pending
+
+
+def test_run_forever_skips_sleep_when_ready_at_page_cap(monkeypatch):
+    # A full tasks_ready page (1000) means there's more backlog -> poll again immediately
+    # instead of idling the poll_interval.
+    monkeypatch.setattr(service, "run_cycle",
+                        lambda *a, **k: {"endpoint": "serp_google_organic", "ready": 1000,
+                                         "fetched": 1000, "failed": 0})
+    n = {"sleep": 0}
+    service.run_forever(None, None, {"serp_google_organic": _handler()}, alerter=_FakeAlerter(),
+                        max_cycles=2, poll_interval=30, sleep=lambda s: n.__setitem__("sleep", n["sleep"] + 1))
+    assert n["sleep"] == 0  # backlog full -> no inter-cycle idle
+
+
+def test_run_forever_sleeps_when_caught_up(monkeypatch):
+    monkeypatch.setattr(service, "run_cycle",
+                        lambda *a, **k: {"endpoint": "serp_google_organic", "ready": 3,
+                                         "fetched": 3, "failed": 0})
+    n = {"sleep": 0}
+    service.run_forever(None, None, {"serp_google_organic": _handler()}, alerter=_FakeAlerter(),
+                        max_cycles=2, poll_interval=5, sleep=lambda s: n.__setitem__("sleep", n["sleep"] + 1))
+    assert n["sleep"] > 0  # not a full page -> normal poll wait
+
+
 def test_run_cycle_flush_appends_canonical_before_marking(monkeypatch):
     # Crash-safety invariant: within each flush, canonical rows are written BEFORE the task is
     # marked fetched, so a crash between them never leaves 'fetched' rows with no data.
