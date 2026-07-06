@@ -55,7 +55,7 @@ def _task_status_code(raw) -> int | None:
 
 
 def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=None,
-              pending=None, grace_s=600.0, now=time.monotonic, flush_every=250) -> dict:
+              pending=None, grace_s=600.0, now=time.monotonic, flush_every=100) -> dict:
     """Drain one endpoint once. Returns {endpoint, ready, skipped, deferred, fetched, failed}.
 
     `pending` (task_id -> first-seen monotonic time) carries the unattributed grace state
@@ -233,7 +233,8 @@ def _dedup_canonical(bq_client, table_name: str, job_id: str) -> None:
 
 
 def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
-                max_cycles=None, sleep=time.sleep, should_stop=None, grace_s=600.0) -> None:
+                max_cycles=None, sleep=time.sleep, should_stop=None, grace_s=600.0,
+                flush_every=100) -> None:
     """Loop over all allowlisted endpoints each cycle, alerting on failures.
 
     One endpoint erroring never kills the loop. Per endpoint, failures alert (deduped) and a
@@ -256,7 +257,7 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
             key = handler.key
             try:
                 stats = run_cycle(client, store, handler, alerter=alerter,
-                                  pending=pending[key], grace_s=grace_s)
+                                  pending=pending[key], grace_s=grace_s, flush_every=flush_every)
             except CollectorDfsError:
                 alerter.fire(f"dfs:{key}", title="DataForSEO Unreachable", fields={"Endpoint": key})
                 continue
@@ -328,13 +329,17 @@ def main() -> None:  # pragma: no cover - thin wiring, exercised at deploy
 
     import os
     grace_s = float(os.environ.get("DFS_COLLECTOR_GRACE_S", 600))
+    # Tasks committed per batch. Each held task keeps ~1.6 MB of arrow-backed frame memory,
+    # so a whole 1000-task cycle in memory OOM-kills the 2 GB VM; 100 caps the peak at ~160 MB.
+    # Env-tunable so it can be retuned without a code redeploy.
+    flush_every = int(os.environ.get("DFS_COLLECTOR_FLUSH_EVERY", 100))
     print(f"[collector] starting; endpoints={list(handlers)} "
-          f"poll_interval={client.config.task_poll_interval}s grace_s={grace_s}")
+          f"poll_interval={client.config.task_poll_interval}s grace_s={grace_s} flush_every={flush_every}")
     alerter.startup()
     try:
         run_forever(client, store, handlers, alerter=alerter,
                     poll_interval=client.config.task_poll_interval,
-                    should_stop=lambda: stop["flag"], grace_s=grace_s)
+                    should_stop=lambda: stop["flag"], grace_s=grace_s, flush_every=flush_every)
     except Exception as e:  # pragma: no cover - top-level safety net
         alerter.crash(f"collector crashed: {e!r}")
         raise
