@@ -38,6 +38,42 @@ def classify_failure(exc: Exception) -> tuple[str, str]:
     return "error", "Cycle Error"
 
 
+def _memory_snapshot() -> str:
+    """Compact current-memory string for the heartbeat: process RSS + system availability.
+
+    Reads /proc (Linux — the collector's deploy target) with no extra dependency. Returns ''
+    when unavailable (e.g. a non-Linux dev box) so the heartbeat never breaks on it. Format:
+    'rss_mb=<proc RSS> avail_mb=<system MemAvailable> mem_used_pct=<system %>'. The OOM that
+    killed the collector is exactly this class of signal, so it belongs in the constant log.
+    """
+    try:
+        rss_kb = None
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_kb = int(line.split()[1])
+                    break
+        if rss_kb is None:
+            return ""
+        total_kb = avail_kb = None
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total_kb = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    avail_kb = int(line.split()[1])
+                if total_kb is not None and avail_kb is not None:
+                    break
+        parts = [f"rss_mb={rss_kb / 1024:.0f}"]
+        if avail_kb is not None:
+            parts.append(f"avail_mb={avail_kb / 1024:.0f}")
+        if total_kb and avail_kb is not None:
+            parts.append(f"mem_used_pct={100 * (total_kb - avail_kb) / total_kb:.0f}")
+        return " ".join(parts)
+    except Exception:
+        return ""
+
+
 def _vm_name() -> str:
     """The GCE instance name (matches the SF alerts), falling back to the hostname."""
     try:
@@ -146,4 +182,6 @@ class Alerter:
     # ----- liveness -----
 
     def heartbeat(self) -> None:
-        print(f"[dfs-collector] heartbeat ts={int(time.time())} host={self._vm}", flush=True)
+        mem = _memory_snapshot()
+        suffix = f" {mem}" if mem else ""
+        print(f"[dfs-collector] heartbeat ts={int(time.time())} host={self._vm}{suffix}", flush=True)

@@ -55,7 +55,7 @@ def _task_status_code(raw) -> int | None:
 
 
 def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=None,
-              pending=None, grace_s=600.0, now=time.monotonic) -> dict:
+              pending=None, grace_s=600.0, now=time.monotonic, flush_every=250) -> dict:
     """Drain one endpoint once. Returns {endpoint, ready, skipped, deferred, fetched, failed}.
 
     `pending` (task_id -> first-seen monotonic time) carries the unattributed grace state
@@ -63,6 +63,10 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=
     `grace_s` is how long a ready task with no dfs_task_log row is deferred before it's
     treated as a genuine orphan and attributed to the sentinel — this absorbs the producer
     race (DFS can mark a task ready before the producer's task_log write lands).
+    `flush_every` bounds memory: canonical rows are written and marked in batches of this many
+    tasks rather than accumulating the whole cycle and concatenating once at the end (that
+    end-of-cycle peak is what OOM-killed the collector on the 2 GB VM). Smaller batches also
+    persist progress incrementally, so a crash/restart mid-cycle keeps what was already drained.
     """
     bq_client = bq_client or client.bq_client
     pending = pending if pending is not None else {}
@@ -80,10 +84,26 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=
     for k in [k for k in pending if k not in ready_set]:
         del pending[k]
 
-    frames: list[pd.DataFrame] = []
-    results: list[dict] = []
-    touched_jobs: set[str] = set()
+    frames: list[pd.DataFrame] = []       # canonical rows buffered for the next flush
+    results: list[dict] = []              # task-log updates buffered for the next flush
+    batch_jobs: set[str] = set()          # jobs touched since the last flush
     fetched = failed = skipped = deferred = 0
+
+    def _flush() -> None:
+        # Incremental commit of one batch (<= flush_every tasks). Order is load-bearing and must
+        # stay: canonical rows are durably appended BEFORE mark_fetched, so a crash between the
+        # two leaves those tasks 'pending' (data already written; re-marking on restart is
+        # idempotent) rather than 'fetched' with no data. Doing this per-batch instead of once
+        # at cycle end caps the concat/serialize memory peak and persists progress mid-cycle.
+        if frames:
+            _append_canonical(bq_client, handler.canonical_table, pd.concat(frames, ignore_index=True))
+        if results:
+            # Pass copies — the buffers are cleared below for the next batch, and callers
+            # (and the real store) must not see them mutated out from under them.
+            store.mark_fetched(endpoint=handler.key, results=list(results), job_ids=list(batch_jobs))
+        frames.clear()
+        results.clear()
+        batch_jobs.clear()
 
     for tid in ready:
         info = lookup.get(tid)
@@ -108,7 +128,7 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=
             info = {"job_id": SENTINEL_JOB_ID, "keyword": None, "domain_id": None, "domain": None}
         else:
             pending.pop(tid, None)  # became attributable — clear any prior defer
-        touched_jobs.add(info["job_id"])
+        batch_jobs.add(info["job_id"])
         raw = client._get(f"{client.BASE_URL}/{handler.get_url}/{tid}")
         status_code = _task_status_code(raw)
 
@@ -141,15 +161,10 @@ def run_cycle(client, store: TrackingStore, handler, *, bq_client=None, alerter=
             "task_id": tid, "status": status, "dfs_status_code": status_code,
             "result_rows": n, "attempts": 1,
         })
+        if len(results) >= flush_every:
+            _flush()
 
-    if frames:
-        _append_canonical(bq_client, handler.canonical_table, pd.concat(frames, ignore_index=True))
-
-    # Mark statuses only after the canonical rows are durably written, so a crash before
-    # this leaves the tasks 'pending' (the data is already in the canonical table; re-marking
-    # is idempotent) rather than 'fetched' with no data. Scope the summary recompute to the
-    # jobs we touched this cycle (cheap as the task-log grows).
-    store.mark_fetched(endpoint=handler.key, results=results, job_ids=list(touched_jobs))
+    _flush()  # commit the final partial batch (also flushes when ready < flush_every)
 
     # On each newly-completed job: (1) dedup-DELETE backstop — clears any crash-path duplicate
     # rows (append succeeded, mark_fetched didn't, task re-fetched on restart) keyed on task_id

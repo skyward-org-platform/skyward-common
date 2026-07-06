@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from skyward.data.dataforseo.collector.alerts import Alerter, classify_failure
+from skyward.data.dataforseo.collector.alerts import (
+    Alerter, _memory_snapshot, classify_failure,
+)
 
 
 def _alerter(clock, **kw):
@@ -99,6 +101,27 @@ def test_job_complete_success_vs_degraded():
     assert "✅" in msgs[0] and "Job Complete" in msgs[0]
     assert "Job ID: j1" in msgs[0] and "Succeeded: 10" in msgs[0] and "Failed: 0" in msgs[0]
     assert "⚠️" in msgs[1] and "Failed: 2" in msgs[1]  # any failure -> degraded
+
+
+def test_memory_snapshot_reports_rss_when_proc_available():
+    # On Linux (the collector's deploy target and CI) /proc is present -> rss reported. On a
+    # non-Linux box it returns '' and the heartbeat just omits it — never raises.
+    import os
+    s = _memory_snapshot()
+    if os.path.exists("/proc/self/status"):
+        assert "rss_mb=" in s
+    else:
+        assert s == ""
+
+
+def test_heartbeat_prints_liveness_and_memory(capsys):
+    import os
+    a = Alerter(send=lambda _t: None, now=lambda: 0.0, vm_name="hbvm")
+    a.heartbeat()
+    out = capsys.readouterr().out
+    assert "[dfs-collector] heartbeat" in out and "host=hbvm" in out
+    if os.path.exists("/proc/self/status"):
+        assert "rss_mb=" in out  # memory appended to the constant liveness log
 
 
 def test_bare_alerter_is_disabled_under_test_guard():

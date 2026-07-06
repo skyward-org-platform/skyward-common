@@ -39,6 +39,20 @@ class _FakeStore:
         return self.completed
 
 
+class _AccumStore(_FakeStore):
+    """Like _FakeStore but records every mark_fetched call (incremental flushing makes >1)."""
+
+    def __init__(self, lookup):
+        super().__init__(lookup)
+        self.marks = []
+
+    def mark_fetched(self, *, endpoint, results, job_ids=None):
+        self.marks.append({"endpoint": endpoint,
+                           "results": list(results),
+                           "job_ids": list(job_ids or [])})
+        self.marked = (endpoint, results, job_ids)
+
+
 def _handler():
     return EndpointHandler(
         key="serp_google_organic",
@@ -91,6 +105,54 @@ def test_run_cycle_writes_canonical_marks_and_attributes_unknown():
     assert set(job_ids) == {"j1", "d4s_standard_unattributed"}
 
 
+def test_run_cycle_flushes_incrementally_every_n_tasks():
+    # With flush_every=2 and 5 ready tasks, the cycle commits in batches of 2,2,1 instead of
+    # one big end-of-cycle write — this is the memory-bounding + progress-persistence change.
+    bq = FakeBigQueryClient()
+    h = _handler()
+    ids = [f"t{i}" for i in range(5)]
+    client = _FakeClient(bq, _ready_then_get(h, ids))
+    store = _AccumStore({i: {"job_id": "j1", "keyword": i, "domain_id": 1, "domain": "x.com"} for i in ids})
+
+    stats = service.run_cycle(client, store, h, flush_every=2)
+    assert stats["fetched"] == 5
+
+    loaded = [t for t in bq.client.loaded_tables if str(t["table_ref"]).endswith("serp-google-organic")]
+    assert [len(t["df"]) for t in loaded] == [2, 2, 1]  # three flushes, batched
+    assert len(store.marks) == 3
+    # every task is marked exactly once across the flushes, and each flush scopes its job_ids
+    marked_ids = [r["task_id"] for call in store.marks for r in call["results"]]
+    assert sorted(marked_ids) == sorted(ids)
+    assert all(call["job_ids"] == ["j1"] for call in store.marks)
+
+
+def test_run_cycle_flush_appends_canonical_before_marking(monkeypatch):
+    # Crash-safety invariant: within each flush, canonical rows are written BEFORE the task is
+    # marked fetched, so a crash between them never leaves 'fetched' rows with no data.
+    order = []
+    real_append = service._append_canonical
+
+    def spy_append(bq_client, table, df):
+        order.append(("append", len(df)))
+        return real_append(bq_client, table, df)
+
+    monkeypatch.setattr(service, "_append_canonical", spy_append)
+
+    bq = FakeBigQueryClient()
+    h = _handler()
+    ids = [f"t{i}" for i in range(3)]
+    client = _FakeClient(bq, _ready_then_get(h, ids))
+    store = _AccumStore({i: {"job_id": "j1", "keyword": i, "domain_id": 1, "domain": "x.com"} for i in ids})
+
+    def marker(*, endpoint, results, job_ids=None):
+        order.append(("mark", len(results)))
+
+    monkeypatch.setattr(store, "mark_fetched", marker)
+
+    service.run_cycle(client, store, h, flush_every=2)
+    assert order == [("append", 2), ("mark", 2), ("append", 1), ("mark", 1)]
+
+
 def test_run_cycle_skips_already_resolved_tasks():
     # A task DFS still lists in tasks_ready but that we already fetched must NOT be re-fetched
     # (the double-write guard). It's skipped: no canonical row, not in the mark_fetched results.
@@ -125,8 +187,7 @@ def test_run_cycle_defers_unattributed_within_grace():
     assert stats["deferred"] == 1 and stats["fetched"] == 0
     assert "unk" in pending  # grace state retained for next cycle
     assert bq.client.loaded_tables == []  # nothing written while deferred
-    _, results, _ = store.marked
-    assert results == []  # not marked
+    assert store.marked is None  # nothing processed -> no mark_fetched call (empty flush is a no-op)
 
 
 def test_run_cycle_attributes_unattributed_after_grace():
