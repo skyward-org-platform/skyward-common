@@ -845,6 +845,105 @@ class MetaClient:
         return self.sb.query(query, params)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────────
+    # meta.site and meta.data_access
+    #
+    # ADDITIVE. These read the tables that replace client_domains and
+    # client_datasets. Both old tables are still live and their methods
+    # below still work, so adopting this release changes no behaviour --
+    # consumers move one at a time and the old methods are deleted last.
+    # ─────────────────────────────────────────────────────────────────
+
+    def get_site(self, domain_id: int) -> Optional[dict]:
+        """The site record for a domain, or None if we do not work on it.
+
+        meta.domains holds every domain we know of; meta.site holds the
+        ones we actually work on. A domain being known is not the same
+        as being a site, which is why this returns None rather than
+        raising.
+        """
+        df = self.sb.query(
+            """
+            SELECT s.*, d.domain, c.client_name
+            FROM meta.site s
+            JOIN meta.domains d USING (domain_id)
+            LEFT JOIN meta.clients c USING (client_id)
+            WHERE s.domain_id = %(domain_id)s
+            """,
+            {"domain_id": domain_id},
+        )
+        return None if df.empty else df.iloc[0].to_dict()
+
+    def list_sites(
+        self,
+        client_id: Optional[int] = None,
+        engagement_status: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Sites, optionally narrowed to one client or one engagement.
+
+        engagement_status is one of client, prospect, canceled or
+        prototype. Anything about to spend money on a run should be able
+        to ask whether the engagement is still live.
+        """
+        conditions, params = [], {}
+        if client_id is not None:
+            conditions.append("s.client_id = %(client_id)s")
+            params["client_id"] = client_id
+        if engagement_status is not None:
+            conditions.append("s.engagement_status = %(engagement_status)s")
+            params["engagement_status"] = engagement_status
+
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+        return self.sb.query(
+            f"""
+            SELECT s.*, d.domain, c.client_name
+            FROM meta.site s
+            JOIN meta.domains d USING (domain_id)
+            LEFT JOIN meta.clients c USING (client_id)
+            {where}
+            ORDER BY c.client_name, d.domain
+            """,
+            params,
+        )
+
+    def get_data_access(
+        self,
+        domain_id: int,
+        tool: Optional[str] = None,
+        active_only: bool = True,
+    ) -> pd.DataFrame:
+        """Tool access for ONE site.
+
+        Scoped by domain, not by client. That is the whole point of the
+        replacement: client_datasets.domain_id was nullable, so a row
+        that should have been domain-scoped silently applied to a
+        sibling territory.
+
+        A site can hold more than one row per tool -- buscharter has two
+        Google Ads accounts -- so this returns a frame, not a row.
+        """
+        conditions = ["da.domain_id = %(domain_id)s"]
+        params = {"domain_id": domain_id}
+
+        if tool is not None:
+            conditions.append("da.tool = %(tool)s")
+            params["tool"] = tool
+        if active_only:
+            conditions.append("da.is_active = TRUE")
+
+        return self.sb.query(
+            f"""
+            SELECT da.domain_id, da.tool, da.access_status,
+                   da.account_identifier, da.property_form, da.hostname,
+                   da.storage_platform, da.storage_project, da.dataset_id,
+                   da.is_active, da.notes
+            FROM meta.data_access da
+            WHERE {" AND ".join(conditions)}
+            ORDER BY da.tool, da.account_identifier
+            """,
+            params,
+        )
+
     # Dataset client linking (Meta.client_datasets)
     # ══════════════════════════════════════════════════════════════════════════
 
