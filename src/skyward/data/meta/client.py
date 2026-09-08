@@ -845,6 +845,338 @@ class MetaClient:
         return self.sb.query(query, params)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # ─────────────────────────────────────────────────────────────────
+    # meta.site and meta.data_access
+    #
+    # ADDITIVE. These read the tables that replace client_domains and
+    # client_datasets. Both old tables are still live and their methods
+    # below still work, so adopting this release changes no behaviour --
+    # consumers move one at a time and the old methods are deleted last.
+    # ─────────────────────────────────────────────────────────────────
+
+    def get_site(self, domain_id: int) -> Optional[dict]:
+        """The site record for a domain, or None if we do not work on it.
+
+        meta.domains holds every domain we know of; meta.site holds the
+        ones we actually work on. A domain being known is not the same
+        as being a site, which is why this returns None rather than
+        raising.
+        """
+        df = self.sb.query(
+            """
+            SELECT s.*, d.domain, c.client_name
+            FROM meta.site s
+            JOIN meta.domains d USING (domain_id)
+            LEFT JOIN meta.clients c USING (client_id)
+            WHERE s.domain_id = %(domain_id)s
+            """,
+            {"domain_id": domain_id},
+        )
+        return None if df.empty else df.iloc[0].to_dict()
+
+    def list_sites(
+        self,
+        client_id: Optional[int] = None,
+        engagement_status: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Sites, optionally narrowed to one client or one engagement.
+
+        engagement_status is one of client, prospect, canceled or
+        prototype. Anything about to spend money on a run should be able
+        to ask whether the engagement is still live.
+        """
+        conditions, params = [], {}
+        if client_id is not None:
+            conditions.append("s.client_id = %(client_id)s")
+            params["client_id"] = client_id
+        if engagement_status is not None:
+            conditions.append("s.engagement_status = %(engagement_status)s")
+            params["engagement_status"] = engagement_status
+
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+        return self.sb.query(
+            f"""
+            SELECT s.*, d.domain, c.client_name
+            FROM meta.site s
+            JOIN meta.domains d USING (domain_id)
+            LEFT JOIN meta.clients c USING (client_id)
+            {where}
+            ORDER BY c.client_name, d.domain
+            """,
+            params,
+        )
+
+    def get_data_access(
+        self,
+        domain_id: int,
+        tool: Optional[str] = None,
+        active_only: bool = True,
+    ) -> pd.DataFrame:
+        """Tool access for ONE site.
+
+        Scoped by domain, not by client. That is the whole point of the
+        replacement: client_datasets.domain_id was nullable, so a row
+        that should have been domain-scoped silently applied to a
+        sibling territory.
+
+        A site can hold more than one row per tool -- buscharter has two
+        Google Ads accounts -- so this returns a frame, not a row.
+        """
+        conditions = ["da.domain_id = %(domain_id)s"]
+        params = {"domain_id": domain_id}
+
+        if tool is not None:
+            conditions.append("da.tool = %(tool)s")
+            params["tool"] = tool
+        if active_only:
+            conditions.append("da.is_active = TRUE")
+
+        return self.sb.query(
+            f"""
+            SELECT da.domain_id, da.tool, da.access_status,
+                   da.account_identifier, da.property_form, da.hostname,
+                   da.storage_platform, da.storage_project, da.dataset_id,
+                   da.is_active, da.notes
+            FROM meta.data_access da
+            WHERE {" AND ".join(conditions)}
+            ORDER BY da.tool, da.account_identifier
+            """,
+            params,
+        )
+
+    # ── writes ───────────────────────────────────────────────────────
+
+    ENGAGEMENT_STATUSES = ("client", "prospect", "canceled", "prototype")
+    LIFECYCLE_STATUSES = ("active", "paused", "offboarded")
+    PRIORITIES = ("VERY LOW", "LOW", "NORMAL", "HIGH", "VERY HIGH")
+    TOOLS = ("ga4", "gsc", "google_ads", "ahrefs", "screaming_frog",
+             "dataforseo", "gbp", "looker", "facebook")
+    ACCESS_STATUSES = ("granted", "pending", "not_applicable", "revoked")
+
+    # Columns a caller may set on meta.site. Excludes domain_id, which
+    # identifies the row, and the audit stamps.
+    _SITE_FIELDS = (
+        "client_id", "project_id", "parent_domain_id", "engagement_status",
+        "lifecycle_status", "engagement_start", "industry", "title_brand",
+        "title_brand_abbrev", "drive_client_folder_id",
+        "drive_site_folder_id", "clickup_space_id", "clickup_folder_id",
+        "clickup_list_id", "clickup_task_id", "account_manager",
+        "priority", "source", "notes",
+    )
+
+    def upsert_site(self, domain_id: int, client_id: int,
+                    engagement_status: str, source: str, **fields) -> None:
+        """Create or update a site. Idempotent on domain_id.
+
+        Re-running onboarding must update the site rather than fail, so
+        this conflicts on the primary key.
+        """
+        if engagement_status not in self.ENGAGEMENT_STATUSES:
+            raise ValueError(
+                f"engagement_status must be one of "
+                f"{', '.join(self.ENGAGEMENT_STATUSES)}, not "
+                f"{engagement_status!r}"
+            )
+        unknown = sorted(set(fields) - set(self._SITE_FIELDS))
+        if unknown:
+            raise ValueError(
+                f"meta.site has no column(s) {', '.join(unknown)}"
+            )
+
+        row = {"domain_id": domain_id, "client_id": client_id,
+               "engagement_status": engagement_status, "source": source,
+               **fields}
+        cols = list(row)
+        assignments = ", ".join(
+            f"{c} = EXCLUDED.{c}" for c in cols if c != "domain_id"
+        )
+        self.sb.execute(
+            f"""
+            INSERT INTO meta.site ({", ".join(cols)})
+            VALUES ({", ".join(f"%({c})s" for c in cols)})
+            ON CONFLICT (domain_id) DO UPDATE
+               SET {assignments}, updated_at = now()
+            """,
+            row,
+        )
+
+    def update_site(self, domain_id: int, **fields) -> None:
+        """Change named columns on a site, leaving the rest alone."""
+        if not fields:
+            raise ValueError("update_site needs at least one field")
+        unknown = sorted(set(fields) - set(self._SITE_FIELDS))
+        if unknown:
+            raise ValueError(
+                f"meta.site has no column(s) {', '.join(unknown)}"
+            )
+        if "engagement_status" in fields and \
+                fields["engagement_status"] not in self.ENGAGEMENT_STATUSES:
+            raise ValueError(
+                f"engagement_status must be one of "
+                f"{', '.join(self.ENGAGEMENT_STATUSES)}"
+            )
+
+        assignments = ", ".join(f"{c} = %({c})s" for c in fields)
+        self.sb.execute(
+            f"UPDATE meta.site SET {assignments}, updated_at = now() "
+            f"WHERE domain_id = %(domain_id)s",
+            {**fields, "domain_id": domain_id},
+        )
+
+    def update_site_priority_batch(self, rows: list) -> None:
+        """Set priority across many sites in ONE statement.
+
+        The client_domains equivalent existed because per-row updates
+        across a client's domains are slow; this must not regress that.
+        """
+        if not rows:
+            return
+        bad = [r["priority"] for r in rows
+               if r["priority"] not in self.PRIORITIES]
+        if bad:
+            raise ValueError(
+                f"priority must be one of {', '.join(self.PRIORITIES)}; "
+                f"got {', '.join(map(str, bad))}"
+            )
+
+        values = ", ".join(
+            f"(%(domain_id_{i})s::bigint, %(priority_{i})s::text)"
+            for i in range(len(rows))
+        )
+        params = {}
+        for i, r in enumerate(rows):
+            params[f"domain_id_{i}"] = r["domain_id"]
+            params[f"priority_{i}"] = r["priority"]
+
+        self.sb.execute(
+            f"""
+            UPDATE meta.site s
+               SET priority = v.priority, updated_at = now()
+              FROM (VALUES {values}) AS v(domain_id, priority)
+             WHERE s.domain_id = v.domain_id
+            """,
+            params,
+        )
+
+    def remove_site(self, domain_id: int) -> None:
+        """Delete a site row.
+
+        Cascades to every brand and site table that hangs off it, so
+        this is a deliberate act -- the Phase 0 CLI deliberately offers
+        no verb for it.
+        """
+        if domain_id is None:
+            raise ValueError("remove_site needs a domain_id")
+        self.sb.execute(
+            "DELETE FROM meta.site WHERE domain_id = %(domain_id)s",
+            {"domain_id": domain_id},
+        )
+
+    def add_data_access(self, domain_id: int, tool: str, source: str,
+                        account_identifier: Optional[str] = None,
+                        access_status: str = "granted",
+                        **fields) -> None:
+        """Record a site's access to a tool. Idempotent on the account.
+
+        A site can hold two accounts for one tool -- buscharter has two
+        Google Ads accounts -- so the conflict target includes
+        account_identifier.
+        """
+        if tool not in self.TOOLS:
+            raise ValueError(
+                f"tool must be one of {', '.join(self.TOOLS)}, not {tool!r}"
+            )
+        if access_status not in self.ACCESS_STATUSES:
+            raise ValueError(
+                f"access_status must be one of "
+                f"{', '.join(self.ACCESS_STATUSES)}"
+            )
+
+        row = {"domain_id": domain_id, "tool": tool, "source": source,
+               "account_identifier": account_identifier,
+               "access_status": access_status, **fields}
+        cols = list(row)
+        key = ("domain_id", "tool", "account_identifier")
+        assignments = ", ".join(
+            f"{c} = EXCLUDED.{c}" for c in cols if c not in key
+        )
+        self.sb.execute(
+            f"""
+            INSERT INTO meta.data_access ({", ".join(cols)})
+            VALUES ({", ".join(f"%({c})s" for c in cols)})
+            ON CONFLICT (domain_id, tool, account_identifier) DO UPDATE
+               SET {assignments}, updated_at = now()
+            """,
+            row,
+        )
+
+    @staticmethod
+    def _access_key_clause() -> str:
+        """Match one access row by its whole key.
+
+        IS NOT DISTINCT FROM because account_identifier is null for
+        tools that have none, and `= NULL` never matches.
+        """
+        return ("domain_id = %(domain_id)s AND tool = %(tool)s "
+                "AND account_identifier IS NOT DISTINCT FROM "
+                "%(account_identifier)s")
+
+    def update_data_access(self, domain_id: int, tool: str,
+                           account_identifier: Optional[str] = None,
+                           **fields) -> None:
+        """Change named columns on one access row."""
+        if not fields:
+            raise ValueError("update_data_access needs at least one field")
+        assignments = ", ".join(f"{c} = %({c})s" for c in fields)
+        self.sb.execute(
+            f"UPDATE meta.data_access SET {assignments}, "
+            f"updated_at = now() WHERE {self._access_key_clause()}",
+            {**fields, "domain_id": domain_id, "tool": tool,
+             "account_identifier": account_identifier},
+        )
+
+    def deactivate_data_access(self, domain_id: int, tool: str,
+                               account_identifier: Optional[str] = None
+                               ) -> None:
+        """Mark access inactive. Access ending is not the same as the
+        record never having existed, so this is a flag, not a delete."""
+        self.sb.execute(
+            f"UPDATE meta.data_access SET is_active = FALSE, "
+            f"updated_at = now() WHERE {self._access_key_clause()}",
+            {"domain_id": domain_id, "tool": tool,
+             "account_identifier": account_identifier},
+        )
+
+    def delete_data_access(self, domain_id: int, tool: str,
+                           account_identifier: Optional[str] = None) -> None:
+        """Remove one access row outright."""
+        self.sb.execute(
+            f"DELETE FROM meta.data_access WHERE {self._access_key_clause()}",
+            {"domain_id": domain_id, "tool": tool,
+             "account_identifier": account_identifier},
+        )
+
+    def get_sites_using_dataset(self, dataset_id: str) -> pd.DataFrame:
+        """Which sites read this dataset.
+
+        Replaces check_dataset_assignment, which answered "which
+        client". A dataset shared across a client's sites is now
+        several rows, so the honest answer is a list of sites.
+        """
+        return self.sb.query(
+            """
+            SELECT da.domain_id, d.domain, da.tool, da.account_identifier,
+                   da.is_active, s.client_id, c.client_name
+            FROM meta.data_access da
+            JOIN meta.domains d USING (domain_id)
+            LEFT JOIN meta.site s USING (domain_id)
+            LEFT JOIN meta.clients c ON c.client_id = s.client_id
+            WHERE da.dataset_id = %(dataset_id)s
+            ORDER BY d.domain
+            """,
+            {"dataset_id": dataset_id},
+        )
+
     # Dataset client linking (Meta.client_datasets)
     # ══════════════════════════════════════════════════════════════════════════
 
