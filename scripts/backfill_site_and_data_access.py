@@ -88,6 +88,16 @@ def database_url() -> str:
     return url
 
 
+def account_id_for(dataset: str) -> str | None:
+    """The account id embedded in a dataset name, if it embeds one."""
+    import re as _re
+    for pattern in (r"^gads_backfill_(\d+)$", r"^analytics_(\d+)$"):
+        m = _re.match(pattern, dataset or "")
+        if m:
+            return m.group(1)
+    return None
+
+
 def tool_for(dataset: str) -> str | None:
     for prefix, tool in TOOL_BY_PREFIX:
         if dataset.startswith(prefix):
@@ -159,12 +169,14 @@ def backfill_access(cur) -> tuple[int, int, list]:
             """
             insert into meta.data_access
                 (domain_id, tool, access_status, storage_platform,
-                 storage_project, dataset_id, is_active, notes, source)
+                 storage_project, dataset_id, account_identifier,
+                 is_active, notes, source)
             values (%s, %s, 'granted', 'bigquery', 'data-hub-468216',
-                    %s, %s, %s, 'client_datasets_backfill')
-            on conflict (domain_id, tool) do nothing
+                    %s, %s, %s, %s, 'client_datasets_backfill')
+            on conflict (domain_id, tool, account_identifier) do nothing
             """,
-            (domain_id, tool, dataset_id, is_active, notes),
+            (domain_id, tool, dataset_id,
+             account_id_for(dataset_id), is_active, notes),
         )
         written += cur.rowcount
     return len(rows), written, skipped
