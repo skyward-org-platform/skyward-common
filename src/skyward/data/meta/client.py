@@ -84,13 +84,19 @@ class MetaClient:
         If include_counts=True, adds domain_count, competitor_count, project_count columns.
         """
         if include_counts:
+            # domain_count is the client's active sites. competitor_count is
+            # the distinct competitors across those sites: competitors are now
+            # per-site (meta.site_competitors), not a client-level flag, so a
+            # domain two of the client's sites both compete with counts once.
             count_subqueries = """,
-                (SELECT COUNT(*) FROM meta.client_domains cd
-                 JOIN meta.domains d ON cd.domain_id = d.domain_id
-                 WHERE cd.client_id = c.client_id AND cd.is_competitor = FALSE AND d.is_active = TRUE) AS domain_count,
-                (SELECT COUNT(*) FROM meta.client_domains cd
-                 JOIN meta.domains d ON cd.domain_id = d.domain_id
-                 WHERE cd.client_id = c.client_id AND cd.is_competitor = TRUE AND d.is_active = TRUE) AS competitor_count,
+                (SELECT COUNT(*) FROM meta.site s
+                 JOIN meta.domains d ON s.domain_id = d.domain_id
+                 WHERE s.client_id = c.client_id AND d.is_active = TRUE) AS domain_count,
+                (SELECT COUNT(DISTINCT sc.competitor_domain_id)
+                 FROM meta.site s
+                 JOIN meta.site_competitors sc ON sc.domain_id = s.domain_id
+                 JOIN meta.domains d ON sc.competitor_domain_id = d.domain_id
+                 WHERE s.client_id = c.client_id AND d.is_active = TRUE) AS competitor_count,
                 (SELECT COUNT(*) FROM meta.projects p
                  WHERE p.client_id = c.client_id) AS project_count"""
         else:
@@ -170,16 +176,19 @@ class MetaClient:
 
         Args:
             client_id: The client to deactivate
-            cascade: If True, also deactivates linked domains and client_datasets
+            cascade: If True, also deactivates the client's site domains and
+                their tool access
         """
         if cascade:
-            # Get domain_ids linked to this client
+            # The client's sites. meta.site replaced client_domains, and it
+            # holds only real sites -- competitors were never sites and live
+            # in meta.site_competitors, so there is no flag to filter here.
             domain_df = self.sb.query(
-                "select domain_id from meta.client_domains where client_id = %(client_id)s",
+                "select domain_id from meta.site where client_id = %(client_id)s",
                 {"client_id": client_id},
             )
 
-            # Deactivate domains that aren't linked to any OTHER active client
+            # Deactivate domains that aren't a site of any OTHER active client
             if not domain_df.empty:
                 domain_ids = domain_df["domain_id"].tolist()
                 self.sb.execute(
@@ -188,20 +197,22 @@ class MetaClient:
                     SET is_active = FALSE
                     WHERE domain_id = ANY(%(domain_ids)s)
                     AND domain_id NOT IN (
-                        SELECT cd.domain_id
-                        FROM meta.client_domains cd
-                        JOIN meta.clients c ON cd.client_id = c.client_id
-                        WHERE c.is_active = TRUE AND cd.client_id != %(client_id)s
+                        SELECT s.domain_id
+                        FROM meta.site s
+                        JOIN meta.clients c ON s.client_id = c.client_id
+                        WHERE c.is_active = TRUE AND s.client_id != %(client_id)s
                     )
                     """,
                     {"domain_ids": domain_ids, "client_id": client_id},
                 )
 
-            # Deactivate linked client_datasets
-            self.sb.execute(
-                "update meta.client_datasets set is_active = FALSE where client_id = %(client_id)s",
-                {"client_id": client_id},
-            )
+                # Deactivate tool access for those sites. data_access carries
+                # no client_id, so this has to go by the site list.
+                self.sb.execute(
+                    "update meta.data_access set is_active = FALSE "
+                    "where domain_id = ANY(%(domain_ids)s)",
+                    {"domain_ids": domain_ids},
+                )
 
         self.update_client(client_id, is_active=False)
 
@@ -940,6 +951,52 @@ class MetaClient:
             FROM meta.data_access da
             WHERE {" AND ".join(conditions)}
             ORDER BY da.tool, da.account_identifier
+            """,
+            params,
+        )
+
+    def list_data_access(
+        self,
+        client_id: Optional[int] = None,
+        tool: Optional[str] = None,
+        active_only: bool = True,
+    ) -> pd.DataFrame:
+        """Tool access across sites, optionally narrowed to one client.
+
+        ``get_data_access`` answers "what does THIS site have". This answers
+        "what does this client have", which is the question every caller
+        migrating off ``get_client_datasets`` is actually asking.
+        meta.data_access is keyed on the domain and carries no client_id, so
+        the join through meta.site is what makes a client scope possible at
+        all.
+
+        Returns one row per site/tool/account. A client with two Google Ads
+        accounts on one site yields two rows -- since meta_011 the natural
+        key includes account_identifier, so that is expected, not a duplicate.
+        """
+        conditions, params = [], {}
+        if client_id is not None:
+            conditions.append("s.client_id = %(client_id)s")
+            params["client_id"] = client_id
+        if tool is not None:
+            conditions.append("da.tool = %(tool)s")
+            params["tool"] = tool
+        if active_only:
+            conditions.append("da.is_active = TRUE")
+
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+        return self.sb.query(
+            f"""
+            SELECT s.client_id, c.client_name, da.domain_id, d.domain,
+                   da.tool, da.access_status, da.account_identifier,
+                   da.property_form, da.hostname, da.storage_platform,
+                   da.storage_project, da.dataset_id, da.is_active, da.notes
+            FROM meta.data_access da
+            JOIN meta.site s ON da.domain_id = s.domain_id
+            JOIN meta.domains d ON da.domain_id = d.domain_id
+            LEFT JOIN meta.clients c ON s.client_id = c.client_id
+            {where}
+            ORDER BY c.client_name, d.domain, da.tool, da.account_identifier
             """,
             params,
         )
