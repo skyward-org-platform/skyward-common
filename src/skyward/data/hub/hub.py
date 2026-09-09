@@ -18,7 +18,7 @@ class DataHub(MetaClient):
     """
 
     # Tables with a ``domain`` column that support domain-based lookup via
-    # Meta.domains + Meta.client_domains (see get_client_data).
+    # meta.domains + meta.site (see get_client_data).
     # All other tables use job_id lookup (via Logs.upload_events).
     DOMAIN_TABLES = {
         "dataforseo_labs-google-ranked_keywords",
@@ -496,7 +496,7 @@ class DataHub(MetaClient):
             ``Logs.upload_events`` by ``client_id``, which is not reliably
             populated today — results will miss uploads where ``client_id`` is
             null. For the tables in ``DOMAIN_TABLES``, prefer
-            ``use_domain_lookup=True`` (goes through ``Meta.client_domains``,
+            ``use_domain_lookup=True`` (goes through ``meta.site``,
             which is reliable). For other tables, results are lower-bound only.
             See KNOWN_ISSUES.md.
 
@@ -513,11 +513,14 @@ class DataHub(MetaClient):
         """
         # Check if we should use domain lookup
         if use_domain_lookup and table in self.DOMAIN_TABLES:
-            # Resolve the client's (non-competitor) domains from Supabase, then
-            # filter the BQ data table by that domain list. Meta no longer lives
-            # in BQ, so this can't be a single cross-dataset subquery anymore.
-            domains_df = self.get_client_domains(int(client_id), is_competitor=False)
-            domain_list = domains_df["domain"].tolist() if not domains_df.empty else []
+            # Resolve the client's sites from Supabase, then filter the BQ data
+            # table by that domain list. Meta no longer lives in BQ, so this
+            # can't be a single cross-dataset subquery anymore.
+            # meta.site holds only domains we actually work on, so there is no
+            # competitor flag to filter on -- competitors live in
+            # meta.site_competitors and were never sites in the first place.
+            sites_df = self.list_sites(client_id=int(client_id))
+            domain_list = sites_df["domain"].tolist() if not sites_df.empty else []
             params = [
                 bigquery.ArrayQueryParameter("domains", "STRING", domain_list),
                 bigquery.ScalarQueryParameter("limit_val", "INT64", limit),

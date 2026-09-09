@@ -92,13 +92,17 @@ def meta_deactivate_client(client_id, cascade):
 
 @meta.command("list-domains")
 @click.option("--client-id", required=True, type=int, help="Client ID.")
-@click.option("--competitors-only", is_flag=True, default=False, help="[DEPRECATED: client-level flag; use list-site-competitors] Only show competitor domains.")
+@click.option("--engagement-status", default=None, help="Narrow to one engagement: client, prospect, canceled or prototype.")
 @click.option("--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format.")
-def meta_list_domains(client_id, competitors_only, fmt):
-    """List domains for a client."""
+def meta_list_domains(client_id, engagement_status, fmt):
+    """List the sites a client owns.
+
+    Reads meta.site. The old --competitors-only flag is gone: competitors
+    are not sites and live in meta.site_competitors, so use
+    list-site-competitors for those.
+    """
     hub = _get_hub()
-    is_competitor = True if competitors_only else None
-    df = hub.get_client_domains(client_id=client_id, is_competitor=is_competitor)
+    df = hub.list_sites(client_id=client_id, engagement_status=engagement_status)
     if fmt == "json":
         click.echo(df.to_json(orient="records", indent=2))
     else:
@@ -143,31 +147,77 @@ _PRIORITY_CHOICES = click.Choice(
 )
 
 
+_ENGAGEMENT_CHOICES = click.Choice(
+    ["client", "prospect", "canceled", "prototype"],
+    case_sensitive=False,
+)
+
+
+def _add_site_domain(hub, domain, client_id, engagement_status, source, priority):
+    """Create the domain, and when a client is named, the site row too.
+
+    add_domains only touches meta.domains. Making a domain a site for a
+    client is now a second, explicit step through upsert_site, because
+    meta.site needs an engagement status that the old client_domains link
+    row never carried. Returns the domain_id.
+    """
+    domain_id = hub.add_domain(domain)
+    if client_id is None:
+        return domain_id
+    if not engagement_status:
+        raise click.UsageError(
+            "--engagement-status is required with --client-id "
+            "(client, prospect, canceled or prototype)."
+        )
+    hub.upsert_site(
+        domain_id=domain_id,
+        client_id=client_id,
+        engagement_status=engagement_status.lower(),
+        source=source,
+        priority=priority.upper(),
+    )
+    return domain_id
+
+
 @meta.command("add-domain")
 @click.option("--domain", required=True, help="Domain to add (single).")
-@click.option("--client-id", default=None, type=int, help="Optional client ID to link the domain to.")
-@click.option("--competitor", is_flag=True, default=False, help="[DEPRECATED: use add-site-competitor] Mark as competitor (only with --client-id).")
-@click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Priority (only with --client-id).")
-def meta_add_domain(domain, client_id, competitor, priority):
-    """Add a single domain, optionally linking to a client."""
+@click.option("--client-id", default=None, type=int, help="Client ID. Given, the domain also becomes a site for that client.")
+@click.option("--engagement-status", default=None, type=_ENGAGEMENT_CHOICES, help="Required with --client-id: client, prospect, canceled or prototype.")
+@click.option("--source", default="cli", help="Who or what created the site row. Recorded on meta.site.")
+@click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Site priority (only with --client-id).")
+def meta_add_domain(domain, client_id, engagement_status, source, priority):
+    """Add a single domain, optionally making it a site for a client.
+
+    Linking a domain to a client now means creating a row in meta.site,
+    which needs an engagement status -- a domain we work on and a domain we
+    merely know about are different things. Competitors are not sites: use
+    add-site-competitor.
+    """
     hub = _get_hub()
-    domain_id = hub.add_domain(
-        domain, client_id=client_id, is_competitor=competitor, priority=priority.upper(),
+    domain_id = _add_site_domain(
+        hub, domain, client_id, engagement_status, source, priority,
     )
     click.echo(f"Domain ID: {domain_id}")
 
 
 @meta.command("add-domains")
-@click.option("--client-id", default=None, type=int, help="Optional client ID to link the domains to.")
+@click.option("--client-id", default=None, type=int, help="Client ID. Given, each domain also becomes a site for that client.")
 @click.option("--domains", required=True, help="Comma-separated list of domains.")
-@click.option("--competitor", is_flag=True, default=False, help="[DEPRECATED: use add-site-competitor] Mark as competitor domains (only with --client-id).")
-@click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Priority (only with --client-id).")
-def meta_add_domains(client_id, domains, competitor, priority):
-    """Bulk-add domains, optionally linking to a client."""
+@click.option("--engagement-status", default=None, type=_ENGAGEMENT_CHOICES, help="Required with --client-id: client, prospect, canceled or prototype.")
+@click.option("--source", default="cli", help="Who or what created the site rows. Recorded on meta.site.")
+@click.option("--priority", default="NORMAL", type=_PRIORITY_CHOICES, help="Site priority (only with --client-id).")
+def meta_add_domains(client_id, domains, engagement_status, source, priority):
+    """Bulk-add domains, optionally making them sites for a client.
+
+    See add-domain for why --client-id now needs an engagement status.
+    """
     hub = _get_hub()
     domain_list = [d.strip() for d in domains.split(",")]
-    result = hub.add_domains(domains=domain_list, client_id=client_id, is_competitor=competitor, priority=priority.upper())
-    click.echo(f"Added {len(result)} domain(s)")
+    for domain in domain_list:
+        _add_site_domain(
+            hub, domain, client_id, engagement_status, source, priority,
+        )
+    click.echo(f"Added {len(domain_list)} domain(s)")
 
 
 @meta.command("list-site-competitors")
@@ -432,11 +482,19 @@ def bq_search_uploads(client_id, job_id, table, dataset, limit, fmt):
 
 @meta.command("list-datasets")
 @click.option("--client-id", default=None, type=int, help="Filter by client ID.")
+@click.option("--tool", default=None, help="Filter by tool, e.g. ga4, gsc, google_ads.")
+@click.option("--all", "include_inactive", is_flag=True, default=False, help="Include inactive access rows.")
 @click.option("--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format.")
-def meta_list_datasets(client_id, fmt):
-    """List dataset assignments."""
+def meta_list_datasets(client_id, tool, include_inactive, fmt):
+    """List tool access per site.
+
+    Reads meta.data_access. A site can hold more than one account for the
+    same tool, so expect more than one row per site/tool pair.
+    """
     hub = _get_hub()
-    df = hub.get_client_datasets(client_id=client_id)
+    df = hub.list_data_access(
+        client_id=client_id, tool=tool, active_only=not include_inactive,
+    )
     if fmt == "json":
         click.echo(df.to_json(orient="records", indent=2))
     else:

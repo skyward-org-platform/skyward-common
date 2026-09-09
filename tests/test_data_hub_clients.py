@@ -68,17 +68,43 @@ def test_list_clients_with_counts(hub, fake_bq):
     assert "domain_count" in sql or "COUNT" in sql
 
 
-def test_list_clients_counts_exclude_inactive_domains(hub, fake_bq):
-    """Count subqueries should only count active domains (d.is_active = TRUE)."""
-    fake_bq.client.set_next_result(pd.DataFrame({
-        "client_id": [1], "client_name": ["Test"], "abbreviation": [None],
-        "is_active": [True], "notes": [None], "created_at": [pd.Timestamp.now()],
-        "domain_count": [2], "competitor_count": [1], "project_count": [0],
-    }))
-    hub.list_clients(include_counts=True)
-    sql = fake_bq.client.queries[-1]["sql"]
-    # The count subqueries must join domains and filter by is_active
-    assert "is_active = TRUE" in sql.replace("  ", " ")
+def test_list_clients_counts_come_from_site_not_client_domains(hub, fake_bq):
+    """domain_count is meta.site; competitor_count is meta.site_competitors.
+
+    Asserts behaviour against real rows rather than matching SQL text: the
+    old version of this test checked a BigQuery string for a method that
+    has run on Supabase since v1.5.0, so it could only ever pass by being
+    skipped.
+    """
+    cid = hub.add_client("CountMe")
+    did = hub.add_domain("countme.com")
+    hub.upsert_site(domain_id=did, client_id=cid,
+                    engagement_status="client", source="test")
+    rival = hub.add_domain("countme-rival.com")
+    hub.add_site_competitor(did, rival)
+
+    df = hub.list_clients(include_counts=True)
+    row = df[df["client_id"] == cid].iloc[0]
+    assert int(row["domain_count"]) == 1
+    assert int(row["competitor_count"]) == 1
+
+
+def test_list_clients_counts_a_shared_competitor_once(hub, fake_bq):
+    """Competitors are per-site now, so one rival on two sites counts once."""
+    cid = hub.add_client("SharedRival")
+    a = hub.add_domain("shared-a.com")
+    b = hub.add_domain("shared-b.com")
+    for d in (a, b):
+        hub.upsert_site(domain_id=d, client_id=cid,
+                        engagement_status="client", source="test")
+    rival = hub.add_domain("shared-rival.com")
+    hub.add_site_competitor(a, rival)
+    hub.add_site_competitor(b, rival)
+
+    df = hub.list_clients(include_counts=True)
+    row = df[df["client_id"] == cid].iloc[0]
+    assert int(row["domain_count"]) == 2
+    assert int(row["competitor_count"]) == 1
 
 
 # ─── Test 2: add_client generates auto-ID ───────────────────────────────────
@@ -118,7 +144,34 @@ def test_deactivate_client_no_cascade(hub, fake_bq):
     assert "Meta.clients" in fake_bq.client.queries[0]["sql"]
 
 
-def test_deactivate_client_cascade(hub, fake_bq):
-    fake_bq.client.set_next_result(pd.DataFrame({"domain_id": [1, 2]}))
-    hub.deactivate_client(1, cascade=True)
-    assert len(fake_bq.client.queries) >= 3
+def test_deactivate_client_cascade_reaches_sites_and_tool_access(hub, fake_bq):
+    """Cascade now walks meta.site and deactivates meta.data_access.
+
+    The old version counted BigQuery statements, which says nothing about
+    whether the right rows were touched.
+    """
+    cid = hub.add_client("Cascade")
+    did = hub.add_domain("cascade.com")
+    hub.upsert_site(domain_id=did, client_id=cid,
+                    engagement_status="client", source="test")
+    hub.add_data_access(did, "ga4", "test", account_identifier="a1")
+
+    hub.deactivate_client(cid, cascade=True)
+
+    assert hub.get_client(cid)["is_active"] is False
+    assert hub.get_domain_by_id(did)["is_active"] is False
+    access = hub.get_data_access(did, active_only=False)
+    assert len(access) == 1 and bool(access.iloc[0]["is_active"]) is False
+
+
+def test_deactivate_client_cascade_spares_another_clients_site(hub, fake_bq):
+    """A domain that is also an active client's site must stay active."""
+    keep = hub.add_client("Keeper")
+    drop = hub.add_client("Dropper")
+    shared = hub.add_domain("shared-site.com")
+    hub.upsert_site(domain_id=shared, client_id=keep,
+                    engagement_status="client", source="test")
+
+    hub.deactivate_client(drop, cascade=True)
+
+    assert hub.get_domain_by_id(shared)["is_active"] is True

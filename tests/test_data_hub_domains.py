@@ -103,11 +103,16 @@ def test_list_project_domains(hub, fake_bq):
 # ─── Test: get_client_data domain subquery uses new schema ──────────────────
 
 def test_get_client_data_domain_lookup_uses_new_schema(hub, fake_bq):
-    """get_client_data domain lookup must reference Meta.domains/client_domains, not old tables."""
+    """Domain lookup resolves sites in Supabase, then filters BQ by that list.
+
+    Meta does not live in BigQuery any more, so the emitted BQ query must
+    carry no Meta reference at all -- old (companies/company_domains) or
+    new (site). The domain list arrives as a query parameter instead.
+    """
     hub.get_client_data("000001", "dataforseo_labs-google-ranked_keywords", use_domain_lookup=True)
     sql = fake_bq.client.queries[-1]["sql"]
     assert "Meta.company_domains" not in sql, "Must not reference old Meta.company_domains"
     assert "Meta.companies" not in sql, "Must not reference old Meta.companies"
-    assert "Meta.domains" in sql
-    assert "Meta.client_domains" in sql
-    assert "is_competitor" in sql
+    assert "client_domains" not in sql, "client_domains is retired; sites come from Supabase"
+    assert "Meta." not in sql, "Meta is no longer a BigQuery dataset"
+    assert "UNNEST(@domains)" in sql
