@@ -114,28 +114,47 @@ def test_deactivate_client_with_cascade(mock_get_hub):
 def test_list_domains(mock_get_hub):
     hub = MagicMock()
     mock_get_hub.return_value = hub
-    hub.get_client_domains.return_value = pd.DataFrame([
-        {"domain_id": 1, "domain": "acme.com", "is_competitor": False},
+    hub.list_sites.return_value = pd.DataFrame([
+        {"domain_id": 1, "domain": "acme.com", "engagement_status": "client"},
     ])
     runner = CliRunner()
     result = runner.invoke(cli, ["meta", "list-domains", "--client-id", "1", "--format", "json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data[0]["domain"] == "acme.com"
-    hub.get_client_domains.assert_called_once_with(client_id=1, is_competitor=None)
+    hub.list_sites.assert_called_once_with(client_id=1, engagement_status=None)
+    hub.get_client_domains.assert_not_called()
 
 
 @patch("skyward.cli._get_hub")
 def test_add_domains(mock_get_hub):
     hub = MagicMock()
     mock_get_hub.return_value = hub
-    hub.add_domains.return_value = [{"domain_id": 10, "domain": "new.com"}]
+    hub.add_domain.side_effect = [10, 11]
     runner = CliRunner()
-    result = runner.invoke(cli, ["meta", "add-domains", "--client-id", "1", "--domains", "new.com,other.com"])
+    result = runner.invoke(cli, [
+        "meta", "add-domains", "--client-id", "1", "--domains", "new.com,other.com",
+        "--engagement-status", "client",
+    ])
     assert result.exit_code == 0
-    hub.add_domains.assert_called_once_with(
-        domains=["new.com", "other.com"], client_id=1, is_competitor=False, priority="NORMAL"
-    )
+    assert [c.args[0] for c in hub.add_domain.call_args_list] == ["new.com", "other.com"]
+    assert [c.kwargs["domain_id"] for c in hub.upsert_site.call_args_list] == [10, 11]
+    for call in hub.upsert_site.call_args_list:
+        assert call.kwargs["client_id"] == 1
+        assert call.kwargs["engagement_status"] == "client"
+
+
+@patch("skyward.cli._get_hub")
+def test_add_domains_requires_engagement_status_with_client(mock_get_hub):
+    """--client-id now creates a site, and a site needs an engagement status."""
+    hub = MagicMock()
+    mock_get_hub.return_value = hub
+    hub.add_domain.return_value = 10
+    runner = CliRunner()
+    result = runner.invoke(cli, ["meta", "add-domains", "--client-id", "1", "--domains", "new.com"])
+    assert result.exit_code != 0
+    assert "engagement-status" in result.output
+    hub.upsert_site.assert_not_called()
 
 
 @patch("skyward.cli._get_hub")
@@ -177,9 +196,9 @@ def test_add_domain_single(mock_get_hub):
     runner = CliRunner()
     result = runner.invoke(cli, ["meta", "add-domain", "--domain", "newsite.com"])
     assert result.exit_code == 0
-    hub.add_domain.assert_called_once_with(
-        "newsite.com", client_id=None, is_competitor=False, priority="NORMAL"
-    )
+    # No client means meta.domains only -- no site row.
+    hub.add_domain.assert_called_once_with("newsite.com")
+    hub.upsert_site.assert_not_called()
     assert "42" in result.output
 
 
@@ -190,12 +209,14 @@ def test_add_domain_single_with_client(mock_get_hub):
     hub.add_domain.return_value = 99
     runner = CliRunner()
     result = runner.invoke(cli, [
-        "meta", "add-domain", "--domain", "comp.com",
-        "--client-id", "5", "--competitor", "--priority", "HIGH",
+        "meta", "add-domain", "--domain", "site.com",
+        "--client-id", "5", "--engagement-status", "prospect", "--priority", "HIGH",
     ])
     assert result.exit_code == 0
-    hub.add_domain.assert_called_once_with(
-        "comp.com", client_id=5, is_competitor=True, priority="HIGH"
+    hub.add_domain.assert_called_once_with("site.com")
+    hub.upsert_site.assert_called_once_with(
+        domain_id=99, client_id=5, engagement_status="prospect",
+        source="cli", priority="HIGH",
     )
 
 
@@ -294,14 +315,18 @@ def test_remove_project_domains_cli(mock_get_hub):
 def test_list_datasets(mock_get_hub):
     hub = MagicMock()
     mock_get_hub.return_value = hub
-    hub.get_client_datasets.return_value = pd.DataFrame([
-        {"dataset_id": "analytics_123", "dataset_type": "ga4", "client_id": 1},
+    hub.list_data_access.return_value = pd.DataFrame([
+        {"dataset_id": "analytics_123", "tool": "ga4", "client_id": 1, "domain_id": 7},
     ])
     runner = CliRunner()
     result = runner.invoke(cli, ["meta", "list-datasets", "--client-id", "1", "--format", "json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
-    assert data[0]["dataset_type"] == "ga4"
+    assert data[0]["tool"] == "ga4"
+    hub.list_data_access.assert_called_once_with(
+        client_id=1, tool=None, active_only=True,
+    )
+    hub.get_client_datasets.assert_not_called()
 
 
 def test_llm_cost():
