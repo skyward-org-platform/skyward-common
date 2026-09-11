@@ -103,6 +103,27 @@ def test_add_data_access_rejects_an_unknown_tool():
             domain_id=22, tool="semrush", source="test")
 
 
+def test_add_data_access_accepts_the_other_tool():
+    """'other' registers a dataset that is not one of the named products.
+
+    The first case is a multi-site rollup table: it was recorded on every
+    site as tool='ga4' alongside each site's own property, which gave
+    those sites two ga4 rows and made WQA's discovery treat a normal
+    setup as an ambiguity needing a human. 'other' keeps the link
+    without it being picked up as that site's GA4 source.
+    """
+    sb = FakeSb()
+    MetaClient(sb).add_data_access(
+        domain_id=22, tool="other", source="test",
+        dataset_id="analytics_some_portfolio")
+
+    assert "insert into meta.data_access" in sb.sql.lower()
+
+
+def test_other_is_a_real_tool_value():
+    assert "other" in MetaClient.TOOLS
+
+
 def test_update_data_access_identifies_the_row_by_its_whole_key():
     """Two rows can share a site and a tool, so updating on those two
     alone would hit both."""
