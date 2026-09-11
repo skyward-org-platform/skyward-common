@@ -1006,8 +1006,11 @@ class MetaClient:
     ENGAGEMENT_STATUSES = ("client", "prospect", "canceled", "prototype")
     LIFECYCLE_STATUSES = ("active", "paused", "offboarded")
     PRIORITIES = ("VERY LOW", "LOW", "NORMAL", "HIGH", "VERY HIGH")
+    # "other" covers registered datasets that are not one of the named
+    # products -- a multi-site rollup table, say -- so they stay linked
+    # without being returned as a site's source for a real tool.
     TOOLS = ("ga4", "gsc", "google_ads", "ahrefs", "screaming_frog",
-             "dataforseo", "gbp", "looker", "facebook")
+             "dataforseo", "gbp", "looker", "facebook", "other")
     ACCESS_STATUSES = ("granted", "pending", "not_applicable", "revoked")
 
     # Columns a caller may set on meta.site. Excludes domain_id, which
