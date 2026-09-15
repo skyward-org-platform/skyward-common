@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 
 from skyward.data.dataforseo import DataForSEOClient
@@ -33,6 +35,12 @@ class _Session:
 
 
 def _client(bq=None):
+    if bq is not None:
+        # RunContext._after_save calls bq.log_upload_event() after every saved window;
+        # FakeBigQueryClient has no such method, so mock it here for every test that
+        # goes through _client()/_make_run() rather than let each one see the
+        # AttributeError-derived "Cost-log upload event failed" print.
+        bq.log_upload_event = MagicMock()
     return DataForSEOClient(username="u", password="p", bq_client=bq)
 
 
@@ -372,3 +380,65 @@ def test_concurrent_units_keep_cost_and_data_windows_aligned():
     for r in costs:
         assert r["upload_id"] == data_uid[r["task_id"]]
     assert round(run.spent_usd, 6) == 0.8
+
+
+def test_final_save_failure_marks_end_row_failed_and_second_close_returns_df():
+    bq = FakeBigQueryClient()
+    client = _client(bq)
+
+    def failing_write(df, uid):
+        raise RuntimeError("boom-write")
+
+    plan = RunPlan("ep", "live", 1, 1, 1, ("a",))
+    est = CostEstimate(0.0, 0.0, 0.0, "list_price", plan)
+    run = RunContext(
+        client=client, endpoint_key="ep", job_id=generate_job_id(), plan=plan, estimate=est,
+        endpoint_mode="live", upload=True, write=failing_write,
+        stamp=lambda df: df.assign(endpoint_mode="live"),
+        empty_columns=["task_id", "endpoint_mode"],
+    )
+    run.run_unit("a", _unit_fn("a"))
+    with pytest.raises(RuntimeError, match="boom-write"):
+        run.close()
+    assert _job_rows(bq)[-1]["status"] == "failed"
+
+    second = run.close()
+    assert isinstance(second, pd.DataFrame)
+    assert len(second) == 1 and list(second["task_id"]) == ["a"]
+
+
+def test_run_unit_raising_fn_does_not_mark_target_completed():
+    bq = FakeBigQueryClient()
+    run, writes, _ = _make_run(bq)
+
+    def raising_fn():
+        _record("a")
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run.run_unit("a", raising_fn)
+    assert run.completed_targets() == []
+    assert run.remaining_targets() == ["a", "b", "c"]
+
+    run.close(error=RuntimeError("boom"))
+    assert {r["task_id"] for r in _cost_rows(bq)} == {"a"}
+
+
+def test_after_save_logs_cost_upload_event_per_window():
+    bq = FakeBigQueryClient()
+    run, writes, client = _make_run(bq, upload_batch_rows=2)
+    for t in ["a", "b", "c"]:
+        run.run_unit(t, _unit_fn(t))
+    run.close()
+
+    mock = client.bq_client.log_upload_event
+    costs = _cost_rows(bq)
+    assert mock.call_count == len(writes) == 2
+    for call, (_, uid) in zip(mock.call_args_list, writes):
+        kwargs = call.kwargs
+        expected_rows = len([r for r in costs if r["upload_id"] == uid])
+        assert expected_rows > 0
+        assert kwargs["upload_id"] == uid
+        assert kwargs["source_program"] == "dfs_cost_log"
+        assert kwargs["table"] == "cost_log"
+        assert kwargs["row_count"] == expected_rows

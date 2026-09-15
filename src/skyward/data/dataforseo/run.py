@@ -168,6 +168,7 @@ class RunContext:
         self._stop_error: InsufficientBalanceError | None = None
         self._closing = False
         self._closed = False
+        self._close_done = threading.Event()
         self._result: pd.DataFrame | None = None
         self.spent_usd = 0.0
 
@@ -207,12 +208,14 @@ class RunContext:
         unit = RunUnit(target)
         token = _ACTIVE_UNIT.set(unit)
         df = None
+        ok = False
         try:
             df = fn()
+            ok = True
             return df
         finally:
             _ACTIVE_UNIT.reset(token)
-            self._absorb(unit, df)
+            self._absorb(unit, df, ok)
 
     async def run_unit_async(
         self, target, coro_fn: Callable[[], Awaitable[pd.DataFrame | None]]
@@ -221,12 +224,14 @@ class RunContext:
         unit = RunUnit(target)
         token = _ACTIVE_UNIT.set(unit)
         df = None
+        ok = False
         try:
             df = await coro_fn()
+            ok = True
             return df
         finally:
             _ACTIVE_UNIT.reset(token)
-            self._absorb(unit, df)
+            self._absorb(unit, df, ok)
 
     def add_rows(self, df: pd.DataFrame | None) -> None:
         if df is None or df.empty:
@@ -240,22 +245,35 @@ class RunContext:
     def close(self, error: BaseException | None = None, *, quiet: bool = False) -> pd.DataFrame:
         with self._lock:
             if self._closed:
-                return self._result
-            self._closed = True
+                first = False
+            else:
+                self._closed = True
+                first = True
+        if not first:
+            # A concurrent or later caller: wait for the first close() to finish its
+            # save/flush/job_runs-row work, then hand back the same result. We never
+            # re-raise the first call's exception here — that call already reported it.
+            self._close_done.wait()
+            return self._result
+
         cause = error if error is not None else self._stop_error
-        if isinstance(cause, InsufficientBalanceError):
-            status = "stopped_low_balance"
-        elif cause is not None:
-            status = "failed"
-        else:
-            status = "completed"
+        close_exc: BaseException | None = None
         self._closing = True
         try:
             if self.uploader is not None:
                 self.uploader.close()
+        except Exception as e:  # noqa: BLE001 - the final save failing must still end the run
+            close_exc = e
+            cause = e
         finally:
             if self.cost_writer is not None:
                 self.cost_writer.close()
+            if isinstance(cause, InsufficientBalanceError):
+                status = "stopped_low_balance"
+            elif cause is not None:
+                status = "failed"
+            else:
+                status = "completed"
             write_job_run_row(self._bq, self._job_run_row(
                 "end", status, error=None if cause is None else repr(cause)[:1000]))
         with self._lock:
@@ -263,9 +281,12 @@ class RunContext:
         if frames:
             self._result = pd.concat(frames, ignore_index=True)
         else:
-            if error is None and not quiet:
+            if cause is None and not quiet:
                 print("No rows returned. Skipping upload.")
             self._result = pd.DataFrame(columns=self._empty_columns)
+        self._close_done.set()
+        if close_exc is not None:
+            raise close_exc
         return self._result
 
     # ----- internals -----
@@ -285,13 +306,26 @@ class RunContext:
             "ingest_timestamp": _now_iso(),
         }
 
-    def _absorb(self, unit: RunUnit, df) -> None:
-        stamped = self._stamp(df) if isinstance(df, pd.DataFrame) and not df.empty else None
+    def _absorb(self, unit: RunUnit, df, ok: bool) -> None:
+        # Cost is real the moment DFS billed it, whether or not `fn` returned normally
+        # and whether or not `stamp` can make sense of the result — record spend and
+        # cost rows first, and only mark the target completed when `fn` itself succeeded.
         spent = sum(r["cost_usd"] for r in unit.records)
         with self._lock:
             self.spent_usd += spent
-            self._completed.extend(target_list(unit.target))
-            if stamped is not None:
+            if ok:
+                self._completed.extend(target_list(unit.target))
+
+        stamped = None
+        stamp_exc: BaseException | None = None
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            try:
+                stamped = self._stamp(df)
+            except Exception as e:  # noqa: BLE001 - cost bookkeeping below must still run
+                stamp_exc = e
+
+        if stamped is not None:
+            with self._lock:
                 self._frames.append(stamped)
 
         def tag(upload_id: str | None) -> None:
@@ -307,6 +341,9 @@ class RunContext:
                 self.uploader.add(stamped)
         if self.cost_writer is not None:
             self.cost_writer.flush_if_due()
+
+        if stamp_exc is not None:
+            raise stamp_exc
 
     def _before_save(self, upload_id: str) -> None:
         # Cost rows go out before data so a crash between the two loses rows, never spend.
