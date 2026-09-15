@@ -66,7 +66,12 @@ def extract_cost_records(url: str, payload, resp, http_status) -> list[dict]:
     payload_list = payload if isinstance(payload, list) else [payload]
     requested_at = datetime.now(timezone.utc).isoformat()
     records: list[dict] = []
-    for i, task in enumerate(resp.get("tasks") or []):
+    tasks = resp.get("tasks")
+    if not isinstance(tasks, list):
+        if tasks is not None:
+            logger.warning("DFS response 'tasks' is not a list: %r", type(tasks).__name__)
+        tasks = []
+    for i, task in enumerate(tasks):
         if not isinstance(task, dict):
             continue
         task_payload = payload_list[i] if i < len(payload_list) else {}

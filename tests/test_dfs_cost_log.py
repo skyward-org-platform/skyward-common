@@ -126,6 +126,12 @@ def test_extract_skips_malformed_task_and_logs_warning():
     assert [r["task_id"] for r in recs] == ["t1", "t3"]
 
 
+def test_extract_treats_non_list_tasks_as_empty():
+    resp = {"tasks": 1}
+    recs = extract_cost_records(f"{BASE}/serp/google/organic/live", [{}], resp, 200)
+    assert recs == []
+
+
 def test_writer_rows_by_upload_id_only_counts_written_rows():
     bq = FakeBigQueryClient()
     bq.client.insert_errors = [["e1"], ["e2"], ["e3"]]
