@@ -106,3 +106,34 @@ def test_writer_close_reports_unlogged_cost(capsys):
     w.flush()
     w.close()
     assert "DFS cost logging FAILED: 1 cost rows ($0.2500)" in capsys.readouterr().out
+
+
+def test_extract_coerces_non_numeric_cost_to_zero():
+    resp = {"tasks": [{"id": "t", "status_code": 20000, "cost": "abc"}]}
+    rec = extract_cost_records(f"{BASE}/serp/google/organic/live", [{}], resp, 200)[0]
+    assert rec["cost_usd"] == 0.0
+
+
+def test_extract_skips_malformed_task_and_logs_warning():
+    payload = [{"keyword": "a"}, {"keyword": "b"}, {"keyword": "c"}]
+    resp = {"tasks": [
+        {"id": "t1", "status_code": 20000, "cost": 0.01, "result": [{"items": [{}]}]},
+        {"id": "t2", "status_code": 20000, "cost": 0.02, "result": 5},  # non-iterable result
+        {"id": "t3", "status_code": 20000, "cost": 0.03, "result": [{"items": [{}]}]},
+    ]}
+    recs = extract_cost_records(f"{BASE}/serp/google/organic/live", payload, resp, 200)
+    assert len(recs) == 2
+    assert [r["task_id"] for r in recs] == ["t1", "t3"]
+
+
+def test_writer_rows_by_upload_id_only_counts_written_rows():
+    bq = FakeBigQueryClient()
+    bq.client.insert_errors = [["e1"], ["e2"], ["e3"]]
+    w = CostLogWriter(bq, flush_every=100, max_attempts=3, sleep=lambda s: None)
+    w.add([_row(uid="u1")], flush=False)
+    assert w.flush() is False
+    assert w.rows_by_upload_id == {}
+    assert w.written_rows == 0
+    w.close()  # insert_errors exhausted -> succeeds
+    assert w.rows_by_upload_id == {"u1": 1}
+    assert w.written_rows == 1

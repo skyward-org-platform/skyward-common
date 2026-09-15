@@ -70,17 +70,29 @@ def extract_cost_records(url: str, payload, resp, http_status) -> list[dict]:
         if not isinstance(task, dict):
             continue
         task_payload = payload_list[i] if i < len(payload_list) else {}
-        records.append({
-            "task_id": task.get("id"),
-            "call_type": call_type,
-            "http_status": http_status,
-            "dfs_status_code": task.get("status_code"),
-            "items_sent": _items_sent(task_payload),
-            "result_rows": _result_rows(task),
-            "price_inputs": json.dumps(_price_inputs(task_payload), default=str, sort_keys=True),
-            "cost_usd": float(task.get("cost") or 0.0),
-            "requested_at": requested_at,
-        })
+        try:
+            cost_value = task.get("cost")
+            if cost_value is None:
+                cost_usd = 0.0
+            else:
+                try:
+                    cost_usd = float(cost_value)
+                except (ValueError, TypeError):
+                    logger.warning("DFS task cost is non-numeric: %r, using 0.0", cost_value)
+                    cost_usd = 0.0
+            records.append({
+                "task_id": task.get("id"),
+                "call_type": call_type,
+                "http_status": http_status,
+                "dfs_status_code": task.get("status_code"),
+                "items_sent": _items_sent(task_payload),
+                "result_rows": _result_rows(task),
+                "price_inputs": json.dumps(_price_inputs(task_payload), default=str, sort_keys=True),
+                "cost_usd": cost_usd,
+                "requested_at": requested_at,
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to build cost record for task %r: %s", task.get("id"), e)
     return records
 
 
@@ -114,10 +126,6 @@ class CostLogWriter:
             return
         with self._lock:
             self._buffer.extend(rows)
-            for r in rows:
-                uid = r.get("upload_id")
-                if uid:
-                    self.rows_by_upload_id[uid] = self.rows_by_upload_id.get(uid, 0) + 1
         if flush:
             self.flush_if_due()
 
@@ -135,6 +143,11 @@ class CostLogWriter:
                 return True
             if self._insert(batch):
                 self.written_rows += len(batch)
+                with self._lock:
+                    for r in batch:
+                        uid = r.get("upload_id")
+                        if uid:
+                            self.rows_by_upload_id[uid] = self.rows_by_upload_id.get(uid, 0) + 1
                 return True
             with self._lock:
                 self._buffer = batch + self._buffer
