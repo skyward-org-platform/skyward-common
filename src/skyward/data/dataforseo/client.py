@@ -112,6 +112,8 @@ class DataForSEOClient:
         self._meta_client = None
         self._balance_cache: tuple[float, dict] | None = None
         self._balance_lock = threading.Lock()
+        self._cost_estimator = None
+        self._locations = None
 
         # Create default session with retry logic
         self._session = self._create_session()
@@ -541,50 +543,41 @@ class DataForSEOClient:
                 self._balance_cache = (time.monotonic(), info)
         return info
 
-    def find_code(self, name: str, location_list: list[dict]) -> list[dict]:
-        """
-        Search for a location by name in the location list.
+    @property
+    def locations(self):
+        """Cached location catalog (DataForSEO.locations)."""
+        if self._locations is None:
+            from skyward.data.dataforseo.locations import LocationCatalog
+            self._locations = LocationCatalog(self)
+        return self._locations
 
-        Args:
-            name: Name or partial name to search (e.g., "New York")
-            location_list: List of location dictionaries from get_serp_locations()
+    def refresh_locations(self) -> int:
+        """Pull the SERP, Google Ads and Labs location lists (free) and replace the cache."""
+        return self.locations.refresh()
 
-        Returns:
-            All matching entries with 'location_name' and 'location_code'
-        """
+    def get_locations(self, *, location_type: str | None = None,
+                      country_iso_code: str | None = None, supported_by: str | None = None,
+                      location_code: int | None = None) -> list[dict]:
+        """Read locations from the cache. `supported_by` is in_serp, in_google_ads or in_labs."""
+        return self.locations.get(location_type=location_type, country_iso_code=country_iso_code,
+                                  supported_by=supported_by, location_code=location_code)
+
+    def find_code(self, name: str, location_list: list[dict] | None = None) -> list[dict]:
+        """Search locations by (partial) name. Defaults to the cached catalog."""
+        if location_list is None:
+            location_list = self.get_locations()
         name_lower = name.lower()
-        return [
-            loc for loc in location_list
-            if name_lower in loc["location_name"].lower()
-        ]
+        return [loc for loc in location_list if name_lower in loc["location_name"].lower()]
 
     def find_location_name(self, code: int) -> str | None:
-        """
-        Return the human-readable location name for a given location code.
+        """Human-readable name for a location code, from the cached catalog."""
+        rows = self.get_locations(location_code=int(code))
+        return rows[0]["location_name"] if rows else None
 
-        Args:
-            code: The DataForSEO location code to search for
-
-        Returns:
-            The matching location name, or None if not found
-        """
-        locations = self.get_serp_locations()
-        for location in locations:
-            if location["location_code"] == code:
-                return location["location_name"]
-        return None
-
-    def find_city_code(self, city_name: str, location_list: list[dict]) -> list[dict]:
-        """
-        Search for a city by name in the location list.
-
-        Args:
-            city_name: Name or partial name of the city (e.g., "New York")
-            location_list: List of location dictionaries from get_serp_locations()
-
-        Returns:
-            All matching city entries
-        """
+    def find_city_code(self, city_name: str, location_list: list[dict] | None = None) -> list[dict]:
+        """Search cities by (partial) name. Defaults to the cached catalog."""
+        if location_list is None:
+            location_list = self.get_locations(location_type="City")
         city_name_lower = city_name.lower()
         return [
             loc for loc in location_list
@@ -592,17 +585,10 @@ class DataForSEOClient:
             and city_name_lower in loc["location_name"].split(",")[0].lower()
         ]
 
-    def find_state_code(self, state_name: str, location_list: list[dict]) -> list[dict]:
-        """
-        Search for a state by name in the location list.
-
-        Args:
-            state_name: Name or partial name of the state (e.g., "Texas")
-            location_list: List of location dictionaries from get_serp_locations()
-
-        Returns:
-            All matching state entries
-        """
+    def find_state_code(self, state_name: str, location_list: list[dict] | None = None) -> list[dict]:
+        """Search states by (partial) name. Defaults to the cached catalog."""
+        if location_list is None:
+            location_list = self.get_locations(location_type="State")
         state_name_lower = state_name.lower()
         return [
             loc for loc in location_list
@@ -610,17 +596,10 @@ class DataForSEOClient:
             and state_name_lower in loc["location_name"].lower()
         ]
 
-    def find_country_code(self, country_name: str, location_list: list[dict]) -> list[dict]:
-        """
-        Search for a country by name in the location list.
-
-        Args:
-            country_name: Name or partial name of the country (e.g., "United States")
-            location_list: List of location dictionaries from get_serp_locations()
-
-        Returns:
-            All matching country entries
-        """
+    def find_country_code(self, country_name: str, location_list: list[dict] | None = None) -> list[dict]:
+        """Search countries by (partial) name. Defaults to the cached catalog."""
+        if location_list is None:
+            location_list = self.get_locations(location_type="Country")
         country_name_lower = country_name.lower()
         return [
             loc for loc in location_list
