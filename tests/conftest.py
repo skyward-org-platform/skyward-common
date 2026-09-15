@@ -61,6 +61,8 @@ class FakeBQClient:
         self._next_result = pd.DataFrame()
         self._results_queue = []
         self.loaded_tables = []
+        self.inserted_rows = []   # streaming inserts: {"table": str, "rows": list}
+        self.insert_errors = []   # queue of error payloads to return from insert_rows_json
 
     def set_next_result(self, df: pd.DataFrame):
         """Set the DataFrame returned by the next query."""
@@ -84,6 +86,12 @@ class FakeBQClient:
     def load_table_from_dataframe(self, df, table_ref, job_config=None):
         self.loaded_tables.append({"table_ref": table_ref, "df": df.copy(), "job_config": job_config})
         return FakeLoadJob()
+
+    def insert_rows_json(self, table, rows):
+        if self.insert_errors:
+            return self.insert_errors.pop(0)
+        self.inserted_rows.append({"table": str(table), "rows": list(rows)})
+        return []
 
     def get_table(self, table_ref):
         return SimpleNamespace(num_rows=0)
