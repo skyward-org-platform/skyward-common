@@ -442,3 +442,28 @@ def test_after_save_logs_cost_upload_event_per_window():
         assert kwargs["source_program"] == "dfs_cost_log"
         assert kwargs["table"] == "cost_log"
         assert kwargs["row_count"] == expected_rows
+
+
+def test_close_done_is_set_even_when_cost_writer_close_raises():
+    bq = FakeBigQueryClient()
+    run, _, _ = _make_run(bq)
+    run.run_unit("a", _unit_fn("a"))
+
+    def raise_close():
+        raise RuntimeError("cost writer close blew up")
+
+    run.cost_writer.close = raise_close
+
+    with pytest.raises(RuntimeError, match="cost writer close blew up"):
+        run.close()
+
+    result_holder: dict = {}
+
+    def call_close():
+        result_holder["value"] = run.close()
+
+    t = threading.Thread(target=call_close)
+    t.start()
+    t.join(timeout=2)
+    assert not t.is_alive(), "second close() hung — _close_done was not set"
+    assert isinstance(result_holder.get("value"), pd.DataFrame)

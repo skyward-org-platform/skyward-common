@@ -256,35 +256,39 @@ class RunContext:
             self._close_done.wait()
             return self._result
 
+        # Safe default so a concurrent/later close() can never observe None, even if
+        # something below raises before the real result is computed. self._close_done
+        # is guaranteed to be set in the outer finally no matter what happens here.
+        self._result = pd.DataFrame(columns=self._empty_columns)
         cause = error if error is not None else self._stop_error
         close_exc: BaseException | None = None
         self._closing = True
         try:
-            if self.uploader is not None:
-                self.uploader.close()
-        except Exception as e:  # noqa: BLE001 - the final save failing must still end the run
-            close_exc = e
-            cause = e
-        finally:
-            if self.cost_writer is not None:
-                self.cost_writer.close()
-            if isinstance(cause, InsufficientBalanceError):
-                status = "stopped_low_balance"
-            elif cause is not None:
-                status = "failed"
-            else:
-                status = "completed"
-            write_job_run_row(self._bq, self._job_run_row(
-                "end", status, error=None if cause is None else repr(cause)[:1000]))
-        with self._lock:
-            frames = list(self._frames)
-        if frames:
-            self._result = pd.concat(frames, ignore_index=True)
-        else:
-            if cause is None and not quiet:
+            try:
+                if self.uploader is not None:
+                    self.uploader.close()
+            except Exception as e:  # noqa: BLE001 - the final save failing must still end the run
+                close_exc = e
+                cause = e
+            finally:
+                if self.cost_writer is not None:
+                    self.cost_writer.close()
+                if isinstance(cause, InsufficientBalanceError):
+                    status = "stopped_low_balance"
+                elif cause is not None:
+                    status = "failed"
+                else:
+                    status = "completed"
+                write_job_run_row(self._bq, self._job_run_row(
+                    "end", status, error=None if cause is None else repr(cause)[:1000]))
+            with self._lock:
+                frames = list(self._frames)
+            if frames:
+                self._result = pd.concat(frames, ignore_index=True)
+            elif cause is None and not quiet:
                 print("No rows returned. Skipping upload.")
-            self._result = pd.DataFrame(columns=self._empty_columns)
-        self._close_done.set()
+        finally:
+            self._close_done.set()
         if close_exc is not None:
             raise close_exc
         return self._result
