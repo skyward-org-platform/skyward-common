@@ -126,7 +126,7 @@ class BaseEndpoint(ABC):
             "planned_requests": plan.planned_requests, "planned_items": plan.planned_items,
             "planned_max_rows": plan.planned_max_rows,
             "estimate_max_usd": estimate.max_usd, "estimate_avg_usd": estimate.avg_usd,
-            "balance_at_start": None, "balance_override": False,
+            "balance_at_start": getattr(error, "balance", None), "balance_override": False,
             "error": repr(error)[:1000], "client_id": None,
             "ingest_timestamp": datetime.now(timezone.utc).isoformat(),
         })
@@ -334,7 +334,7 @@ class BaseEndpoint(ABC):
 
         df = df.copy()
 
-        df["ingest_timestamp"] = pd.Timestamp.utcnow()
+        df["ingest_timestamp"] = pd.Timestamp.now("UTC")
         df["ingest_timestamp"] = pd.to_datetime(df["ingest_timestamp"], utc=True)
         upload_id = upload_id or generate_upload_id()
         df["upload_id"] = upload_id

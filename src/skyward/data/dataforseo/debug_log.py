@@ -125,7 +125,7 @@ class DebugLogCollector:
 
         df = pd.DataFrame(rows)
         upload_id = generate_upload_id()
-        timestamp = pd.Timestamp.utcnow()
+        timestamp = pd.Timestamp.now("UTC")
         df["job_id"] = self._job_id
         df["upload_id"] = upload_id
         df["ingest_timestamp"] = timestamp

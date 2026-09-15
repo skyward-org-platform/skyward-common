@@ -134,7 +134,9 @@ def test_low_balance_rejects_before_spending(ep, bq, monkeypatch):
     with pytest.raises(InsufficientBalanceError):
         ep.live("pizza", domain=None, job_id=generate_job_id())
     assert ep._client._session.calls == 0
-    assert _inserted(bq, "job_runs")[-1]["status"] == "rejected_low_balance"
+    rejection = _inserted(bq, "job_runs")[-1]
+    assert rejection["status"] == "rejected_low_balance"
+    assert rejection["balance_at_start"] == 0.001
 
 
 def test_balance_override_proceeds_with_warning(ep, bq, monkeypatch, capsys):
