@@ -148,3 +148,21 @@ def test_write_job_run_row_streams_and_retries():
 
 def test_write_job_run_row_without_bq_is_noop():
     assert write_job_run_row(None, {"job_id": "j"}) is False
+
+
+def test_post_records_error_does_not_fail_data_pull(monkeypatch):
+    client = _client()
+    client._session = _Session({"tasks": [{"id": "t", "cost": 1}]})
+    unit = RunUnit("test")
+    token = _ACTIVE_UNIT.set(unit)
+    try:
+        # Monkeypatch record_http to raise an exception
+        def raise_error(*args, **kwargs):
+            raise RuntimeError("json.dumps failed on mixed-type keys")
+        monkeypatch.setattr(unit, "record_http", raise_error)
+        # _post should still return data and not retry
+        result = client._post(f"{BASE}/x/live", [{}], max_retries=3, retry_delay=0)
+        assert result is not None
+        assert client._session.calls == 1  # Only called once, no retries
+    finally:
+        _ACTIVE_UNIT.reset(token)

@@ -29,6 +29,7 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -43,6 +44,8 @@ from skyward.data.dataforseo.run import active_unit
 
 if TYPE_CHECKING:
     from skyward.data.bigquery import BigQueryClient
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -196,9 +199,13 @@ class DataForSEOClient:
                     status_sink["http_status"] = resp.status_code
                 resp.raise_for_status()
                 data = resp.json()
+                # Cost recording must never fail a successful data pull
                 unit = active_unit()
                 if unit is not None:
-                    unit.record_http(endpoint, payload, data, resp.status_code)
+                    try:
+                        unit.record_http(endpoint, payload, data, resp.status_code)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Failed to record cost for successful HTTP response: %r", e)
                 return data
             except Exception as e:
                 if status_sink is not None:
