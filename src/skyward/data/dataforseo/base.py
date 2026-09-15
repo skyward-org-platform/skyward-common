@@ -15,11 +15,16 @@ import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import pandas as pd
 
 from skyward.data.dataforseo.debug_log import build_attempt_record
+from skyward.data.dataforseo.estimates import CostEstimate, RunPlan
+from skyward.data.dataforseo.exceptions import InsufficientBalanceError, InvalidLocationError
+from skyward.data.dataforseo.run import (
+    DEFAULT_BALANCE_BUFFER, RunContext, check_balance, target_list, write_job_run_row,
+)
 from skyward.functions import _validate_job_id, generate_upload_id
 
 if TYPE_CHECKING:
@@ -42,12 +47,134 @@ class BaseEndpoint(ABC):
     TABLE_NAME: str
     DATASET: str = "DataForSEO"
 
+    ENDPOINT_KEY: str = ""
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        if "ENDPOINT_KEY" not in cls.__dict__:
+            cls.ENDPOINT_KEY = cls.__module__.rsplit(".", 1)[-1]
+
     def __init__(self, client: "DataForSEOClient") -> None:
         self._client = client
 
     @property
     def config(self) -> "ClientConfig":
         return self._client.config
+
+    @property
+    def location_flag(self) -> str | None:
+        """Which DataForSEO.locations flag this endpoint's location_code must have."""
+        key = self.ENDPOINT_KEY
+        if key == "dataforseo_labs_google_search_intent":
+            return None
+        if key.startswith("dataforseo_labs_"):
+            return "in_labs"
+        if key.startswith("serp_"):
+            return "in_serp"
+        if key.startswith("keywords_data_google_ads_"):
+            return "in_google_ads"
+        return None
+
+    # ----- Cost planning -----
+
+    def plan(self, targets: list[str], *, endpoint_mode: str = "live", **kwargs) -> RunPlan:
+        """Worst-case requests, billable items and rows for a run. Endpoints override."""
+        n = len(targets)
+        return self._make_plan(targets, endpoint_mode, requests=n, items=n, max_rows=n)
+
+    def _make_plan(self, targets, endpoint_mode: str, *, requests: int, items: int,
+                   max_rows: int, **price_inputs) -> RunPlan:
+        return RunPlan(
+            endpoint=self.ENDPOINT_KEY,
+            endpoint_mode=endpoint_mode,
+            planned_requests=int(requests),
+            planned_items=int(items),
+            planned_max_rows=int(max_rows),
+            targets=tuple(str(t) for t in targets),
+            price_inputs={k: v for k, v in price_inputs.items() if v is not None},
+        )
+
+    def estimate_cost(self, targets, *, endpoint_mode: str = "live", **kwargs) -> CostEstimate:
+        """Max (list price + buffer) and average cost for a run with these inputs. Spends nothing."""
+        return self._client.cost_estimator.estimate(
+            self.plan(target_list(targets), endpoint_mode=endpoint_mode, **kwargs))
+
+    @staticmethod
+    def _in_unit(run: RunContext | None, target, fn: Callable):
+        return fn() if run is None else run.run_unit(target, fn)
+
+    def _check_location(self, plan_kwargs: dict, ignore: bool) -> None:
+        flag = self.location_flag
+        if flag is None or ignore:
+            return
+        code = plan_kwargs.get("location_code") or self.config.location_code
+        if code is None:
+            return
+        if self._client.locations.is_supported(int(code), flag) is False:
+            raise InvalidLocationError(
+                f"[{self.ENDPOINT_KEY}] location_code {code} is not supported by this endpoint "
+                f"({flag} is false in DataForSEO.locations). Pass ignore_location_check=True "
+                f"to send it anyway.",
+                location_code=int(code), endpoint=self.ENDPOINT_KEY, supported_by=flag,
+            )
+
+    def _write_rejection(self, job_id: str, plan: RunPlan, estimate: CostEstimate,
+                         endpoint_mode: str, status: str, error: BaseException) -> None:
+        write_job_run_row(self._client.bq_client, {
+            "job_id": job_id, "endpoint": self.ENDPOINT_KEY, "endpoint_mode": endpoint_mode,
+            "event": "end", "status": status,
+            "planned_requests": plan.planned_requests, "planned_items": plan.planned_items,
+            "planned_max_rows": plan.planned_max_rows,
+            "estimate_max_usd": estimate.max_usd, "estimate_avg_usd": estimate.avg_usd,
+            "balance_at_start": None, "balance_override": False,
+            "error": repr(error)[:1000], "client_id": None,
+            "ingest_timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def _start_run(
+        self,
+        targets: list[str],
+        *,
+        job_id: str,
+        resolved: dict | None,
+        endpoint_mode: str,
+        upload: bool,
+        balance_buffer: float,
+        ignore_balance_check: bool,
+        ignore_location_check: bool,
+        upload_batch_rows: int | None,
+        plan_kwargs: dict,
+        empty_columns: list[str],
+        tag_cost_with_upload: bool = True,
+    ) -> RunContext:
+        plan = self.plan(targets, endpoint_mode=endpoint_mode, **plan_kwargs)
+        estimate = self._client.cost_estimator.estimate(plan)
+        try:
+            self._check_location(plan_kwargs, ignore_location_check)
+        except InvalidLocationError as e:
+            self._write_rejection(job_id, plan, estimate, endpoint_mode, "rejected_location", e)
+            raise
+        try:
+            balance = check_balance(
+                self._client, required_usd=estimate.max_usd, balance_buffer=balance_buffer,
+                ignore=ignore_balance_check, job_id=job_id, endpoint=self.ENDPOINT_KEY,
+                remaining_targets=plan.targets,
+            )
+        except InsufficientBalanceError as e:
+            self._write_rejection(job_id, plan, estimate, endpoint_mode, "rejected_low_balance", e)
+            raise
+        client = self._client
+        run = RunContext(
+            client=client, endpoint_key=self.ENDPOINT_KEY, job_id=job_id, plan=plan,
+            estimate=estimate, endpoint_mode=endpoint_mode, upload=upload,
+            write=lambda df, uid: self.upload(client.bq_client, df, job_id=job_id, upload_id=uid),
+            stamp=lambda df: self._stamp_fetch_metadata(df, resolved, endpoint_mode=endpoint_mode),
+            empty_columns=empty_columns, upload_batch_rows=upload_batch_rows,
+            balance_buffer=balance_buffer, ignore_balance_check=ignore_balance_check,
+            tag_cost_with_upload=tag_cost_with_upload,
+        )
+        run.start(balance)
+        return run
 
     # ----- Abstract methods -----
 
@@ -83,28 +210,32 @@ class BaseEndpoint(ABC):
         interactive: bool = False,
         upload: bool = True,
         include_debug_logs: bool = False,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         _validate_job_id(job_id)
         resolved = self._resolve_domain(domain, domain_id, interactive)
-
+        run = self._start_run(
+            target_list(target), job_id=job_id, resolved=resolved, endpoint_mode="live",
+            upload=upload, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={**kwargs, "_single_call": True},
+            empty_columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"],
+        )
         collector = self._make_debug_collector(job_id, include_debug_logs)
         try:
-            df = self._fetch_live(target, _debug_collector=collector, **kwargs)
+            run.run_unit(target, lambda: self._fetch_live(target, _debug_collector=collector, **kwargs))
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
         finally:
             if collector is not None:
                 collector.flush()
-
-        if df is None or df.empty:
-            print("No rows returned. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
-
-        df = self._stamp_fetch_metadata(df, resolved, endpoint_mode="live")
-
-        if upload:
-            self.upload(self._client.bq_client, df, job_id=job_id)
-
-        return df
+        return run.close()
 
     async def live_all(
         self,
@@ -118,6 +249,10 @@ class BaseEndpoint(ABC):
         batch_size: int | None = None,
         batch_delay: float | None = None,
         include_debug_logs: bool = False,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         _validate_job_id(job_id)
@@ -126,9 +261,16 @@ class BaseEndpoint(ABC):
         batch_size = batch_size or self.config.batch_size
         batch_delay = batch_delay if batch_delay is not None else self.config.batch_delay
 
+        run = self._start_run(
+            list(targets), job_id=job_id, resolved=resolved, endpoint_mode="live",
+            upload=upload, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={**kwargs, "batch_size": batch_size},
+            empty_columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"],
+        )
         collector = self._make_debug_collector(job_id, include_debug_logs)
         loop = asyncio.get_running_loop()
-        df_list: list[pd.DataFrame] = []
 
         try:
             with ThreadPoolExecutor(max_workers=batch_size) as executor:
@@ -141,31 +283,22 @@ class BaseEndpoint(ABC):
                     tasks = [
                         loop.run_in_executor(
                             executor,
-                            lambda t=t: self._fetch_live(t, _debug_collector=collector, **kwargs),
+                            lambda t=t: run.run_unit(
+                                t, lambda: self._fetch_live(t, _debug_collector=collector, **kwargs)),
                         )
                         for t in batch
                     ]
-                    batch_results = await asyncio.gather(*tasks)
-                    for df in batch_results:
-                        if isinstance(df, pd.DataFrame) and not df.empty:
-                            df_list.append(df)
+                    await asyncio.gather(*tasks)
                     if idx < total_batches:
                         await asyncio.sleep(batch_delay)
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
         finally:
             if collector is not None:
                 collector.flush()
 
-        if not df_list:
-            print("No rows returned. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
-
-        combined = pd.concat(df_list, ignore_index=True)
-        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
-
-        if upload:
-            self.upload(self._client.bq_client, combined, job_id=job_id)
-
-        return combined
+        return run.close()
 
     # ----- Public: POST/GET (standard) mode (default: unsupported) -----
 
@@ -188,6 +321,7 @@ class BaseEndpoint(ABC):
         *,
         job_id: str,
         client_id: str | None = None,
+        upload_id: str | None = None,
     ) -> None:
         """Append rows to the endpoint's BQ table. Stamps job_id/upload_id/ingest_timestamp."""
         from google.cloud import bigquery
@@ -202,7 +336,7 @@ class BaseEndpoint(ABC):
 
         df["ingest_timestamp"] = pd.Timestamp.utcnow()
         df["ingest_timestamp"] = pd.to_datetime(df["ingest_timestamp"], utc=True)
-        upload_id = generate_upload_id()
+        upload_id = upload_id or generate_upload_id()
         df["upload_id"] = upload_id
         df["job_id"] = job_id
 

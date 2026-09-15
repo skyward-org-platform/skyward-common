@@ -544,6 +544,14 @@ class DataForSEOClient:
         return info
 
     @property
+    def cost_estimator(self):
+        """Prices run plans from DataForSEO.cost_estimates + observed actuals (cached)."""
+        if self._cost_estimator is None:
+            from skyward.data.dataforseo.estimates import CostEstimator
+            self._cost_estimator = CostEstimator(self)
+        return self._cost_estimator
+
+    @property
     def locations(self):
         """Cached location catalog (DataForSEO.locations)."""
         if self._locations is None:
