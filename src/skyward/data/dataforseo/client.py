@@ -29,6 +29,7 @@ Usage:
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Generator, List, TYPE_CHECKING
@@ -37,6 +38,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.auth import HTTPBasicAuth
 from urllib3.util.retry import Retry
+
+from skyward.data.dataforseo.run import active_unit
 
 if TYPE_CHECKING:
     from skyward.data.bigquery import BigQueryClient
@@ -104,6 +107,8 @@ class DataForSEOClient:
         self.config = config or ClientConfig()
         self.bq_client = bq_client
         self._meta_client = None
+        self._balance_cache: tuple[float, dict] | None = None
+        self._balance_lock = threading.Lock()
 
         # Create default session with retry logic
         self._session = self._create_session()
@@ -190,7 +195,11 @@ class DataForSEOClient:
                 if status_sink is not None:
                     status_sink["http_status"] = resp.status_code
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                unit = active_unit()
+                if unit is not None:
+                    unit.record_http(endpoint, payload, data, resp.status_code)
+                return data
             except Exception as e:
                 if status_sink is not None:
                     status_sink["error"] = repr(e)
@@ -508,6 +517,22 @@ class DataForSEOClient:
             "total": float(money.get("total", 0.0) or 0.0),
             "raw": money,
         }
+
+    def get_balance_cached(self, max_age_s: float = 60.0) -> dict:
+        """`get_balance()` cached on this client for `max_age_s` seconds.
+
+        Failed reads (empty `raw`) are not cached. Speed only; nothing is linked by time.
+        """
+        now = time.monotonic()
+        with self._balance_lock:
+            cached = self._balance_cache
+            if cached is not None and (now - cached[0]) < max_age_s:
+                return cached[1]
+        info = self.get_balance()
+        if info.get("raw"):
+            with self._balance_lock:
+                self._balance_cache = (time.monotonic(), info)
+        return info
 
     def find_code(self, name: str, location_list: list[dict]) -> list[dict]:
         """

@@ -32,6 +32,19 @@ def _no_real_slack(monkeypatch):
     monkeypatch.setattr(_notif, "send_slack", _blocked)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_dfs_balance(request, monkeypatch):
+    """Unit tests never call DataForSEO for the balance guard. Live tests use the real API."""
+    if "live" in request.keywords:
+        return
+    from skyward.data.dataforseo.client import DataForSEOClient
+
+    monkeypatch.setattr(
+        DataForSEOClient, "get_balance",
+        lambda self: {"balance": 1_000_000.0, "total": 0.0, "raw": {"balance": 1_000_000.0}},
+    )
+
+
 class FakeLoadJob:
     """Mimics a BQ load job."""
 
