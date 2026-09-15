@@ -1,4 +1,5 @@
 import json
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -49,6 +50,7 @@ def _stub_lists(client, lists):
 
 def test_refresh_truncates_and_loads():
     bq = FakeBigQueryClient()
+    bq.log_upload_event = MagicMock()
     client = _client(bq)
     _stub_lists(client, (SERP, ADS, LABS))
     n = client.refresh_locations()
@@ -56,6 +58,15 @@ def test_refresh_truncates_and_loads():
     load = bq.client.loaded_tables[-1]
     assert load["table_ref"] == "data-hub-468216.DataForSEO.locations"
     assert load["job_config"].write_disposition == "WRITE_TRUNCATE"
+    bq.log_upload_event.assert_called_once()
+    call_kwargs = bq.log_upload_event.call_args[1]
+    assert call_kwargs["source"] == "dataforseo"
+    assert call_kwargs["source_program"] == "refresh_locations"
+    assert call_kwargs["dataset"] == "DataForSEO"
+    assert call_kwargs["table"] == "locations"
+    assert call_kwargs["row_count"] == 2
+    assert call_kwargs["job_id"]
+    assert call_kwargs["upload_id"]
 
 
 def test_refresh_refuses_when_a_list_is_empty():
@@ -111,6 +122,18 @@ def test_get_falls_back_to_live_serp_list_when_cache_empty():
     client.get_serp_locations = lambda: SERP
     rows = client.get_locations(location_type="DMA Region")
     assert [r["location_code"] for r in rows] == [200528]
+
+
+def test_get_supported_by_does_not_fall_back_when_cache_empty():
+    client = _client(FakeBigQueryClient())
+    call_count = [0]
+    def mock_get_serp_locations():
+        call_count[0] += 1
+        raise AssertionError("Should not call get_serp_locations when supported_by is set")
+    client.get_serp_locations = mock_get_serp_locations
+    rows = client.get_locations(supported_by="in_labs")
+    assert rows == []
+    assert call_count[0] == 0
 
 
 def test_get_rejects_unknown_flag():

@@ -157,8 +157,10 @@ class LocationCatalog:
             if key in self._queries:
                 return self._queries[key]
         rows = self._read_rows(location_type, country_iso_code, supported_by, location_code)
-        if not rows:
+        if not rows and supported_by is None:
             rows = self._fallback(location_type, country_iso_code, location_code)
+        elif not rows and supported_by is not None:
+            logger.warning("Location catalog read failed for supported_by=%r; cache unavailable", supported_by)
         with self._lock:
             self._queries[key] = rows
         return rows
