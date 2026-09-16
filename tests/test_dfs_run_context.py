@@ -198,6 +198,25 @@ def test_job_run_row_start_and_end_get_different_row_ids():
     assert ids[0] != ids[1]
 
 
+def test_job_run_rows_differing_only_in_timestamp_get_different_row_ids():
+    """The test above varies event, status AND ts together, so it still passes if
+    ingest_timestamp is dropped from the id key. Nothing else isolates that component.
+
+    It matters because there is no run_id: two runs may share a job_id, endpoint and mode,
+    and several consumers may run concurrently. Two such runs both writing a 'start' row
+    would then mint the SAME insertId, BigQuery would silently de-duplicate one away, and
+    job_progress's runs_started would undercount -- which reads as a run that never
+    started.
+    """
+    bq = FakeBigQueryClient()
+    write_job_run_row(bq, _job_run_row(event="start", status="running", ts="t0"),
+                      sleep=lambda s: None)
+    write_job_run_row(bq, _job_run_row(event="start", status="running", ts="t1"),
+                      sleep=lambda s: None)
+    ids = [ins["row_ids"][0] for ins in bq.client.inserted_rows]
+    assert ids[0] != ids[1], "ingest_timestamp is not part of the job_runs insertId key"
+
+
 def test_post_records_error_does_not_fail_data_pull(monkeypatch):
     client = _client()
     client._session = _Session({"tasks": [{"id": "t", "cost": 1}]})
