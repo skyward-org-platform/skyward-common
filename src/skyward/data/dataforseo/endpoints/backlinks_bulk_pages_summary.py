@@ -46,7 +46,7 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         MAX_SPLIT_DEPTH=5) and each half is re-sent as its own billed request. Every
         extra split is a real DataForSEO call outside this plan, so a target list with
         unparseable invalid URLs can cost several times this estimate. Clean URL lists
-        (the common case) are unaffected. See docs/v1.6.1-release-notes.md, "Known
+        (the common case) are unaffected. See docs/releases/v1.6.1.md, "Known
         limits".
         """
         batch = min(kwargs.get("batch_size") or 1000, 1000)

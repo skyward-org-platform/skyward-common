@@ -80,7 +80,7 @@ def _report(est, costs):
 def _report_logged_only(est, costs):
     """Like `_report`, but without the "actual <= max estimate" bound.
 
-    Documented limitation (docs/v1.6.1-release-notes.md, "Known limits"):
+    Documented limitation (docs/releases/v1.6.1.md, "Known limits"):
     backlinks_bulk_pages_summary's recursive split-and-retry fallback for batches with
     URLs DataForSEO can't parse makes real billed calls outside the plan, so its actual
     cost is not bounded by the estimate the way every other endpoint's is. We only
