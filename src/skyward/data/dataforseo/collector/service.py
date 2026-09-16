@@ -259,7 +259,7 @@ def _dedup_canonical(bq_client, table_name: str, job_id: str) -> None:
 
 def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
                 max_cycles=None, sleep=time.sleep, should_stop=None, grace_s=600.0,
-                flush_every=100, fetch_workers=6) -> None:
+                flush_every=100, fetch_workers=6, balance_monitor=None) -> None:
     """Loop over all allowlisted endpoints each cycle, alerting on failures.
 
     One endpoint erroring never kills the loop. Per endpoint, failures alert (deduped) and a
@@ -269,6 +269,9 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
     When any endpoint returns a full tasks_ready page (`_READY_PAGE_CAP`), there is more backlog
     waiting at DFS, so the inter-cycle `poll_interval` idle is skipped and the next cycle runs
     immediately — draining a large backlog at fetch speed instead of one page per poll_interval.
+
+    `balance_monitor` (a BalanceMonitor) is checked once per loop; it rate-limits itself and
+    its errors never stop the loop.
     """
     from skyward.data.dataforseo.collector.alerts import Alerter, classify_failure
     alerter = alerter or Alerter()
@@ -317,6 +320,11 @@ def run_forever(client, store, handlers, *, alerter=None, poll_interval=30,
             if stats["ready"]:
                 print(f"[collector] cycle {cycle} {stats}")
 
+        if balance_monitor is not None:
+            try:
+                balance_monitor.check()
+            except Exception as e:  # noqa: BLE001 - balance alerting never kills the loop
+                print(f"[collector] balance check failed: {e!r}")
         alerter.heartbeat()
         # A full page means more is waiting -> poll again immediately; only idle when caught up.
         backlog = max_ready >= _READY_PAGE_CAP
@@ -351,6 +359,8 @@ def main() -> None:  # pragma: no cover - thin wiring, exercised at deploy
     store = TrackingStore(bq)
     handlers = build_allowlist(client)
     alerter = Alerter()
+    from skyward.data.dataforseo.collector.balance import BalanceMonitor
+    balance_monitor = BalanceMonitor.from_env(client, alerter)
 
     stop = {"flag": False}
 
@@ -372,13 +382,14 @@ def main() -> None:  # pragma: no cover - thin wiring, exercised at deploy
     fetch_workers = int(os.environ.get("DFS_COLLECTOR_FETCH_WORKERS", 6))
     print(f"[collector] starting; endpoints={list(handlers)} "
           f"poll_interval={client.config.task_poll_interval}s grace_s={grace_s} "
-          f"flush_every={flush_every} fetch_workers={fetch_workers}")
+          f"flush_every={flush_every} fetch_workers={fetch_workers} "
+          f"balance_alerts={'on' if balance_monitor else 'off'}")
     alerter.startup()
     try:
         run_forever(client, store, handlers, alerter=alerter,
                     poll_interval=client.config.task_poll_interval,
                     should_stop=lambda: stop["flag"], grace_s=grace_s, flush_every=flush_every,
-                    fetch_workers=fetch_workers)
+                    fetch_workers=fetch_workers, balance_monitor=balance_monitor)
     except Exception as e:  # pragma: no cover - top-level safety net
         alerter.crash(f"collector crashed: {e!r}")
         raise

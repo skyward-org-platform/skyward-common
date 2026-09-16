@@ -152,6 +152,10 @@ class Alerter:
             del self._active[key]
             self._post(self._format("✅", title, fields))
 
+    def notify(self, emoji: str, title: str, fields: dict | None = None) -> None:
+        """One-off message in the standard format (callers own any dedupe)."""
+        self._post(self._format(emoji, title, fields))
+
     def job_complete(self, *, job_id: str, endpoint: str, succeeded: int, failed: int) -> None:
         """One-shot 'Job Complete' alert (claimed via notified_at, so no dedup needed).
 
