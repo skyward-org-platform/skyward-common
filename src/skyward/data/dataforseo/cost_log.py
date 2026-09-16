@@ -7,11 +7,13 @@ count. One record per entry in the response's `tasks[]`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -111,8 +113,48 @@ def cost_flush_every(planned_requests: int) -> int:
     return max(25, min(500, math.ceil(max(planned_requests, 0) / 100)))
 
 
+def _assign_row_id(row: dict) -> dict:
+    """Attach a BigQuery streaming-insert id to `row` under the private key `_row_id`.
+
+    Assigned exactly once, when the row is built (here, the first time it enters the
+    writer's buffer), and carried unchanged with the row through every retry -- so a
+    retry after a lost acknowledgement reuses the same id instead of minting a fresh
+    UUID on each attempt (the original bug: BigQuery's client generates a random
+    insertId per call unless one is supplied, so a retried insert after a lost ack
+    double-counts the row in DataForSEO.cost_log).
+
+    When the row has a `task_id`, the id is a deterministic digest of the row's
+    immutable identity (job_id, task_id, attempt, call_type) -- deliberately NOT a hash
+    of the whole row's content. Two genuinely distinct zero-cost billed calls could
+    otherwise share identical content (same job/endpoint/call_type/attempt, null
+    task_id, same cost, same timestamp string) and hash identically, which would make
+    BigQuery silently drop one of them -- turning a double-count into an under-count of
+    spend, which is worse than the duplicate-row bug this exists to fix.
+
+    When `task_id` is None (network failures, malformed responses) there is no stable
+    identity to hash, so a uuid4 is generated once here and carried with the row instead.
+
+    Note: BigQuery's insertId de-duplication is best effort and time limited (roughly a
+    few minutes), so this narrows the duplicate window rather than guaranteeing
+    exactly-once delivery.
+    """
+    if row.get("task_id") is not None:
+        key = "|".join(str(row.get(k, "")) for k in ("job_id", "task_id", "attempt", "call_type"))
+        row["_row_id"] = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    else:
+        row["_row_id"] = str(uuid.uuid4())
+    return row
+
+
 class CostLogWriter:
-    """Thread-safe buffer that streams finalized cost rows into DataForSEO.cost_log."""
+    """Thread-safe buffer that streams finalized cost rows into DataForSEO.cost_log.
+
+    Each row is assigned a stable id (see `_assign_row_id`) the moment it is added, and
+    that id is passed as BigQuery's `row_ids` (insertId) on every insert attempt so a
+    retry after a lost acknowledgement can be de-duplicated instead of double-counted.
+    That de-duplication is best effort and time limited (roughly a few minutes) on
+    BigQuery's side, so it narrows rather than eliminates the duplicate window.
+    """
 
     def __init__(self, bq_client, *, flush_every: int, max_attempts: int = 3,
                  retry_delay: float = 1.0, sleep=time.sleep) -> None:
@@ -134,6 +176,9 @@ class CostLogWriter:
     def add(self, rows: list[dict], *, flush: bool = True) -> None:
         if not rows:
             return
+        for r in rows:
+            if "_row_id" not in r:
+                _assign_row_id(r)
         with self._lock:
             self._buffer.extend(rows)
         if flush:
@@ -164,10 +209,19 @@ class CostLogWriter:
             return False
 
     def _insert(self, rows: list[dict]) -> bool:
+        # `_row_id` was assigned once, in add(), and is carried on `rows` across every
+        # retry below (and across separate flush() calls after a failed one) -- pop it
+        # into BigQuery's row_ids/insertId argument here rather than sending it as part
+        # of the row payload, which must stay byte-for-byte what it was before this fix.
+        payload, row_ids = [], []
+        for r in rows:
+            clean = dict(r)
+            row_ids.append(clean.pop("_row_id", None))
+            payload.append(clean)
         last_error = None
         for attempt in range(1, self._max_attempts + 1):
             try:
-                errors = self._bq.client.insert_rows_json(self.table_id, rows)
+                errors = self._bq.client.insert_rows_json(self.table_id, payload, row_ids=row_ids)
                 if not errors:
                     return True
                 last_error = errors

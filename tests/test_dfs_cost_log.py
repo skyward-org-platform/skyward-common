@@ -148,3 +148,80 @@ def test_writer_rows_by_upload_id_only_counts_written_rows():
     w.close()  # insert_errors exhausted -> succeeds
     assert w.rows_by_upload_id == {"u1": 1}
     assert w.written_rows == 1
+
+
+def _billed_row(task_id="t1", attempt=1, call_type="live", job_id="j", cost=0.01):
+    return {"job_id": job_id, "task_id": task_id, "attempt": attempt, "call_type": call_type,
+            "endpoint": "ep", "endpoint_mode": "live", "upload_id": None, "cost_usd": cost}
+
+
+def test_insert_passes_row_ids_and_strips_them_from_the_payload():
+    bq = FakeBigQueryClient()
+    w = CostLogWriter(bq, flush_every=1, sleep=lambda s: None)
+    w.add([_billed_row()])
+    ins = bq.client.inserted_rows[0]
+    assert ins["row_ids"] is not None and len(ins["row_ids"]) == 1
+    assert ins["row_ids"][0] is not None
+    # The row payload written to BigQuery is unchanged -- no private id key leaks in.
+    assert "_row_id" not in ins["rows"][0]
+
+
+def test_retry_after_lost_ack_reuses_the_same_row_id():
+    """A first insert can time out AFTER BigQuery accepted the row (ack lost in transit).
+
+    The retry must carry the SAME insertId so BigQuery's streaming de-duplication can
+    catch the duplicate -- regenerating a fresh id on retry (the original bug) would
+    double-count the cost row in DataForSEO.cost_log.
+    """
+    bq = FakeBigQueryClient()
+    calls = []
+    original_insert = bq.client.insert_rows_json
+
+    def flaky(table, rows, row_ids=None):
+        calls.append(row_ids)
+        if len(calls) == 1:
+            raise TimeoutError("ack lost in transit")
+        return original_insert(table, rows, row_ids=row_ids)
+
+    bq.client.insert_rows_json = flaky
+    w = CostLogWriter(bq, flush_every=1, max_attempts=3, sleep=lambda s: None)
+    w.add([_billed_row()])
+
+    assert len(calls) == 2
+    assert calls[0] == calls[1]                 # same id reused across the retry
+    assert calls[0][0] is not None
+    assert len(bq.client.inserted_rows) == 1     # BigQuery's view: exactly one row landed
+
+
+def test_two_distinct_billed_calls_get_different_row_ids():
+    bq = FakeBigQueryClient()
+    w = CostLogWriter(bq, flush_every=1, sleep=lambda s: None)
+    w.add([_billed_row(task_id="t1")])
+    w.add([_billed_row(task_id="t2")])
+    ids = [ins["row_ids"][0] for ins in bq.client.inserted_rows]
+    assert ids[0] != ids[1]
+
+
+def test_two_distinct_null_task_id_calls_get_different_row_ids():
+    # Network failures / malformed responses carry no task_id, so two genuinely separate
+    # billed calls with identical content (same job/endpoint/call_type/attempt/cost) must
+    # still not collide -- a pure content hash would silently drop one, under-counting
+    # spend, which is worse than the duplicate-row bug this fix targets.
+    bq = FakeBigQueryClient()
+    w = CostLogWriter(bq, flush_every=1, sleep=lambda s: None)
+    w.add([_billed_row(task_id=None)])
+    w.add([_billed_row(task_id=None)])
+    ids = [ins["row_ids"][0] for ins in bq.client.inserted_rows]
+    assert ids[0] != ids[1]
+
+
+def test_row_id_is_deterministic_for_identical_identity():
+    bq = FakeBigQueryClient()
+    w = CostLogWriter(bq, flush_every=1, sleep=lambda s: None)
+    w.add([_billed_row(task_id="t1", attempt=2)])
+    first_id = bq.client.inserted_rows[0]["row_ids"][0]
+    bq2 = FakeBigQueryClient()
+    w2 = CostLogWriter(bq2, flush_every=1, sleep=lambda s: None)
+    w2.add([_billed_row(task_id="t1", attempt=2)])
+    second_id = bq2.client.inserted_rows[0]["row_ids"][0]
+    assert first_id == second_id

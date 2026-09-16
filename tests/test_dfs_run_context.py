@@ -153,6 +153,51 @@ def test_write_job_run_row_without_bq_is_noop():
     assert write_job_run_row(None, {"job_id": "j"}) is False
 
 
+def _job_run_row(job_id="j", endpoint="ep", endpoint_mode="live", event="start",
+                 status="running", ts="2026-01-01T00:00:00+00:00"):
+    return {"job_id": job_id, "endpoint": endpoint, "endpoint_mode": endpoint_mode,
+            "event": event, "status": status, "ingest_timestamp": ts}
+
+
+def test_job_run_row_insert_passes_row_id_and_strips_it_from_payload():
+    bq = FakeBigQueryClient()
+    assert write_job_run_row(bq, _job_run_row(), sleep=lambda s: None) is True
+    ins = bq.client.inserted_rows[0]
+    assert ins["row_ids"] is not None and ins["row_ids"][0] is not None
+    assert "_row_id" not in ins["rows"][0]
+
+
+def test_job_run_row_retry_after_lost_ack_reuses_the_same_row_id():
+    """A duplicated start/end row corrupts job_progress's runs_started/runs_ended counts,
+    so a retry after a lost ack must reuse the same insertId, not mint a fresh one."""
+    bq = FakeBigQueryClient()
+    calls = []
+    original_insert = bq.client.insert_rows_json
+
+    def flaky(table, rows, row_ids=None):
+        calls.append(row_ids)
+        if len(calls) == 1:
+            raise TimeoutError("ack lost in transit")
+        return original_insert(table, rows, row_ids=row_ids)
+
+    bq.client.insert_rows_json = flaky
+    assert write_job_run_row(bq, _job_run_row(), sleep=lambda s: None) is True
+
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert len(bq.client.inserted_rows) == 1
+
+
+def test_job_run_row_start_and_end_get_different_row_ids():
+    bq = FakeBigQueryClient()
+    write_job_run_row(bq, _job_run_row(event="start", status="running", ts="t0"),
+                      sleep=lambda s: None)
+    write_job_run_row(bq, _job_run_row(event="end", status="completed", ts="t1"),
+                      sleep=lambda s: None)
+    ids = [ins["row_ids"][0] for ins in bq.client.inserted_rows]
+    assert ids[0] != ids[1]
+
+
 def test_post_records_error_does_not_fail_data_pull(monkeypatch):
     client = _client()
     client._session = _Session({"tasks": [{"id": "t", "cost": 1}]})

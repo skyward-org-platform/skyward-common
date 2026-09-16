@@ -100,10 +100,14 @@ class FakeBQClient:
         self.loaded_tables.append({"table_ref": table_ref, "df": df.copy(), "job_config": job_config})
         return FakeLoadJob()
 
-    def insert_rows_json(self, table, rows):
+    def insert_rows_json(self, table, rows, row_ids=None):
         if self.insert_errors:
             return self.insert_errors.pop(0)
-        self.inserted_rows.append({"table": str(table), "rows": list(rows)})
+        self.inserted_rows.append({
+            "table": str(table),
+            "rows": list(rows),
+            "row_ids": list(row_ids) if row_ids is not None else None,
+        })
         return []
 
     def get_table(self, table_ref):

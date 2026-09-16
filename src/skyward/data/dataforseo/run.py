@@ -8,6 +8,7 @@ responses into the active unit. Linking is only by job_id, upload_id and task_id
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -129,15 +130,37 @@ def check_balance(
     )
 
 
+def job_run_row_id(row: dict) -> str:
+    """Deterministic BigQuery insertId for a job_runs row.
+
+    Derived from job_id, endpoint, endpoint_mode, event and status, plus the row's own
+    ingest_timestamp -- so a start row and an end row for the same run always differ,
+    but a retry of the exact same row (same event, same ingest_timestamp) reuses the
+    same id. That lets BigQuery's insertId de-duplication catch a retried insert after a
+    lost acknowledgement instead of writing a second start/end row, which would corrupt
+    job_progress's runs_started/runs_ended counts.
+    """
+    key = "|".join(str(row.get(k, "")) for k in
+                   ("job_id", "endpoint", "endpoint_mode", "event", "status", "ingest_timestamp"))
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
 def write_job_run_row(bq_client, row: dict, *, max_attempts: int = 3, sleep=time.sleep) -> bool:
-    """Stream one job_runs row. Never raises; returns False when it could not write."""
+    """Stream one job_runs row. Never raises; returns False when it could not write.
+
+    The row's insertId (see `job_run_row_id`) is computed once, before the retry loop,
+    and reused on every attempt -- BigQuery's insertId de-duplication is best effort and
+    time limited (roughly a few minutes), so this narrows rather than guarantees against
+    a lost-acknowledgement retry writing a duplicate start/end row.
+    """
     if bq_client is None:
         return False
     table = f"{bq_client.client.project}.{DATASET}.{JOB_RUNS_TABLE}"
+    row_id = job_run_row_id(row)
     last_error = None
     for attempt in range(1, max_attempts + 1):
         try:
-            errors = bq_client.client.insert_rows_json(table, [row])
+            errors = bq_client.client.insert_rows_json(table, [row], row_ids=[row_id])
             if not errors:
                 return True
             last_error = errors
