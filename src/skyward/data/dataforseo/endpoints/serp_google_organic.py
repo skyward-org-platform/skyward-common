@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import logging
 import math
 import time
 from queue import Queue, Empty
@@ -22,6 +23,17 @@ from skyward.data.dataforseo.collector.producer import parse_task_post, submit_a
 from skyward.data.dataforseo.exceptions import InsufficientBalanceError
 from skyward.data.dataforseo.run import DEFAULT_BALANCE_BUFFER
 from skyward.functions import _validate_job_id
+
+logger = logging.getLogger(__name__)
+
+# How long one task_get may block. The coordinator's join timeout is derived from it.
+TASK_GET_TIMEOUT_S = 30
+# A legacy worker only re-checks the stop flag between queue items, so once it is inside a
+# task_get it can be a full TASK_GET_TIMEOUT_S away from noticing that the coordinator
+# stopped. The join has to outlast that: if it gives up first, run.close() runs while a
+# worker is still in flight, and the rows that worker already paid for arrive at a closed
+# run and are dropped. The margin covers parsing and the window save add_rows can trigger.
+WORKER_JOIN_TIMEOUT_S = TASK_GET_TIMEOUT_S + 10
 
 
 class SerpGoogleOrganic(BaseEndpoint):
@@ -442,7 +454,14 @@ class SerpGoogleOrganic(BaseEndpoint):
                 depth=depth, empty_cols=empty_cols,
             )
         except BaseException as exc:
-            run.close(error=exc)
+            # close() no longer raises when handed a cause, but never let a failure in
+            # there cost us the original exception: the bare `raise` below is what the
+            # caller is waiting for, and it only runs if close() returns.
+            try:
+                run.close(error=exc)
+            except Exception as close_exc:  # noqa: BLE001
+                logger.error("[serp_google_organic] job %s: close() failed while handling "
+                             "%r: %r", job_id, exc, close_exc)
             raise
 
     def _post_all_legacy(self, run, targets, *, batch_size, num_workers, max_wait,
@@ -517,7 +536,16 @@ class SerpGoogleOrganic(BaseEndpoint):
 
                 try:
                     url = f"{self._client.BASE_URL}/{self.GET_URL}/{task_id}"
-                    resp = session.get(url, timeout=30)
+                    resp = session.get(url, timeout=TASK_GET_TIMEOUT_S)
+                    if stats["stop_error"] is not None or run.is_closing:
+                        # Cheap re-check for what the join timeout cannot cover. After a
+                        # balance stop, writing more rows only trips the next balance
+                        # check; a run that is already closing cannot take them at all.
+                        # Put the task back so it is reported as a timeout instead of
+                        # vanishing from both results_df and failed_df.
+                        task_queue.put(task)
+                        task_queue.task_done()
+                        return
                     data = resp.json()
 
                     tasks_list = data.get("tasks", [])
@@ -661,7 +689,7 @@ class SerpGoogleOrganic(BaseEndpoint):
         stats["stop"] = True
 
         for t in worker_threads:
-            t.join(timeout=5)
+            t.join(timeout=WORKER_JOIN_TIMEOUT_S)
 
         remaining_in_queue = 0
         while not task_queue.empty():

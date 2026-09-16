@@ -10,6 +10,7 @@ implementing the abstract methods.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import time
 from abc import ABC, abstractmethod
@@ -31,6 +32,8 @@ from skyward.functions import _validate_job_id, generate_upload_id
 if TYPE_CHECKING:
     from skyward.data.bigquery import BigQueryClient
     from skyward.data.dataforseo.client import ClientConfig, DataForSEOClient
+
+logger = logging.getLogger(__name__)
 
 
 # Sentinel for "arg not provided" to distinguish from explicit None
@@ -242,7 +245,14 @@ class BaseEndpoint(ABC):
         try:
             run.run_unit(target, lambda: self._fetch_live(target, _debug_collector=collector, **kwargs))
         except BaseException as exc:
-            run.close(error=exc)
+            # close() no longer raises when handed a cause, but never let a failure in
+            # there cost us the original exception: the bare `raise` below is what the
+            # caller is waiting for, and it only runs if close() returns.
+            try:
+                run.close(error=exc)
+            except Exception as close_exc:  # noqa: BLE001
+                logger.error("[%s] job %s: close() failed while handling %r: %r",
+                             self.TABLE_NAME, job_id, exc, close_exc)
             raise
         finally:
             if collector is not None:

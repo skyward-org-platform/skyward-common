@@ -1,5 +1,7 @@
 import asyncio
 import itertools
+import threading
+import time
 
 import pytest
 
@@ -301,6 +303,48 @@ def test_serp_legacy_mid_run_balance_stop_reaches_the_caller(serp_client, bq, mo
     assert end_rows[0]["status"] == "stopped_low_balance"
 
 
+def test_serp_legacy_balance_stop_is_wired_by_the_real_after_save(serp_client, bq, monkeypatch):
+    """The real _after_save recheck must be what sets the stop, end to end.
+
+    test_serp_legacy_mid_run_balance_stop_reaches_the_caller fakes add_rows and assigns
+    run._stop_error by hand, so it would still pass if the `self._stop_error = e`
+    assignment in RunContext._after_save were deleted. Here only the balance READING is
+    stubbed: a real window save fires the real recheck, which raises for real and sets
+    _stop_error itself.
+    """
+    from skyward.data.dataforseo.exceptions import InsufficientBalanceError
+
+    def balance(max_age_s=60.0):
+        # Rich at the pre-run check (default TTL), broke at the mid-run recheck, which
+        # always passes max_age_s=0 so it can never reuse a cached reading.
+        value = 0.0 if max_age_s == 0 else 1_000_000.0
+        return {"balance": value, "total": 0.0, "raw": {"balance": value}}
+
+    monkeypatch.setattr(serp_client, "get_balance_cached", balance)
+
+    ep = serp_client.serp_google_organic
+    runs = []
+    real_start_run = ep._start_run
+
+    def capture_run(*args, **kwargs):
+        run = real_start_run(*args, **kwargs)
+        runs.append(run)
+        return run
+
+    monkeypatch.setattr(ep, "_start_run", capture_run)
+
+    job_id = generate_job_id()
+    with pytest.raises(InsufficientBalanceError):
+        ep._post_all_sync(["kw0", "kw1"], domain=None, job_id=job_id, batch_size=1,
+                          num_workers=1, max_wait=60, upload_batch_rows=1)
+
+    # Set by _after_save itself, not by this test.
+    assert isinstance(runs[0]._stop_error, InsufficientBalanceError)
+    end_rows = [r for ins in bq.client.inserted_rows if ins["table"].endswith(".job_runs")
+                for r in ins["rows"] if r["job_id"] == job_id and r["event"] == "end"]
+    assert [r["status"] for r in end_rows] == ["stopped_low_balance"]
+
+
 def test_serp_legacy_max_wait_timeout_returns_tuple_without_raising(serp_client, bq, monkeypatch):
     # The ordinary timeout path (no balance stop, just tasks that never come back within
     # max_wait) must still behave as before: no exception, a normal (results_df, failed_df)
@@ -321,6 +365,49 @@ def test_serp_legacy_max_wait_timeout_returns_tuple_without_raising(serp_client,
     assert results_df.empty
     assert len(failed_df) == 1
     assert failed_df.iloc[0]["reason"] == "timeout"
+
+
+def test_serp_legacy_in_flight_task_get_is_not_abandoned_at_max_wait(serp_client, bq):
+    """A worker whose task_get is still in flight when max_wait expires keeps its rows.
+
+    The worker only re-checks the stop flag between queue items, so once it is inside a
+    task_get it cannot notice the coordinator stopping. If the coordinator joins for less
+    than the task_get timeout it runs run.close() first, and the rows the worker paid for
+    arrive at a closed run and are dropped from results_df.
+
+    This test is deliberately slow: the old join timeout was a hardcoded 5s, so the only
+    way to tell a fixed join from a broken one is an in-flight GET that outlasts it.
+    """
+    get_started = threading.Event()
+    release = threading.Event()
+    inner = _SerpGetSession(serp_client._session)
+
+    class _SlowGetSession:
+        def get(self, url, timeout=None):
+            get_started.set()
+            release.wait(timeout=60)
+            return inner.get(url)
+
+    serp_client._create_session = lambda: _SlowGetSession()
+
+    def release_after_the_old_join_would_have_expired():
+        # Anchored to the GET actually starting, not to test start, so setup time cannot
+        # eat the margin: the old hardcoded 5s join expires ~6s after this point.
+        get_started.wait(timeout=10)
+        time.sleep(8)
+        release.set()
+
+    threading.Thread(target=release_after_the_old_join_would_have_expired,
+                     daemon=True).start()
+
+    results_df, failed_df = serp_client.serp_google_organic._post_all_sync(
+        ["kw0"], domain=None, job_id=generate_job_id(), batch_size=1, num_workers=1,
+        max_wait=1)
+
+    assert len(results_df) == 1, "rows from an in-flight task_get were dropped"
+    assert failed_df.empty
+    data_loads = [l for l in bq.client.loaded_tables if "task_id" in l["df"].columns]
+    assert sum(len(l["df"]) for l in data_loads) == 1
 
 
 def test_serp_collector_path_logs_submit_cost(serp_client, bq, monkeypatch):

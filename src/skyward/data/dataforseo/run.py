@@ -298,12 +298,30 @@ class RunContext:
             _ACTIVE_UNIT.reset(token)
             self._absorb(unit, df, ok)
 
+    @property
+    def is_closing(self) -> bool:
+        """True once close() has begun. Lets a late writer skip work that cannot land."""
+        return self._closing or self._closed
+
     def add_rows(self, df: pd.DataFrame | None) -> None:
         if df is None or df.empty:
             return
         stamped = self._stamp(df)
         with self._lock:
-            self._frames.append(stamped)
+            too_late = self._closing or self._closed
+            if not too_late:
+                self._frames.append(stamped)
+        if too_late:
+            # A writer that was still in flight when close() ran -- e.g. a SERP legacy
+            # worker whose task_get returned after the coordinator joined. The frames are
+            # already concatenated and the uploader closed, so these rows can reach
+            # neither the returned DataFrame nor BigQuery. Never raise: the SERP worker's
+            # `except Exception` would turn that into a bogus per-keyword failure row.
+            # Log loudly instead, so dropped rows are visible rather than silent.
+            logger.error(
+                "[%s] job %s: dropped %d row(s) handed to add_rows after the run closed; "
+                "they were NOT saved.", self.endpoint, self.job_id, len(df))
+            return
         if self.uploader is not None:
             self.uploader.add(stamped)
 
@@ -334,7 +352,20 @@ class RunContext:
                     self.uploader.close()
             except Exception as e:  # noqa: BLE001 - the final save failing must still end the run
                 close_exc = e
-                cause = e
+                if cause is None:
+                    cause = e
+                else:
+                    # Something already ended this run -- a balance stop, or the error the
+                    # caller is in the middle of re-raising. That is the real cause:
+                    # letting the save failure replace it would report "failed" for what
+                    # was actually a low-balance stop, and re-raising it below would
+                    # pre-empt the caller's own `raise` and hand the consumer the save
+                    # error instead of the original. Record and log it instead.
+                    self.note_save_failure(f"final save failed: {e!r}")
+                    logger.error(
+                        "[%s] job %s: the final save failed while the run was already "
+                        "ending (%r); the run's original cause stands.",
+                        self.endpoint, self.job_id, e)
             finally:
                 if self.cost_writer is not None:
                     self.cost_writer.close()
@@ -361,6 +392,9 @@ class RunContext:
                 else:
                     status = "completed"
                     error_str = None
+                if close_exc is not None and cause is not close_exc:
+                    # The save failure is not the cause, but it still has to be visible.
+                    error_str = f"{error_str} | final save also failed: {close_exc!r}"[:1000]
                 write_job_run_row(self._bq, self._job_run_row("end", status, error=error_str))
             with self._lock:
                 frames = list(self._frames)
@@ -370,7 +404,10 @@ class RunContext:
                 print("No rows returned. Skipping upload.")
         finally:
             self._close_done.set()
-        if close_exc is not None:
+        if close_exc is not None and cause is close_exc:
+            # Only when the save failure is itself what ended the run. When there was a
+            # pre-existing cause the caller is already re-raising that, and raising here
+            # would stop its `raise` from ever running.
             raise close_exc
         return self._result
 

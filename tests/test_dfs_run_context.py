@@ -217,6 +217,7 @@ def test_post_records_error_does_not_fail_data_pull(monkeypatch):
 
 
 import asyncio
+import logging
 import threading
 
 import pandas as pd
@@ -569,6 +570,91 @@ def test_cost_log_row_rounds_cost_usd():
     row = _cost_rows(bq)[0]
     assert round(row["cost_usd"], 6) == row["cost_usd"]
     assert row["cost_usd"] == 0.0124
+
+
+def _boom_write(df, uid):
+    raise RuntimeError("boom-write")
+
+
+def _run_with_failing_final_save(bq):
+    """A run holding one buffered row whose only save happens in uploader.close() -- and
+    that save raises, so close() has to decide what really ended the run."""
+    plan = RunPlan("ep", "live", 1, 1, 1, ("a",))
+    est = CostEstimate(0.0, 0.0, 0.0, "list_price", plan)
+    run = RunContext(
+        client=_client(bq), endpoint_key="ep", job_id=generate_job_id(), plan=plan,
+        estimate=est, endpoint_mode="live", upload=True, write=_boom_write,
+        stamp=lambda df: df.assign(endpoint_mode="live"),
+        empty_columns=["task_id", "endpoint_mode"],
+    )
+    run.run_unit("a", _unit_fn("a"))
+    return run
+
+
+def test_balance_stop_survives_a_failing_final_save():
+    """A failing final save must not overwrite the reason the run actually stopped.
+
+    Both halves matter. If the save error becomes the cause, the end row says "failed"
+    and the low-balance reason is gone; and if close() then raises that save error, the
+    caller's `except BaseException: run.close(error=exc); raise` never reaches its bare
+    `raise`, so the consumer is handed the save error instead of the real one.
+    """
+    bq = FakeBigQueryClient()
+    run = _run_with_failing_final_save(bq)
+    err = InsufficientBalanceError(
+        "low balance mid-run", job_id=run.job_id, endpoint="ep", balance=0.0,
+        required=1.0, upload_ids=[], completed_targets=[], remaining_targets=[],
+    )
+    run._stop_error = err
+
+    with pytest.raises(InsufficientBalanceError):
+        try:
+            raise err
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
+
+    assert _job_rows(bq)[-1]["status"] == "stopped_low_balance"
+    # The save failure is still reported, just not as the cause of death.
+    assert any("boom-write" in f for f in run.save_failures)
+    assert "boom-write" in _job_rows(bq)[-1]["error"]
+
+
+def test_final_save_failure_alone_still_raises_and_marks_failed():
+    """With no pre-existing cause the save failure IS the cause: unchanged behaviour."""
+    bq = FakeBigQueryClient()
+    run = _run_with_failing_final_save(bq)
+    with pytest.raises(RuntimeError, match="boom-write"):
+        run.close()
+    assert _job_rows(bq)[-1]["status"] == "failed"
+
+
+def test_add_rows_after_close_is_dropped_loudly(caplog):
+    """A worker still in flight when close() ran must not write into a closed run.
+
+    The frames are already concatenated and the uploader closed, so the rows cannot reach
+    the result or BigQuery. add_rows must refuse them and say so at ERROR rather than
+    accept them and let them vanish.
+    """
+    bq = FakeBigQueryClient()
+    run, writes, _ = _make_run(bq)
+    run.add_rows(pd.DataFrame([{"task_id": "in-time"}]))
+    run.close()
+    saved = len(writes)
+
+    with caplog.at_level(logging.ERROR, logger="skyward.data.dataforseo.run"):
+        run.add_rows(pd.DataFrame([{"task_id": "too-late"}]))
+
+    # Assert on what the guard actually protects, not just on the cached close() result:
+    # close() caches its DataFrame, so a late frame appended to _frames would not show up
+    # in a second close() either way, and a late uploader.add() only buffers rather than
+    # writing. Both would be silent losses.
+    assert run._frames == [] or all("too-late" not in list(f["task_id"]) for f in run._frames)
+    assert run.uploader._frames == [], "a closed run's uploader was handed more rows"
+    assert len(writes) == saved
+    assert list(run.close()["task_id"]) == ["in-time"]
+    dropped = [r.getMessage() for r in caplog.records if run.job_id in r.getMessage()]
+    assert dropped and "1 row(s)" in dropped[0]
 
 
 def test_close_done_is_set_even_when_cost_writer_close_raises():
