@@ -114,6 +114,17 @@ All 11 DataForSEO endpoint tables in `data-hub-468216.DataForSEO` now use the st
 
 **Standard (POST/GET) mode** — only `serp-google-organic` and `keywords_data-google_ads-search_volume` support the async `task_post` + `task_get` workflow via `post_all()`. All other endpoints are live-only.
 
+**Cost tracking (v1.6.1+)** — automatic whenever the client has a `bq_client`; no caller changes.
+
+- Every billed task (`/live` requests and `task_post` submits) streams a row into `DataForSEO.cost_log` with `job_id`, `upload_id`, `task_id`, endpoint, mode and DFS-reported `cost_usd`. `task_get` is never logged (SERP echoes the task_post cost there). Standard-mode rows have `upload_id` NULL; link them to data by `task_id`.
+- `client.get_job_cost(job_id, by="endpoint"|"upload_id"|"total")` reads the `job_costs` view; `client.get_job_progress(job_id)` reads `job_progress` (start/end rows in `DataForSEO.job_runs`).
+- `endpoint.estimate_cost(targets, **same kwargs)` returns `max_usd` (list price + 10% from `DataForSEO.cost_estimates`) and `avg_usd` (observed, from `endpoint_cost_actuals`). Rate constants live in `skyward/data/dataforseo/cost_rates.py`; refresh the table with `scripts/seed_dfs_cost_estimates.py`.
+- Every run fails fast before spending: `InsufficientBalanceError` when balance < max estimate x `balance_buffer` (default 1.2), re-checked at each data save; `InvalidLocationError` when `location_code` isn't in the endpoint's DFS list. Overrides: `ignore_balance_check=True`, `ignore_location_check=True` (both print a warning).
+- Data saves in windows sized by expected rows (<10k once at end, 10k-100k every 10k, >100k every 50k); override with `upload_batch_rows=`. Return values are unchanged, so memory still grows on huge pulls.
+- Location catalog: `DataForSEO.locations` (flags `in_serp`, `in_google_ads`, `in_labs`), refreshed by `scripts/refresh_dfs_locations.py`; `client.get_locations(...)` and the `find_*` helpers read it.
+- Tables/views are created by `scripts/create_dfs_cost_tables.py` (dry-run by default).
+- Collector VM: set `DFS_COLLECTOR_BALANCE_WARN_USD` and `DFS_COLLECTOR_BALANCE_CRITICAL_USD` to enable the low-balance Slack alert.
+
 ## Testing
 
 ```bash
@@ -133,7 +144,7 @@ Tests use `FakeBQClient` fixtures in `tests/conftest.py` — no real BQ connecti
 
 This package is published to GitHub Packages. To publish a new version:
 
-1. Update the version in `pyproject.toml` and `src/skyward/__init__.py`
+1. Update the version in `pyproject.toml` (the only place it lives)
 2. Commit and push
 3. Create a GitHub Release with a tag (e.g., `v1.1.0`)
 4. The GitHub Action builds and publishes automatically
@@ -145,7 +156,7 @@ This package is published to GitHub Packages. To publish a new version:
 | `src/skyward/config/` | Central config loader (`load_config()`, `Settings` dataclass) |
 | `src/skyward/data/bigquery/` | BigQuery client wrapper with upload logging |
 | `src/skyward/data/supabase/` | `SupabaseClient` — psycopg3 transport for the skyward-ops Supabase project (meta schema + future client data) |
-| `src/skyward/data/dataforseo/` | DataForSEO API client (class-based, lazy endpoints) |
+| `src/skyward/data/dataforseo/` | DataForSEO API client (class-based, lazy endpoints), cost logging (`run.py`, `cost_log.py`), estimates (`estimates.py`, `cost_rates.py`), location catalog (`locations.py`) |
 | `src/skyward/data/meta/` | MetaClient — CRUD for Meta tables, backed by Supabase (`meta` schema) via `SupabaseClient` |
 | `src/skyward/data/hub/` | DataHub — hybrid: entities/catalog from Supabase, analytics + upload log from BigQuery |
 | `src/skyward/llm/` | Multi-provider LLM abstraction (OpenAI, Gemini, Perplexity, Anthropic, Grok) with cost tracking |
