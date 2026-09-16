@@ -253,38 +253,74 @@ def test_serp_post_all_legacy_saves_windows_and_logs_every_task(serp_client, bq)
     assert sum(len(l["df"]) for l in data_loads) == 150
 
 
-def test_serp_legacy_worker_lets_insufficient_balance_propagate(serp_client, bq, monkeypatch):
+def test_serp_legacy_mid_run_balance_stop_reaches_the_caller(serp_client, bq, monkeypatch):
     # run.add_rows() can trigger a window save, and a mid-run balance check on that save
-    # can raise InsufficientBalanceError. The legacy worker's `except Exception` used to
-    # swallow that into a spurious "failed" keyword row instead of letting the real stop
-    # signal through.
-    import threading
-
+    # can raise InsufficientBalanceError. That is a real stop signal for the whole run,
+    # not a per-task failure and not something a worker thread should merely log and
+    # swallow -- the caller of post_all/_post_all_sync must receive it. A single worker
+    # processes two keywords in order: the first is collected normally (and must still
+    # be saved), the second trips the balance stop.
     from skyward.data.dataforseo.exceptions import InsufficientBalanceError
     from skyward.data.dataforseo.run import RunContext
 
+    real_add_rows = RunContext.add_rows
     calls = {"n": 0}
 
     def fake_add_rows(self, df):
         calls["n"] += 1
-        raise InsufficientBalanceError(
+        if calls["n"] == 1:
+            return real_add_rows(self, df)
+        err = InsufficientBalanceError(
             "low balance mid-run", job_id="j", endpoint="serp_google_organic",
             balance=0.0, required=1.0, upload_ids=[], completed_targets=[],
             remaining_targets=[],
         )
+        # Mirrors what the real _after_save balance recheck does: stash the stop cause
+        # on the run before raising, so close() below can report it.
+        self._stop_error = err
+        raise err
 
     monkeypatch.setattr(RunContext, "add_rows", fake_add_rows)
 
-    captured = []
-    monkeypatch.setattr(threading, "excepthook", lambda args: captured.append(args.exc_value))
+    job_id = generate_job_id()
+    with pytest.raises(InsufficientBalanceError):
+        serp_client.serp_google_organic._post_all_sync(
+            ["kw0", "kw1"], domain=None, job_id=job_id, batch_size=1, num_workers=1,
+            max_wait=60)
+
+    assert calls["n"] == 2
+
+    # The row collected before the stop was still saved -- run.close(quiet=True) flushes
+    # any buffered rows regardless of the stop.
+    data_loads = [l for l in bq.client.loaded_tables if "task_id" in l["df"].columns]
+    assert sum(len(l["df"]) for l in data_loads) == 1
+
+    end_rows = [r for ins in bq.client.inserted_rows if ins["table"].endswith(".job_runs")
+                for r in ins["rows"] if r["job_id"] == job_id and r["event"] == "end"]
+    assert len(end_rows) == 1
+    assert end_rows[0]["status"] == "stopped_low_balance"
+
+
+def test_serp_legacy_max_wait_timeout_returns_tuple_without_raising(serp_client, bq, monkeypatch):
+    # The ordinary timeout path (no balance stop, just tasks that never come back within
+    # max_wait) must still behave as before: no exception, a normal (results_df, failed_df)
+    # tuple with the stragglers recorded as "timeout" failures.
+    session = serp_client._session
+
+    def never_ready(url, timeout=None):
+        return _Resp({"tasks": [{"id": url.rsplit("/", 1)[-1], "status_code": 40602,
+                                  "data": {}, "result": None}]})
+
+    serp_client._get = lambda url, session=None, max_retries=None, retry_delay=None: never_ready(url).json()
+    serp_client._create_session = lambda: type("S", (), {"get": staticmethod(never_ready)})()
 
     results_df, failed_df = serp_client.serp_google_organic._post_all_sync(
         ["kw0"], domain=None, job_id=generate_job_id(), batch_size=1, num_workers=1,
         max_wait=1)
 
-    assert calls["n"] == 1
-    assert failed_df.empty   # not recorded as a spurious per-keyword failure
-    assert any(isinstance(e, InsufficientBalanceError) for e in captured)
+    assert results_df.empty
+    assert len(failed_df) == 1
+    assert failed_df.iloc[0]["reason"] == "timeout"
 
 
 def test_serp_collector_path_logs_submit_cost(serp_client, bq, monkeypatch):

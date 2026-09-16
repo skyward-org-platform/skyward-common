@@ -458,6 +458,11 @@ class SerpGoogleOrganic(BaseEndpoint):
             "not_ready_cycles": 0,
             "start_time": time.time(),
             "stop": False,
+            # First worker to hit InsufficientBalanceError records it here (first writer
+            # wins) so the coordinator can re-raise it to the caller after run.close().
+            # This is a genuine whole-run stop signal, not a per-task failure -- see
+            # the `except InsufficientBalanceError` block in worker() below.
+            "stop_error": None,
         }
         stats_lock = Lock()
 
@@ -580,12 +585,21 @@ class SerpGoogleOrganic(BaseEndpoint):
                         stats["collected"] += 1
                     task_queue.task_done()
 
-                except InsufficientBalanceError:
+                except InsufficientBalanceError as e:
                     # run.add_rows() can trigger a window save, and a mid-run balance
-                    # check on that save can raise this. It is a real stop signal, not a
-                    # per-task failure — swallowing it here would turn a low-balance stop
-                    # into a spurious "failed" keyword row.
-                    raise
+                    # check on that save can raise this. It is a real stop signal for the
+                    # whole run, not a per-task failure -- record it (first writer wins,
+                    # since several workers can trip the check at once) and stop this
+                    # worker. These are daemon threads, so a bare raise here would only
+                    # kill this one thread and go unnoticed by the coordinator; the
+                    # coordinator's wait loop below is what turns the recorded exception
+                    # into something the caller of post_all actually sees.
+                    with stats_lock:
+                        if stats["stop_error"] is None:
+                            stats["stop_error"] = e
+                        stats["stop"] = True
+                    task_queue.task_done()
+                    return
                 except Exception as e:
                     if error_retries < max_error_retries:
                         task["error_retries"] += 1
@@ -640,6 +654,8 @@ class SerpGoogleOrganic(BaseEndpoint):
             with stats_lock:
                 if stats["collected"] + len(failed_rows) >= total_tasks:
                     break
+                if stats["stop_error"] is not None:
+                    break
             time.sleep(1)
 
         stats["stop"] = True
@@ -669,6 +685,15 @@ class SerpGoogleOrganic(BaseEndpoint):
             print(f"WARNING: {len(failed_df):,} keywords failed")
 
         results_df = run.close(quiet=True)
+
+        # A mid-run low-balance stop must reach the caller. run.close() above already
+        # saved any buffered rows and recorded the job_runs end row as
+        # stopped_low_balance -- close first, then raise, or that bookkeeping is lost.
+        with stats_lock:
+            stop_error = stats["stop_error"]
+        if stop_error is not None:
+            raise stop_error
+
         if not results_df.empty and debug:
             elapsed = (time.time() - stats["start_time"]) / 60
             print(f"Done. {len(results_df):,} rows for {stats['collected']:,} keywords in {elapsed:.1f}min")
