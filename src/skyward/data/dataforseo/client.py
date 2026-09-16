@@ -195,6 +195,7 @@ class DataForSEOClient:
             if status_sink is not None:
                 status_sink["http_status"] = None
                 status_sink["error"] = ""
+            resp = None
             try:
                 resp = sess.post(endpoint, json=payload, timeout=30)
                 if status_sink is not None:
@@ -214,6 +215,32 @@ class DataForSEOClient:
                     status_sink["error"] = repr(e)
                 if self.config.debug:
                     print(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
+                # `resp` only exists once `sess.post` returned -- a 2xx here means
+                # `raise_for_status()` passed and the failure is downstream (resp.json()
+                # raised, or something after it did). DataForSEO has already billed this
+                # request. About to retry with the SAME payload bills it again while this
+                # first, billed attempt is never recorded anywhere -- a money-visibility
+                # gap, not just a retry. Non-2xx statuses and transport failures (resp is
+                # still None) are excluded: DFS did not bill for those.
+                if resp is not None and 200 <= resp.status_code < 300:
+                    logger.warning(
+                        "DataForSEO billed request likely lost: endpoint=%s http_status=%s "
+                        "attempt=%d/%d -- the response could not be parsed/used, so this "
+                        "will be retried with the same payload. DataForSEO has already "
+                        "billed the failed attempt and that charge cannot be attributed "
+                        "to any job; a zero-cost marker row is being written to cost_log "
+                        "so the gap stays visible.",
+                        endpoint, resp.status_code, attempt + 1, max_retries,
+                    )
+                    unit = active_unit()
+                    if unit is not None:
+                        try:
+                            unit.record_unattributed_billed_retry(
+                                endpoint, payload, resp.status_code, attempt + 1)
+                        except Exception as marker_exc:  # noqa: BLE001
+                            logger.warning(
+                                "Failed to record unattributed billed retry marker: %r",
+                                marker_exc)
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
         return None

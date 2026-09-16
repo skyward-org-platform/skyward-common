@@ -103,6 +103,40 @@ def extract_cost_records(url: str, payload, resp, http_status) -> list[dict]:
     return records
 
 
+def extract_unattributed_billed_retry_record(url: str, payload, http_status: int,
+                                              attempt: int) -> dict | None:
+    """One marker row for a 2xx response DataForSEO already billed but whose body could
+    not be parsed or used, forcing `_post` to retry with the same payload -- which DFS
+    then bills again while the first, billed attempt is never recorded anywhere.
+
+    Returns None for a call `_post` never bills for in the first place (task_get,
+    tasks_ready/tasks_fixed, or any non-`/live`/`/task_post` endpoint) -- same gate as
+    `extract_cost_records` -- since there is no billing gap to signal there.
+
+    `cost_usd` is intentionally not filled in by the caller: we do not know DataForSEO's
+    actual charge for the lost attempt, and guessing would corrupt job totals. The row
+    exists to make the event visible, not to price it.
+    """
+    call_type = classify_call(url, payload)
+    if call_type is None:
+        return None
+    task_payload = payload[0] if isinstance(payload, list) and payload else payload
+    price_inputs = _price_inputs(task_payload)
+    price_inputs["unattributed_billed_retry"] = True
+    return {
+        "task_id": None,
+        "call_type": call_type,
+        "http_status": http_status,
+        "dfs_status_code": None,
+        "items_sent": _items_sent(task_payload),
+        "result_rows": 0,
+        "price_inputs": json.dumps(price_inputs, default=str, sort_keys=True),
+        "cost_usd": 0.0,
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+        "attempt": attempt,
+    }
+
+
 def cost_flush_every(planned_requests: int) -> int:
     """Stream about every 1% of a run's planned requests, between 25 and 500 rows.
 

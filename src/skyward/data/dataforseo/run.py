@@ -23,6 +23,7 @@ import pandas as pd
 from skyward.data.dataforseo.batch_uploader import BatchUploader, choose_upload_batch_rows
 from skyward.data.dataforseo.cost_log import (
     COST_LOG_TABLE, CostLogWriter, cost_flush_every, extract_cost_records,
+    extract_unattributed_billed_retry_record,
 )
 from skyward.data.dataforseo.estimates import CostEstimate, RunPlan
 from skyward.data.dataforseo.exceptions import InsufficientBalanceError
@@ -81,6 +82,17 @@ class RunUnit:
         for r in records:
             r["attempt"] = self._attempts[key]
         self.records.extend(records)
+
+    def record_unattributed_billed_retry(self, url: str, payload, http_status: int,
+                                          attempt: int) -> None:
+        """A 2xx DataForSEO response that DFS already billed but whose body could not
+        be used, right before `_post` retries the same payload (and gets billed again).
+        Appends a zero-cost marker row (see `extract_unattributed_billed_retry_record`)
+        so the gap is visible in cost_log instead of only in a log line.
+        """
+        record = extract_unattributed_billed_retry_record(url, payload, http_status, attempt)
+        if record is not None:
+            self.records.append(record)
 
 
 def check_balance(
