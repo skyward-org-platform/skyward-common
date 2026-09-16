@@ -25,7 +25,7 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
     def _build_payload(self, target: str, **kwargs) -> list[dict]:
         return [{
             "target": target,
-            "language_name": "English",
+            "language_code": kwargs.get("language_code", self.config.language_code),
             "location_code": kwargs.get("location_code", self.config.location_code),
             "limit": kwargs.get("limit", 1000),
             "offset": kwargs.get("offset", 0),

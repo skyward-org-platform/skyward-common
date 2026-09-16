@@ -129,3 +129,74 @@ def test_ranked_keywords_paginates_and_links(client, bq):
     assert len(rows) == 4
     assert {r["call_type"] for r in rows} == {"live_page"}
     assert_linked(bq)
+
+
+import skyward.data.dataforseo.endpoints.keywords_data_google_ads_search_volume as sv_mod
+from skyward.data.dataforseo import ClientConfig
+
+
+def _stub_task_get(client):
+    session = client._session
+
+    def _get(url, *a, **k):
+        if url.endswith("/tasks_ready"):
+            return {"tasks": [{"result": [{"id": tid} for tid in session.posted]}]}
+        tid = url.rsplit("/", 1)[-1]
+        task = session.posted[tid]
+        return {"tasks": [{"id": tid, "status_code": 20000, "cost": 0, "data": task,
+                           "result": [{"keyword": k, "search_volume": 1} for k in task["keywords"]]}]}
+
+    client._get = _get
+
+
+@pytest.fixture
+def std_client(bq):
+    c = DataForSEOClient(username="u", password="p", bq_client=bq,
+                         config=ClientConfig(task_poll_interval=0))
+    c._session = FakeDfsSession(cost=0.06)
+    _stub_task_get(c)
+    return c
+
+
+def test_search_volume_live_all_logs_per_task(client, bq):
+    kws = [f"k{i}" for i in range(1500)]
+    df = asyncio.run(client.keywords_data_google_ads_search_volume.live_all(
+        kws, domain=None, job_id=generate_job_id(), batch_delay=0, language_code="es"))
+    assert len(df) == 1500
+    rows = cost_rows(bq)
+    assert len(rows) == 2
+    assert all('"language_code": "es"' in r["price_inputs"] for r in rows)
+    assert_linked(bq)
+
+
+def test_search_volume_post_all_legacy_logs_task_post_only(std_client, bq):
+    kws = [f"k{i}" for i in range(1500)]
+    df = asyncio.run(std_client.keywords_data_google_ads_search_volume.post_all(
+        kws, job_id=generate_job_id(), keywords_per_task=1000, use_collector=False))
+    assert len(df) == 1500
+    rows = cost_rows(bq)
+    assert len(rows) == 2
+    assert {r["call_type"] for r in rows} == {"task_post"}
+    assert {r["endpoint_mode"] for r in rows} == {"standard"}
+    assert {r["upload_id"] for r in rows} == {None}
+    assert len([l for l in bq.client.loaded_tables if "task_id" in l["df"].columns]) == 1
+
+
+def test_search_volume_post_single_batch(std_client, bq):
+    df = std_client.keywords_data_google_ads_search_volume.post(
+        ["a", "b"], job_id=generate_job_id(), language_code="es")
+    assert len(df) == 2
+    assert len(cost_rows(bq)) == 1
+    assert std_client._session.calls[0][1][0]["language_code"] == "es"
+
+
+def test_search_volume_collector_path_logs_submit_cost(std_client, bq, monkeypatch):
+    monkeypatch.setattr(sv_mod, "submit_and_wait",
+                        lambda **k: {"total_tasks": len(k["posted_tasks"]), "proceeded": True})
+    summary = asyncio.run(std_client.keywords_data_google_ads_search_volume.post_all(
+        [f"k{i}" for i in range(250)], job_id=generate_job_id(), keywords_per_task=100,
+        use_collector=True))
+    assert summary["total_tasks"] == 3
+    rows = cost_rows(bq)
+    assert len(rows) == 3 and {r["call_type"] for r in rows} == {"task_post"}
+    assert [l for l in bq.client.loaded_tables if "task_id" in l["df"].columns] == []

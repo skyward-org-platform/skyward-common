@@ -20,6 +20,7 @@ import pandas as pd
 from skyward.data.dataforseo.base import BaseEndpoint, _UNSET
 from skyward.data.dataforseo.collector.producer import parse_task_post, submit_and_wait
 from skyward.data.dataforseo.exceptions import IncompleteTaskError
+from skyward.data.dataforseo.run import DEFAULT_BALANCE_BUFFER
 from skyward.functions import _validate_job_id
 
 
@@ -31,10 +32,17 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
     TABLE_NAME = "keywords_data-google_ads-search_volume"
     COLLECTOR_ENDPOINT_KEY = "keywords_data_google_ads_search_volume"
 
+    def _language_fields(self, language_code: str | None = None,
+                         language_name: str | None = None) -> dict:
+        """language_name is only sent when a caller passes one (backward compatibility)."""
+        if language_name:
+            return {"language_name": language_name}
+        return {"language_code": language_code or self.config.language_code}
+
     def _build_payload(self, target: str | list[str], **kwargs) -> list[dict]:
         keywords = [target] if isinstance(target, str) else target
         return [{
-            "language_name": "English",
+            **self._language_fields(kwargs.get("language_code"), kwargs.get("language_name")),
             "location_code": kwargs.get("location_code", self.config.location_code),
             "keywords": keywords,
         }]
@@ -164,20 +172,26 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         upload: bool = True,
         batch_size: int = 1000,
         batch_delay: float = 2.0,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         """
-        Fetch search volume for many keywords in batches.
+        Fetch search volume for many keywords in batches (live mode).
 
         Args:
             targets: List of keywords
-            domain / domain_id: Domain attribution (mutually exclusive; omit both to opt out)
-            job_id: Required — tagged onto uploaded rows for lineage
-            interactive: Whether to prompt the user when resolving an unknown domain
-            upload: If True (default), BQ upload happens after fetch
+            domain / domain_id: Domain attribution (exactly one; domain=None opts out)
+            job_id: Required, tagged onto rows for lineage
+            interactive: Whether to prompt when resolving an unknown domain
+            upload: If True (default), rows are saved to BQ in windows
             batch_size: Keywords per request (max 1000)
             batch_delay: Delay between batches to respect rate limits
-            **kwargs: Additional parameters forwarded to `_fetch_live`
+            balance_buffer / ignore_balance_check / ignore_location_check / upload_batch_rows:
+                v1.6.1 run guards and save sizing
+            **kwargs: Forwarded to `_fetch_live` (location_code, language_code, ...)
 
         Returns:
             Combined DataFrame with all search volumes, stamped with fetch metadata.
@@ -185,39 +199,35 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         _validate_job_id(job_id)
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
-        batch_size = min(batch_size, 1000)  # API max
+        batch_size = min(batch_size, 1000)
         batches = list(self._client._chunked(targets, batch_size))
         total_batches = len(batches)
 
+        run = self._start_run(
+            list(targets), job_id=job_id, resolved=resolved, endpoint_mode="live",
+            upload=upload, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={**kwargs, "batch_size": batch_size},
+            empty_columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"],
+        )
+
         if self.config.debug:
             print(f"Fetching search volume for {len(targets)} keywords in {total_batches} batches...")
-
-        results: list[pd.DataFrame] = []
         start_time = time.monotonic()
 
-        for idx, batch in enumerate(batches, 1):
-            df = self._fetch_live(batch, **kwargs)
-            if not df.empty:
-                results.append(df)
-
-            if self.config.debug:
-                elapsed = time.monotonic() - start_time
-                print(f"Progress: {idx}/{total_batches} batches completed. Time: {elapsed:.1f}s")
-
-            if idx < total_batches:
-                await asyncio.sleep(batch_delay)
-
-        if not results:
-            print("No rows returned. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
-
-        combined = pd.concat(results, ignore_index=True)
-        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
-
-        if upload:
-            self.upload(self._client.bq_client, combined, job_id=job_id)
-
-        return combined
+        try:
+            for idx, batch in enumerate(batches, 1):
+                run.run_unit(batch, lambda b=batch: self._fetch_live(b, **kwargs))
+                if self.config.debug:
+                    elapsed = time.monotonic() - start_time
+                    print(f"Progress: {idx}/{total_batches} batches completed. Time: {elapsed:.1f}s")
+                if idx < total_batches:
+                    await asyncio.sleep(batch_delay)
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
+        return run.close()
 
     # -------------------------------------------------------------------------
     # POST/GET workflow methods
@@ -227,21 +237,17 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         self,
         keywords: list[str],
         location_code: int | None = None,
-        language_name: str = "English",
+        language_code: str | None = None,
         debug: bool = False,
         tag: str | None = None,
+        language_name: str | None = None,
     ) -> list[str]:
-        """Submit a batch of keywords for async processing.
-
-        Returns the list of DataForSEO task_ids created.
-        """
-        cfg = self.config
-        location_code = location_code or cfg.location_code
-
+        """Submit a batch of keywords for async processing. Returns the created task_ids."""
+        location_code = location_code or self.config.location_code
         url = f"{self._client.BASE_URL}/{self.POST_URL}"
         payload = [{
             "keywords": keywords,
-            "language_name": language_name,
+            **self._language_fields(language_code, language_name),
             "location_code": location_code,
         }]
         if tag is not None:
@@ -298,13 +304,17 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         interactive: bool = False,
         upload: bool = True,
         location_code: int | None = None,
-        language_name: str = "English",
+        language_code: str | None = None,
+        language_name: str | None = None,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
         **kwargs,
     ) -> pd.DataFrame:
-        """Single-batch POST/GET workflow. Raises IncompleteTaskError on 2h timeout."""
+        """Single-batch POST/GET workflow. Raises IncompleteTaskError on timeout."""
         _validate_job_id(job_id)
 
-        # Resolve domain (mutually exclusive domain/domain_id; both None = opt out)
         if domain is not None and domain_id is not None:
             raise ValueError("Must pass exactly one of `domain=` or `domain_id=`, not both.")
         if domain is None and domain_id is None:
@@ -315,55 +325,54 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
             resolved = self._resolve_domain(_UNSET, domain_id, interactive)
 
         keywords = [target] if isinstance(target, str) else list(target)
-
-        # 1. Submit
-        task_ids = self._task_post(
-            keywords=keywords,
-            location_code=location_code,
-            language_name=language_name,
-            debug=self.config.debug,
-            tag=kwargs.get("tag"),
+        run = self._start_run(
+            keywords, job_id=job_id, resolved=resolved, endpoint_mode="standard",
+            upload=upload, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={**kwargs, "keywords_per_task": max(len(keywords), 1),
+                         "location_code": location_code},
+            empty_columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"],
+            tag_cost_with_upload=False,
         )
-        if not task_ids:
-            print("No task_ids returned from task_post. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"])
 
-        # 2. Poll until all complete or timeout
-        pending = set(task_ids)
-        deadline = time.monotonic() + self.config.task_total_timeout
-        while pending and time.monotonic() < deadline:
-            ready = set(self._tasks_ready(debug=self.config.debug))
-            complete = pending & ready
-            pending -= complete
-            if not pending:
-                break
-            time.sleep(self.config.task_poll_interval)
+        try:
+            task_ids = run.run_unit(keywords, lambda: self._task_post(
+                keywords=keywords, location_code=location_code, language_code=language_code,
+                debug=self.config.debug, tag=kwargs.get("tag"), language_name=language_name,
+            ))
+            if not task_ids:
+                print("No task_ids returned from task_post. Skipping upload.")
+                return run.close(quiet=True)
 
-        if pending:
-            raise IncompleteTaskError(
-                f"{len(pending)} of {len(task_ids)} tasks did not complete within "
-                f"{self.config.task_total_timeout} seconds",
-                task_ids=sorted(pending),
-            )
+            pending = set(task_ids)
+            deadline = time.monotonic() + self.config.task_total_timeout
+            while pending and time.monotonic() < deadline:
+                ready = set(self._tasks_ready(debug=self.config.debug))
+                pending -= pending & ready
+                if not pending:
+                    break
+                time.sleep(self.config.task_poll_interval)
 
-        # 3. Retrieve
-        frames = []
-        for tid in task_ids:
-            df_part = self._task_get(tid, debug=self.config.debug)
-            if not df_part.empty:
-                frames.append(df_part)
+            if pending:
+                raise IncompleteTaskError(
+                    f"{len(pending)} of {len(task_ids)} tasks did not complete within "
+                    f"{self.config.task_total_timeout} seconds",
+                    task_ids=sorted(pending),
+                )
 
-        if not frames:
-            print("All tasks completed but returned no rows. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"])
-
-        df = pd.concat(frames, ignore_index=True)
-        df = self._stamp_fetch_metadata(df, resolved, endpoint_mode="standard")
-
-        if upload:
-            self.upload(self._client.bq_client, df, job_id=job_id)
-
-        return df
+            got_rows = False
+            for tid in task_ids:
+                df_part = self._task_get(tid, debug=self.config.debug)
+                if not df_part.empty:
+                    got_rows = True
+                    run.add_rows(df_part)
+            if not got_rows:
+                print("All tasks completed but returned no rows. Skipping upload.")
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
+        return run.close(quiet=True)
 
     def _post_all_collector(
         self,
@@ -374,28 +383,29 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         proceed_at_pct: float = 1.0,
         keywords_per_task: int = 1000,
         location_code: int | None = None,
-        language_name: str = "English",
+        language_code: str | None = None,
+        language_name: str | None = None,
+        _run=None,
     ) -> dict:
         """Collector path: task_post keyword batches, record tracking rows, wait on BQ.
 
         One task covers ~keywords_per_task keywords, so tracking is at task granularity
         (the canonical table holds the per-keyword rows). Returns a receipt incl. 40200
-        reject counts. The collector drains results into the canonical table.
+        reject counts. The collector drains results into the canonical table. Each submit
+        is cost-logged when `_run` is given.
         """
         location_code = location_code or self.config.location_code
         url = f"{self._client.BASE_URL}/{self.POST_URL}"
+        lang = self._language_fields(language_code, language_name)
 
         posted: list[dict] = []
         rejected_payment = 0
         rejected_other = 0
         for i in range(0, len(targets), keywords_per_task):
             chunk = targets[i:i + keywords_per_task]
-            payload = [{
-                "keywords": chunk,
-                "language_name": language_name,
-                "location_code": location_code,
-            }]
-            parsed = parse_task_post(self._client._post(url, payload))
+            payload = [{"keywords": chunk, **lang, "location_code": location_code}]
+            parsed = parse_task_post(self._in_unit(
+                _run, chunk, lambda p=payload: self._client._post(url, p)))
             posted.extend(parsed["posted"])
             rejected_payment += parsed["rejected_payment"]
             rejected_other += parsed["rejected_other"]
@@ -430,10 +440,15 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         interactive: bool = False,
         upload: bool = True,
         location_code: int | None = None,
-        language_name: str = "English",
+        language_code: str | None = None,
+        language_name: str | None = None,
         keywords_per_task: int = 1000,
         use_collector: bool | None = None,
         proceed_at_pct: float = 1.0,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
         **kwargs,
     ):
         """Multi-batch POST/GET.
@@ -441,10 +456,10 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         Legacy (default): poll in-process, returns a DataFrame.
         Collector mode (`use_collector=True` or `config.use_collector`): submit + track and
         wait on dfs_job_summary; returns a summary receipt dict. See ClickUp 86bac9q9y.
+        Submits are cost-logged in both modes.
         """
         _validate_job_id(job_id)
 
-        # Resolve domain
         if domain is not None and domain_id is not None:
             raise ValueError("Must pass exactly one of `domain=` or `domain_id=`, not both.")
         if domain is None and domain_id is None:
@@ -455,72 +470,78 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
             resolved = self._resolve_domain(_UNSET, domain_id, interactive)
 
         use_collector = self.config.use_collector if use_collector is None else use_collector
-        if use_collector:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, functools.partial(
-                self._post_all_collector, targets, job_id=job_id, resolved=resolved,
-                proceed_at_pct=proceed_at_pct, keywords_per_task=keywords_per_task,
-                location_code=location_code, language_name=language_name,
-            ))
-
-        # 1. Chunk + submit
-        chunks = [targets[i : i + keywords_per_task] for i in range(0, len(targets), keywords_per_task)]
-        all_task_ids: list[str] = []
-
+        run = self._start_run(
+            list(targets), job_id=job_id, resolved=resolved, endpoint_mode="standard",
+            upload=upload and not use_collector, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={**kwargs, "keywords_per_task": keywords_per_task,
+                         "location_code": location_code},
+            empty_columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"],
+            tag_cost_with_upload=False,
+        )
         loop = asyncio.get_running_loop()
-        submit_tasks = [
-            loop.run_in_executor(
-                None,
-                lambda c=chunk: self._task_post(
-                    keywords=c,
-                    location_code=location_code,
-                    language_name=language_name,
-                    debug=self.config.debug,
-                ),
-            )
-            for chunk in chunks
-        ]
-        submit_results = await asyncio.gather(*submit_tasks)
-        for tids in submit_results:
-            all_task_ids.extend(tids)
 
-        if not all_task_ids:
-            print("No task_ids returned from task_post. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"])
+        if use_collector:
+            try:
+                summary = await loop.run_in_executor(None, functools.partial(
+                    self._post_all_collector, targets, job_id=job_id, resolved=resolved,
+                    proceed_at_pct=proceed_at_pct, keywords_per_task=keywords_per_task,
+                    location_code=location_code, language_code=language_code,
+                    language_name=language_name, _run=run,
+                ))
+            except BaseException as exc:
+                run.close(error=exc)
+                raise
+            run.close(quiet=True)
+            return summary
 
-        # 2. Poll
-        pending = set(all_task_ids)
-        deadline = time.monotonic() + self.config.task_total_timeout
-        while pending and time.monotonic() < deadline:
-            ready = set(self._tasks_ready(debug=self.config.debug))
-            pending -= ready
-            if not pending:
-                break
-            await asyncio.sleep(self.config.task_poll_interval)
+        try:
+            chunks = [targets[i : i + keywords_per_task] for i in range(0, len(targets), keywords_per_task)]
+            submit_tasks = [
+                loop.run_in_executor(
+                    None,
+                    lambda c=chunk: run.run_unit(c, lambda: self._task_post(
+                        keywords=c, location_code=location_code, language_code=language_code,
+                        debug=self.config.debug, language_name=language_name,
+                    )),
+                )
+                for chunk in chunks
+            ]
+            submit_results = await asyncio.gather(*submit_tasks)
+            all_task_ids = [tid for tids in submit_results for tid in (tids or [])]
 
-        if pending:
-            raise IncompleteTaskError(
-                f"{len(pending)} of {len(all_task_ids)} tasks did not complete within "
-                f"{self.config.task_total_timeout} seconds",
-                task_ids=sorted(pending),
-            )
+            if not all_task_ids:
+                print("No task_ids returned from task_post. Skipping upload.")
+                return run.close(quiet=True)
 
-        # 3. Retrieve in parallel
-        retrieve_tasks = [
-            loop.run_in_executor(None, lambda tid=tid: self._task_get(tid, debug=self.config.debug))
-            for tid in all_task_ids
-        ]
-        retrieved = await asyncio.gather(*retrieve_tasks)
-        frames = [df for df in retrieved if not df.empty]
+            pending = set(all_task_ids)
+            deadline = time.monotonic() + self.config.task_total_timeout
+            while pending and time.monotonic() < deadline:
+                ready = set(self._tasks_ready(debug=self.config.debug))
+                pending -= ready
+                if not pending:
+                    break
+                await asyncio.sleep(self.config.task_poll_interval)
 
-        if not frames:
-            print("All tasks completed but returned no rows. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"])
+            if pending:
+                raise IncompleteTaskError(
+                    f"{len(pending)} of {len(all_task_ids)} tasks did not complete within "
+                    f"{self.config.task_total_timeout} seconds",
+                    task_ids=sorted(pending),
+                )
 
-        df = pd.concat(frames, ignore_index=True)
-        df = self._stamp_fetch_metadata(df, resolved, endpoint_mode="standard")
-
-        if upload:
-            self.upload(self._client.bq_client, df, job_id=job_id)
-
-        return df
+            retrieve_tasks = [
+                loop.run_in_executor(None, lambda tid=tid: self._task_get(tid, debug=self.config.debug))
+                for tid in all_task_ids
+            ]
+            retrieved = await asyncio.gather(*retrieve_tasks)
+            frames = [df for df in retrieved if not df.empty]
+            if not frames:
+                print("All tasks completed but returned no rows. Skipping upload.")
+            for df in frames:
+                run.add_rows(df)
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
+        return run.close(quiet=True)
