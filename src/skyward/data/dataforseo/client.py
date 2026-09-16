@@ -551,6 +551,51 @@ class DataForSEOClient:
             self._cost_estimator = CostEstimator(self)
         return self._cost_estimator
 
+    def get_job_cost(self, job_id: str, by: str = "endpoint"):
+        """Actual DataForSEO spend for a job, from DataForSEO.job_costs.
+
+        by="total" -> one row; "endpoint" -> per endpoint and mode;
+        "upload_id" -> per endpoint, mode and save window.
+        """
+        groups = {
+            "total": [],
+            "endpoint": ["endpoint", "endpoint_mode"],
+            "upload_id": ["endpoint", "endpoint_mode", "upload_id"],
+        }
+        if by not in groups:
+            raise ValueError(f"by must be one of {sorted(groups)}")
+        if self.bq_client is None:
+            raise RuntimeError("get_job_cost requires a BigQuery client.")
+        from google.cloud import bigquery
+
+        cols = groups[by]
+        select = "".join(f"{c}, " for c in cols)
+        sql = (
+            f"SELECT {select}ROUND(SUM(total_cost_usd), 6) AS total_cost_usd, "
+            f"SUM(billed_tasks) AS billed_tasks, SUM(result_rows) AS result_rows "
+            f"FROM `{self.bq_client.client.project}.DataForSEO.job_costs` WHERE job_id = @job_id"
+        )
+        if cols:
+            sql += f" GROUP BY {', '.join(cols)} ORDER BY {', '.join(cols)}"
+        cfg = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("job_id", "STRING", job_id)])
+        return self.bq_client.client.query(sql, job_config=cfg).result().to_dataframe()
+
+    def get_job_progress(self, job_id: str, endpoint: str | None = None):
+        """Progress percentage and cost so far for a job's runs, from DataForSEO.job_progress."""
+        if self.bq_client is None:
+            raise RuntimeError("get_job_progress requires a BigQuery client.")
+        from google.cloud import bigquery
+
+        params = [bigquery.ScalarQueryParameter("job_id", "STRING", job_id)]
+        sql = (f"SELECT * FROM `{self.bq_client.client.project}.DataForSEO.job_progress` "
+               f"WHERE job_id = @job_id")
+        if endpoint is not None:
+            sql += " AND endpoint = @endpoint"
+            params.append(bigquery.ScalarQueryParameter("endpoint", "STRING", endpoint))
+        cfg = bigquery.QueryJobConfig(query_parameters=params)
+        return self.bq_client.client.query(sql, job_config=cfg).result().to_dataframe()
+
     @property
     def locations(self):
         """Cached location catalog (DataForSEO.locations)."""

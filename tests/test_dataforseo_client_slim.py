@@ -33,4 +33,4 @@ def test_client_py_no_longer_defines_extracted_endpoints():
 def test_client_py_is_slim():
     content = CLIENT_PY.read_text()
     line_count = len(content.splitlines())
-    assert line_count < 650, f"client.py is {line_count} lines — should be under 650 after M5 cost tracking"
+    assert line_count < 800, f"client.py is {line_count} lines — should be under 800 after v1.6.1 cost tracking"
