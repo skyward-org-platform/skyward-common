@@ -342,7 +342,12 @@ class RunContext:
             if self._closed:
                 first = False
             else:
+                # Both flags together, under one lock. Setting _closing later left a
+                # window where a reader checking only one of them saw a run that was
+                # closed but not yet "closing". Guarding at the reader is not enough on
+                # its own; close the window at the source too.
                 self._closed = True
+                self._closing = True
                 first = True
         if not first:
             # A concurrent or later caller: wait for the first close() to finish its
@@ -357,7 +362,6 @@ class RunContext:
         self._result = pd.DataFrame(columns=self._empty_columns)
         cause = error if error is not None else self._stop_error
         close_exc: BaseException | None = None
-        self._closing = True
         try:
             try:
                 if self.uploader is not None:
@@ -511,7 +515,12 @@ class RunContext:
                 )
             except Exception as e:  # noqa: BLE001
                 print(f"Cost-log upload event failed: {e}")
-        if self._closing:
+        if self.is_closing:
+            # Both flags, not _closing alone. close() sets _closed first and _closing a
+            # few lines later, so reading one of the two leaves a window in which a
+            # threshold-tripping uploader.add lands here, runs a live mid-run balance
+            # check against a run that has already closed, and can raise
+            # InsufficientBalanceError inside a worker thread during teardown.
             return
         remaining = max(0.0, self.estimate.max_usd - self.spent_usd)
         try:

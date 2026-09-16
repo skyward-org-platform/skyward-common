@@ -337,6 +337,15 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
         """
         run = kwargs.pop("_run", None)
         page_size = kwargs.pop("page_size", 1000)
+        # NOTE: this semaphore is currently vestigial. Domains are iterated sequentially
+        # and pagination inside _fetch_domain_keywords is sequential too, so only one run
+        # unit is ever in flight and the limit is never reached. It advertises concurrency
+        # that does not exist. Before actually enabling parallel domains here, check that
+        # the run is torn down behind a barrier: keywords_data_google_ads_search_volume
+        # runs its chunks under a bare asyncio.gather, which abandons its siblings on the
+        # first exception, so close() can run while other units are still being billed.
+        # That is the hole the late-writer guards in BatchUploader, CostLogWriter and
+        # RunContext exist to catch, and it should not be re-opened casually.
         max_concurrent = kwargs.pop("max_concurrent", 30)
         semaphore = asyncio.Semaphore(max_concurrent)
 

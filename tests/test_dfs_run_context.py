@@ -380,6 +380,57 @@ def test_mid_run_balance_check_never_reuses_a_cached_reading(monkeypatch):
     assert calls == [0]   # the only call here is the mid-run one, and it must be max_age_s=0
 
 
+def test_after_save_inside_the_close_window_does_not_run_a_balance_check(monkeypatch):
+    """_after_save used to read self._closing alone, while close() set _closed first and
+    _closing several statements later. A concurrent threshold-tripping uploader.add landing
+    in that gap ran a LIVE mid-run balance check against a run that had already closed, and
+    could set _stop_error and raise InsufficientBalanceError inside a worker during
+    teardown.
+
+    Testing this AFTER close() returns proves nothing: by then both flags are set either
+    way. The window has to be entered while close() is mid-flight, so we block close()
+    inside the gap and drive _after_save from another thread from exactly there.
+    """
+    bq = FakeBigQueryClient()
+    run, _writes, client = _make_run(bq, upload_batch_rows=1, max_usd=10.0)
+
+    calls = []
+
+    def spy_get_balance_cached(max_age_s=60.0):
+        calls.append(max_age_s)
+        return {"balance": 0.0, "total": 0, "raw": {"b": 0}}
+
+    monkeypatch.setattr(client, "get_balance_cached", spy_get_balance_cached)
+
+    in_the_window = threading.Event()
+    released = threading.Event()
+
+    class _BlockingColumns(list):
+        """close() builds its placeholder result from _empty_columns inside the gap."""
+
+        def __iter__(self):
+            in_the_window.set()
+            released.wait(5)
+            return super().__iter__()
+
+    run._empty_columns = _BlockingColumns(["task_id", "endpoint_mode"])
+
+    closer = threading.Thread(target=lambda: run.close(quiet=True))
+    closer.start()
+    try:
+        assert in_the_window.wait(5), "close() never reached the window"
+        # Here _closed is set. Under the old single-flag read _closing was not yet, so
+        # this call proceeded into a live balance check against a closed run.
+        run._after_save("some-upload-id")
+    finally:
+        released.set()
+        closer.join(10)
+
+    # A balance of 0 would have raised had the check run, so this asserts twice over.
+    assert calls == []
+    assert run._stop_error is None
+
+
 def test_pre_run_balance_check_keeps_the_default_cache_ttl():
     from skyward.data.dataforseo.run import check_balance
     calls = []

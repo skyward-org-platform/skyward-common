@@ -85,7 +85,17 @@ def build_attempt_record(
 
 
 class DebugLogCollector:
-    """Buffers per-attempt debug records and batch-loads them to BigQuery."""
+    """Buffers per-attempt debug records and batch-loads them to BigQuery.
+
+    Unlike BatchUploader and CostLogWriter this has no closed state, so a record arriving
+    after the final flush() would sit in the buffer forever. That is safe today only
+    because every caller flushes behind a barrier: BaseEndpoint flushes in a `finally`
+    that runs after the ThreadPoolExecutor context manager has joined its workers
+    (live_all), or after a single sequential call (live). The safety therefore comes from
+    the call sites, not from this class. Anything that starts recording from threads that
+    outlive that barrier needs a closed guard here first, of the kind BatchUploader.add
+    and CostLogWriter.add now have.
+    """
 
     def __init__(
         self,
