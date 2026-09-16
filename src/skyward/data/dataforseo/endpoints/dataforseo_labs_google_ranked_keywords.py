@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 
 from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.data.dataforseo.run import DEFAULT_BALANCE_BUFFER
 from skyward.functions import _validate_job_id
 
 
@@ -278,54 +279,51 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
         upload: bool = True,
         limit_per_domain: int = 10000,
         filters: list | None = None,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         """
-        Fetch ranked keywords for multiple domains.
-
-        This endpoint handles pagination internally since each domain can have
-        many keywords.
+        Fetch ranked keywords for multiple domains, paginating each domain.
 
         Args:
             targets: List of domains to query
             domain / domain_id: Domain-resolution args (exactly one required;
-                pass `domain=None` to opt out of tagging). Stamped via
-                `_stamp_fetch_metadata` after concat.
-            job_id: UUID job identifier for the upload batch.
+                pass `domain=None` to opt out of tagging).
+            job_id: UUID job identifier.
             interactive: If True, prompt on unknown domain.
-            upload: If True, append to the BQ table and log upload event.
+            upload: If True, save rows to BQ in windows and log upload events.
             limit_per_domain: Max keywords per domain
             filters: Optional API filters forwarded to `_build_payload`
-            **kwargs: Additional parameters
+            balance_buffer / ignore_balance_check / ignore_location_check / upload_batch_rows:
+                v1.6.1 run guards and save sizing.
+            **kwargs: Additional parameters (e.g. page_size, location_code)
         """
         _validate_job_id(job_id)
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
-        all_dfs: list[pd.DataFrame] = []
+        run = self._start_run(
+            list(targets), job_id=job_id, resolved=resolved, endpoint_mode="live",
+            upload=upload, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={**kwargs, "limit_per_domain": limit_per_domain},
+            empty_columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"],
+        )
 
-        for per_domain_target in targets:
-            if self.config.debug:
-                print(f"Fetching ranked keywords for {per_domain_target}...")
-
-            df = await self._fetch_domain_keywords(
-                per_domain_target, limit_per_domain, filters=filters, **kwargs
-            )
-            if df is not None and not df.empty:
-                all_dfs.append(df)
-
-        if not all_dfs:
-            print("No rows returned. Skipping upload.")
-            return pd.DataFrame(
-                columns=self._get_schema() + ["task_id", "domain_id", "domain", "endpoint_mode"]
-            )
-
-        combined = pd.concat(all_dfs, ignore_index=True)
-        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
-
-        if upload:
-            self.upload(self._client.bq_client, combined, job_id=job_id)
-
-        return combined
+        try:
+            for per_domain_target in targets:
+                if self.config.debug:
+                    print(f"Fetching ranked keywords for {per_domain_target}...")
+                await self._fetch_domain_keywords(
+                    per_domain_target, limit_per_domain, filters=filters, _run=run, **kwargs
+                )
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
+        return run.close()
 
     async def _fetch_domain_keywords(
         self,
@@ -333,7 +331,11 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
         limit: int,
         **kwargs,
     ) -> pd.DataFrame:
-        """Fetch all ranked keywords for a single domain with pagination."""
+        """Fetch all ranked keywords for a single domain with pagination.
+
+        When `_run` is given, each page is one cost-logged unit of that run.
+        """
+        run = kwargs.pop("_run", None)
         page_size = kwargs.pop("page_size", 1000)
         max_concurrent = kwargs.pop("max_concurrent", 30)
         semaphore = asyncio.Semaphore(max_concurrent)
@@ -348,15 +350,13 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
             async with semaphore:
                 df = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    lambda o=offset, r=remaining: self._fetch_live(
-                        domain,
-                        limit=r,
-                        offset=o,
-                        **kwargs,
-                    )
+                    lambda o=offset, r=remaining: self._in_unit(
+                        run, domain,
+                        lambda: self._fetch_live(domain, limit=r, offset=o, **kwargs),
+                    ),
                 )
 
-            if df.empty:
+            if df is None or df.empty:
                 consecutive_empty += 1
             else:
                 consecutive_empty = 0

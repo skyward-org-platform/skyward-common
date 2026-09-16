@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 
 from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.data.dataforseo.run import DEFAULT_BALANCE_BUFFER
 from skyward.functions import _validate_job_id
 
 
@@ -298,6 +299,10 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         upload: bool = True,
         batch_size: int | None = None,
         batch_delay: float | None = None,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         _validate_job_id(job_id)
@@ -314,33 +319,31 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         total = len(targets)
         total_batches = math.ceil(total / batch_size)
 
+        run = self._start_run(
+            list(targets), job_id=job_id, resolved=resolved, endpoint_mode="live",
+            upload=upload, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={**kwargs, "batch_size": batch_size},
+            empty_columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"],
+        )
+
         if debug:
             print(f"Starting BacklinksBulkPagesSummary for {total} targets in {total_batches} batch(es) of up to {batch_size}...")
 
-        df_list: list[pd.DataFrame] = []
-
-        for idx, batch_targets in enumerate(self._client._chunked(targets, batch_size), start=1):
-            current_batch = list(batch_targets)
-            if debug:
-                print(f"Batch {idx}/{total_batches} ({len(current_batch)} targets)")
-
-            result_df = await self._fetch_batch_with_fallback(
-                current_batch, max_retries, retry_delay, debug
-            )
-            if result_df is not None and not result_df.empty:
-                df_list.append(result_df)
-
-            if idx < total_batches:
-                await asyncio.sleep(batch_delay)
-
-        if not df_list:
-            print("No rows returned. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
-
-        combined = pd.concat(df_list, ignore_index=True)
-        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
-
-        if upload:
-            self.upload(self._client.bq_client, combined, job_id=job_id)
-
-        return combined
+        try:
+            for idx, batch_targets in enumerate(self._client._chunked(targets, batch_size), start=1):
+                current_batch = list(batch_targets)
+                if debug:
+                    print(f"Batch {idx}/{total_batches} ({len(current_batch)} targets)")
+                await run.run_unit_async(
+                    current_batch,
+                    lambda b=current_batch: self._fetch_batch_with_fallback(
+                        b, max_retries, retry_delay, debug),
+                )
+                if idx < total_batches:
+                    await asyncio.sleep(batch_delay)
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
+        return run.close()

@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 
 from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.data.dataforseo.run import DEFAULT_BALANCE_BUFFER
 from skyward.functions import _validate_job_id
 
 
@@ -161,41 +162,42 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
         upload: bool = True,
         batch_size: int = 1000,
         batch_delay: float = 0.2,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
         **kwargs,
     ) -> pd.DataFrame:
-        """Chunks the keyword list into batches of up to 1000 and calls _fetch_live()
-        for each batch sequentially. Honors the BaseEndpoint contract: validates
-        job_id, resolves domain, stamps fetch metadata, and uploads unless
-        upload=False."""
+        """Chunks keywords into batches of up to 1000 and fetches each sequentially.
+
+        Every request is cost-logged; rows are saved in windows and the combined
+        DataFrame is returned."""
         _validate_job_id(job_id)
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
         batch_size = min(batch_size, 1000)
         total_batches = math.ceil(len(keywords) / batch_size)
-        df_list: list[pd.DataFrame] = []
+
+        run = self._start_run(
+            list(keywords), job_id=job_id, resolved=resolved, endpoint_mode="live",
+            upload=upload, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={**kwargs, "batch_size": batch_size},
+            empty_columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"],
+        )
 
         if self.config.debug:
             print(f"Starting search_intent processing of {len(keywords)} keywords in {total_batches} batches of {batch_size}...")
 
-        for idx, chunk in enumerate(self._client._chunked(keywords, batch_size), start=1):
-            if self.config.debug:
-                print(f"Processing batch {idx}/{total_batches} ({len(chunk)} keywords)")
-
-            df = self._fetch_live(chunk, **kwargs)
-            if not df.empty:
-                df_list.append(df)
-
-            if idx < total_batches:
-                time.sleep(batch_delay)
-
-        if not df_list:
-            print("No rows returned. Skipping upload.")
-            return pd.DataFrame(columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"])
-
-        combined = pd.concat(df_list, ignore_index=True)
-        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="live")
-
-        if upload:
-            self.upload(self._client.bq_client, combined, job_id=job_id)
-
-        return combined
+        try:
+            for idx, chunk in enumerate(self._client._chunked(keywords, batch_size), start=1):
+                if self.config.debug:
+                    print(f"Processing batch {idx}/{total_batches} ({len(chunk)} keywords)")
+                run.run_unit(chunk, lambda c=chunk: self._fetch_live(c, **kwargs))
+                if idx < total_batches:
+                    time.sleep(batch_delay)
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
+        return run.close()
