@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import math
 import time
 from typing import Any
 
@@ -37,6 +38,14 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
             "location_code": kwargs.get("location_code", self.config.location_code),
             "keywords": keywords,
         }]
+
+    def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        key = "keywords_per_task" if endpoint_mode == "standard" else "batch_size"
+        size = min(kwargs.get(key) or 1000, 1000)
+        n = len(targets)
+        return self._make_plan(targets, endpoint_mode, requests=math.ceil(n / size),
+                               items=0, max_rows=n, keywords_per_request=size,
+                               location_code=kwargs.get("location_code"))
 
     def _parse_response(self, response: dict, target: str | list[str]) -> pd.DataFrame:
         try:

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import math
 import time
 from queue import Queue, Empty
 from threading import Thread, Lock
@@ -42,6 +43,15 @@ class SerpGoogleOrganic(BaseEndpoint):
         if kwargs.get("tag"):
             payload["tag"] = kwargs["tag"]
         return [payload]
+
+    def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        depth = kwargs.get("depth") or 10
+        pages = math.ceil(depth / 10)
+        n = len(targets)
+        # Advanced SERPs return extra elements (PAA, local pack) beyond depth; 2x is the row ceiling.
+        return self._make_plan(targets, endpoint_mode, requests=n, items=n * pages,
+                               max_rows=n * depth * 2, depth=depth,
+                               location_code=kwargs.get("location_code"))
 
     def _parse_response(self, response: dict, target: str) -> pd.DataFrame:
         try:

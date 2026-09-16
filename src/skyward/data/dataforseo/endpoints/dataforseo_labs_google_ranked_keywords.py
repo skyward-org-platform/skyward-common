@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 from typing import Any
 
@@ -31,6 +32,21 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
             "order_by": ["ranked_serp_element.serp_item.etv,desc"],
             "filters": kwargs.get("filters"),
         }]
+
+    def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        n = len(targets)
+        if kwargs.get("_single_call"):
+            per_target = kwargs.get("limit", 1000)
+            pages = 1
+            page_size = per_target
+        else:
+            per_target = kwargs.get("limit_per_domain", 10000)
+            page_size = kwargs.get("page_size", 1000)
+            pages = math.ceil(per_target / page_size)
+        return self._make_plan(targets, endpoint_mode, requests=n * pages,
+                               items=n * per_target, max_rows=n * per_target,
+                               limit_per_domain=per_target, page_size=page_size,
+                               location_code=kwargs.get("location_code"))
 
     def _parse_response(self, response: dict, target: str) -> pd.DataFrame:
         try:

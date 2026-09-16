@@ -34,6 +34,13 @@ class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
             "language_code": kwargs.get("language_code", self.config.language_code),
         }]
 
+    def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        batch = min(kwargs.get("batch_size") or 700, 700)
+        n = len(targets)
+        return self._make_plan(targets, endpoint_mode, requests=math.ceil(n / batch),
+                               items=n, max_rows=n, batch_size=batch,
+                               location_code=kwargs.get("location_code"))
+
     def _parse_response(self, response: dict, target: str | list[str]) -> pd.DataFrame:
         try:
             tasks = response.get("tasks") or []

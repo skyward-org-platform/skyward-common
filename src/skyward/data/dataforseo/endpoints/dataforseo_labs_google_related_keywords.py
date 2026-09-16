@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import pandas as pd
 
@@ -24,6 +25,13 @@ class DataforseoLabsGoogleRelatedKeywords(BaseEndpoint):
             "filters": kwargs.get("filters") or [["keyword_data.keyword_info.search_volume", ">", 10]],
             "order_by": ["keyword_data.keyword_info.search_volume,desc"],
         }]
+
+    def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        limit = kwargs.get("limit", 20)
+        n = len(targets)
+        return self._make_plan(targets, endpoint_mode, requests=n, items=n * limit,
+                               max_rows=n * limit, limit=limit, depth=kwargs.get("depth"),
+                               location_code=kwargs.get("location_code"))
 
     def _parse_response(self, response: dict, target: str) -> pd.DataFrame:
         try:

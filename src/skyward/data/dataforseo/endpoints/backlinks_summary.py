@@ -26,6 +26,10 @@ class BacklinksSummary(BaseEndpoint):
             "backlinks_status_type": kwargs.get("backlinks_status_type", "live"),
         }]
 
+    def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        n = len(targets)
+        return self._make_plan(targets, endpoint_mode, requests=n, items=n, max_rows=n)
+
     def _parse_response(self, response: dict, target: str) -> pd.DataFrame:
         try:
             task = response["tasks"][0]

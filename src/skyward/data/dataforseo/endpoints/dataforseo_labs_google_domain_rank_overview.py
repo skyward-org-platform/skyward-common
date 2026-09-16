@@ -32,6 +32,11 @@ class DataforseoLabsGoogleDomainRankOverview(BaseEndpoint):
             "language_code": kwargs.get("language_code", self.config.language_code),
         }]
 
+    def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        n = len(targets)
+        return self._make_plan(targets, endpoint_mode, requests=n, items=n, max_rows=n,
+                               location_code=kwargs.get("location_code"))
+
     def _parse_response(self, response: dict, target: str) -> pd.DataFrame:
         try:
             task = response["tasks"][0]

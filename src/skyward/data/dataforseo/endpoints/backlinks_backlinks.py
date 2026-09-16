@@ -6,11 +6,14 @@ Fetches individual backlinks pointing to a target URL or domain.
 from __future__ import annotations
 
 import json
+import math
 import time
 
 import pandas as pd
 
 from skyward.data.dataforseo.base import BaseEndpoint
+
+DFS_MAX_OFFSET = 20000  # DataForSEO caps offset at 20,000 for backlinks/backlinks/live.
 
 
 class BacklinksBacklinks(BaseEndpoint):
@@ -24,6 +27,16 @@ class BacklinksBacklinks(BaseEndpoint):
             "offset": kwargs.get("offset", 0),
             "filters": kwargs.get("filters") or [["dofollow", "=", True]],
         }]
+
+    def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        page_size = min(kwargs.get("page_size", 1000), 1000)
+        limit = kwargs.get("limit")
+        per_target = DFS_MAX_OFFSET if limit is None else min(limit, DFS_MAX_OFFSET)
+        pages = math.ceil(per_target / page_size)
+        n = len(targets)
+        return self._make_plan(targets, endpoint_mode, requests=n * pages,
+                               items=n * per_target, max_rows=n * per_target,
+                               limit=limit, page_size=page_size)
 
     def _parse_response(self, response: dict, target: str) -> pd.DataFrame:
         try:
@@ -164,8 +177,6 @@ class BacklinksBacklinks(BaseEndpoint):
         filters = kwargs.pop("filters", None)
 
         url = f"{self._client.BASE_URL}/{self.LIVE_URL}"
-        # DataForSEO caps offset at 20,000 for backlinks/backlinks/live.
-        DFS_MAX_OFFSET = 20000
 
         frames: list[pd.DataFrame] = []
         fetched = 0
