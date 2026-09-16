@@ -630,6 +630,42 @@ def test_final_save_failure_alone_still_raises_and_marks_failed():
     assert _job_rows(bq)[-1]["status"] == "failed"
 
 
+def test_absorb_after_close_drops_the_rows_loudly_but_still_records_their_cost(caplog):
+    """_absorb is the OTHER writer to _frames. add_rows was guarded; this one was not.
+
+    With upload=False the uploader is None, so there was no refusal log from that layer
+    either and a late unit's rows vanished in complete silence. The data cannot be
+    rescued -- close() has already snapshotted _frames and cached the result -- but the
+    DataForSEO charge is real and must still reach cost_log.
+    """
+    bq = FakeBigQueryClient()
+    run, _writes, _c = _make_run(bq, upload=False, targets=("a",))
+    run.close(quiet=True)
+    frames_after_close = len(run._frames)
+
+    with caplog.at_level(logging.ERROR):
+        run.run_unit("late", _unit_fn("late"))
+
+    assert len(run._frames) == frames_after_close     # nothing appended for nobody to read
+    assert "absorbed after the run closed" in caplog.text
+    assert any(r["task_id"] == "late" for r in _cost_rows(bq))   # the spend is recorded
+
+
+def test_late_cost_rows_carry_a_null_upload_id_not_a_phantom_one():
+    """With an uploader present, a late unit's on_joined must not hand out an upload_id
+    for a window that will never land. The cost is real, the window is not.
+    """
+    bq = FakeBigQueryClient()
+    run, _writes, _c = _make_run(bq, upload=True, targets=("a",))
+    run.close(quiet=True)
+
+    run.run_unit("late", _unit_fn("late"))
+
+    late = [r for r in _cost_rows(bq) if r["task_id"] == "late"]
+    assert len(late) == 1
+    assert late[0]["upload_id"] is None
+
+
 def test_add_rows_after_close_is_dropped_loudly(caplog):
     """A worker still in flight when close() ran must not write into a closed run.
 

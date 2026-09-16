@@ -461,9 +461,22 @@ class RunContext:
             except Exception as e:  # noqa: BLE001 - cost bookkeeping below must still run
                 stamp_exc = e
 
+        too_late = False
         if stamped is not None:
             with self._lock:
-                self._frames.append(stamped)
+                too_late = self._closing or self._closed
+                if not too_late:
+                    self._frames.append(stamped)
+        if too_late:
+            # close() has already snapshotted _frames and cached _result, so anything
+            # appended now is read by nobody. add_rows learned this; _absorb is the other
+            # writer and had no guard, which mattered most when upload=False leaves the
+            # uploader None: there was then no refusal log anywhere and the rows vanished
+            # in total silence. Never raise -- callers treat that as a per-target failure.
+            logger.error(
+                "[%s] job %s: dropped %d row(s) absorbed after the run closed; they were "
+                "NOT saved. The cost rows for them are still recorded.",
+                self.endpoint, self.job_id, len(stamped))
 
         def tag(upload_id: str | None) -> None:
             if self.cost_writer is not None and unit.records:

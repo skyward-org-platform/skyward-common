@@ -1,4 +1,5 @@
 import json
+import logging
 
 from skyward.data.dataforseo.cost_log import (
     CostLogWriter, classify_call, cost_flush_every, extract_cost_records,
@@ -225,3 +226,47 @@ def test_row_id_is_deterministic_for_identical_identity():
     w2.add([_billed_row(task_id="t1", attempt=2)])
     second_id = bq2.client.inserted_rows[0]["row_ids"][0]
     assert first_id == second_id
+
+
+def test_cost_rows_arriving_after_close_are_written_not_left_buffered(caplog):
+    """Cost rows can arrive after close() wherever run units execute concurrently with no
+    shutdown barrier. They are REAL DataForSEO charges, so they must reach cost_log.
+
+    Before the guard they were merely appended to the buffer, and the only follow-up is
+    flush_if_due(), which needs `flush_every` rows (floor 25) to fire -- so a handful of
+    late rows sat there forever and the spend was silently under-counted.
+    """
+    bq = FakeBigQueryClient()
+    w = CostLogWriter(bq, flush_every=25, sleep=lambda s: None)
+    w.close()
+    assert bq.client.inserted_rows == []
+
+    with caplog.at_level(logging.WARNING):
+        w.add([_billed_row(task_id="late-1", cost=0.0123)])
+
+    # One late row, well under flush_every: it is written immediately, not buffered.
+    assert len(bq.client.inserted_rows) == 1
+    assert bq.client.inserted_rows[0]["rows"][0]["task_id"] == "late-1"
+    assert "after the cost writer closed" in caplog.text
+    assert "$0.0123" in caplog.text
+
+
+def test_late_cost_rows_are_counted_in_the_writers_totals():
+    """A late row is real spend, so it must show up in written_rows like any other."""
+    bq = FakeBigQueryClient()
+    w = CostLogWriter(bq, flush_every=25, sleep=lambda s: None)
+    w.close()
+    w.add([_billed_row(task_id="late-2", cost=0.02)])
+    assert w.written_rows == 1
+
+
+def test_close_still_drains_rows_buffered_below_the_flush_threshold():
+    """Regression guard on the ordinary path: close() is what rescues rows that never
+    reached flush_every. This is an invariant, not a kill test for the late-add guard.
+    """
+    bq = FakeBigQueryClient()
+    w = CostLogWriter(bq, flush_every=25, sleep=lambda s: None)
+    w.add([_billed_row(task_id="buffered")])
+    assert bq.client.inserted_rows == []      # below the threshold, still buffered
+    w.close()
+    assert len(bq.client.inserted_rows) == 1

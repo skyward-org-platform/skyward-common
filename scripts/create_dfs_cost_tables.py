@@ -104,7 +104,13 @@ CREATE OR REPLACE VIEW `{T}.job_costs` AS
 SELECT
   job_id, endpoint, endpoint_mode, upload_id,
   ROUND(SUM(cost_usd), 6) AS total_cost_usd,
-  COUNT(*) AS billed_tasks,
+  -- Zero-cost marker rows (a 2xx DataForSEO billed whose body could not be parsed) are
+  -- events, not tasks, so they must not inflate the billed-task count. COALESCE keeps
+  -- rows written before markers existed: the key is absent there, JSON_VALUE returns
+  -- NULL, and the row still counts exactly as it did under plain COUNT(*). Do not filter
+  -- on task_id IS NULL instead -- genuine billed rows can also have a null task_id.
+  COUNTIF(COALESCE(JSON_VALUE(price_inputs, '$.unattributed_billed_retry'), 'false')
+          <> 'true') AS billed_tasks,
   COUNTIF(result_rows > 0) AS tasks_with_rows,
   SUM(result_rows) AS result_rows,
   MIN(requested_at) AS first_request_at,
@@ -129,7 +135,11 @@ WITH runs AS (
 ),
 done AS (
   SELECT job_id, endpoint, endpoint_mode,
-         COUNT(*) AS completed_tasks, ROUND(SUM(cost_usd), 6) AS cost_so_far_usd
+         -- Markers are not completed tasks; counting them would drive pct_complete up
+         -- (and can pin it at the 0.99 cap) while the job is genuinely unfinished.
+         COUNTIF(COALESCE(JSON_VALUE(price_inputs, '$.unattributed_billed_retry'),
+                          'false') <> 'true') AS completed_tasks,
+         ROUND(SUM(cost_usd), 6) AS cost_so_far_usd
   FROM `{T}.cost_log`
   GROUP BY job_id, endpoint, endpoint_mode
 ),

@@ -200,6 +200,7 @@ class CostLogWriter:
         self._buffer: list[dict] = []
         self._lock = threading.Lock()
         self._write_lock = threading.Lock()
+        self._closed = False
         self.written_rows = 0
         self.rows_by_upload_id: dict[str, int] = {}
 
@@ -215,6 +216,23 @@ class CostLogWriter:
                 _assign_row_id(r)
         with self._lock:
             self._buffer.extend(rows)
+            late = self._closed
+        if late:
+            # A run unit that was still in flight when close() ran -- possible wherever
+            # units execute concurrently without a shutdown barrier. These rows are REAL
+            # DataForSEO charges. Refusing them would make the loss loud but would still
+            # under-count spend, and cost_log is append-only and linked by job_id and
+            # task_id rather than by run lifecycle, so a late insert is perfectly valid.
+            # Flush now instead of leaving them buffered: the normal follow-up is
+            # flush_if_due(), which needs `flush_every` rows (floor 25) to fire, so a
+            # handful of late rows would otherwise sit in the buffer forever and vanish.
+            n = len(rows)
+            cost = sum(float(r.get("cost_usd") or 0.0) for r in rows)
+            logger.warning(
+                "DFS cost rows arrived after the cost writer closed: %d row(s) "
+                "($%.4f). Writing them now so the spend is not under-counted.", n, cost)
+            self.flush()
+            return
         if flush:
             self.flush_if_due()
 
@@ -268,7 +286,13 @@ class CostLogWriter:
         return False
 
     def close(self) -> None:
-        if self.flush():
+        # The flag only changes what a later add() does; this drain calls flush()
+        # directly, so it is unaffected either way. Ordered this way for readability:
+        # everything buffered goes out, and only then is the writer marked closed.
+        ok = self.flush()
+        with self._lock:
+            self._closed = True
+        if ok:
             return
         with self._lock:
             n = len(self._buffer)
