@@ -191,3 +191,61 @@ def test_upload_accepts_explicit_upload_id(ep, bq):
                         "endpoint_mode": "live"}])
     ep.upload(bq, df, job_id=generate_job_id(), upload_id="fixed-id")
     assert (bq.client.loaded_tables[0]["df"]["upload_id"] == "fixed-id").all()
+
+
+def test_upload_returns_true_on_success(ep, bq):
+    df = pd.DataFrame([{"keyword": "a", "task_id": "t", "domain_id": None, "domain": None,
+                        "endpoint_mode": "live"}])
+    assert ep.upload(bq, df, job_id=generate_job_id()) is True
+
+
+def test_upload_returns_false_when_table_missing(ep, bq, capsys):
+    def _raise(table_ref):
+        raise RuntimeError("not found: table does not exist")
+    bq.client.get_table = _raise
+    df = pd.DataFrame([{"keyword": "a", "task_id": "t", "domain_id": None, "domain": None,
+                        "endpoint_mode": "live"}])
+    assert ep.upload(bq, df, job_id=generate_job_id()) is False
+    assert "does not exist" in capsys.readouterr().out
+    assert bq.client.loaded_tables == []
+
+
+def test_upload_returns_false_on_load_error(ep, bq, capsys):
+    def _raise(df, table_ref, job_config=None):
+        raise RuntimeError("load job blew up")
+    bq.client.load_table_from_dataframe = _raise
+    df = pd.DataFrame([{"keyword": "a", "task_id": "t", "domain_id": None, "domain": None,
+                        "endpoint_mode": "live"}])
+    assert ep.upload(bq, df, job_id=generate_job_id()) is False
+    assert "Upload failed" in capsys.readouterr().out
+
+
+def test_save_failure_during_run_marks_job_failed_and_warns(ep, bq, capsys):
+    # A REAL BaseEndpoint.upload() failure (missing table), not an injected raising
+    # write callback: the fake BigQuery client's get_table() raises, exactly as it would
+    # for a table that hasn't been created yet.
+    def _raise(table_ref):
+        raise RuntimeError("table not found")
+    bq.client.get_table = _raise
+
+    df = ep.live("pizza", domain=None, job_id=generate_job_id())
+    # The caller still gets the fetched data back — only the BigQuery save failed.
+    assert len(df) == 1
+
+    out = capsys.readouterr().out
+    assert "does not exist" in out          # from upload()'s own print
+    assert "WARNING" in out and "did not reach BigQuery" in out
+
+    runs = _inserted(bq, "job_runs")
+    assert [(r["event"], r["status"]) for r in runs] == [("start", "running"), ("end", "failed")]
+    assert "did not reach BigQuery" in runs[-1]["error"]
+    assert bq.client.loaded_tables == []    # confirms the save genuinely never landed
+
+
+def test_successful_run_still_reports_completed(ep, bq):
+    df = ep.live("pizza", domain=None, job_id=generate_job_id())
+    assert len(df) == 1
+    runs = _inserted(bq, "job_runs")
+    assert runs[-1]["status"] == "completed"
+    assert runs[-1]["error"] is None
+    assert len(bq.client.loaded_tables) == 1

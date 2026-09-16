@@ -19,6 +19,7 @@ import requests
 
 from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
 from skyward.data.dataforseo.collector.producer import parse_task_post, submit_and_wait
+from skyward.data.dataforseo.exceptions import InsufficientBalanceError
 from skyward.data.dataforseo.run import DEFAULT_BALANCE_BUFFER
 from skyward.functions import _validate_job_id
 
@@ -579,6 +580,12 @@ class SerpGoogleOrganic(BaseEndpoint):
                         stats["collected"] += 1
                     task_queue.task_done()
 
+                except InsufficientBalanceError:
+                    # run.add_rows() can trigger a window save, and a mid-run balance
+                    # check on that save can raise this. It is a real stop signal, not a
+                    # per-task failure — swallowing it here would turn a low-balance stop
+                    # into a spurious "failed" keyword row.
+                    raise
                 except Exception as e:
                     if error_retries < max_error_retries:
                         task["error_retries"] += 1

@@ -94,11 +94,17 @@ def check_balance(
     remaining_targets=(),
     upload_ids=(),
     stage: str = "pre-run",
+    max_age_s: float = 60.0,
 ) -> float | None:
-    """Fail fast when balance < required_usd * balance_buffer. Returns the balance read."""
+    """Fail fast when balance < required_usd * balance_buffer. Returns the balance read.
+
+    `max_age_s` controls how stale a cached balance reading may be. Pre-run callers keep
+    the default (a same-run cache hit right after a mid-run check is fine); the mid-run
+    check passes 0 so it never reuses the pre-run reading or an earlier mid-run one.
+    """
     if required_usd <= 0:
         return None
-    info = client.get_balance_cached()
+    info = client.get_balance_cached(max_age_s=max_age_s)
     if not info.get("raw"):
         msg = f"[{endpoint}] Could not read DataForSEO balance; skipping the {stage} balance check."
         print(msg)
@@ -179,6 +185,7 @@ class RunContext:
         self._lock = threading.Lock()
         self._frames: list[pd.DataFrame] = []
         self._completed: list[str] = []
+        self.save_failures: list[str] = []
         self._stop_error: InsufficientBalanceError | None = None
         self._closing = False
         self._closed = False
@@ -212,12 +219,33 @@ class RunContext:
         done = set(self.completed_targets())
         return [t for t in self.plan.targets if t not in done]
 
+    def note_save_failure(self, upload_id: str) -> None:
+        """Record that the write callback could not save this window to BigQuery.
+
+        The write callback (BaseEndpoint._start_run) calls this when `upload()` returns
+        False. `close()` turns any recorded failure into a "failed" job_runs end row and a
+        loud warning — otherwise the run reports "completed" while cost_log carries an
+        upload_id whose data never landed.
+        """
+        with self._lock:
+            self.save_failures.append(upload_id)
+
     # ----- lifecycle -----
 
     def start(self, balance: float | None) -> None:
         write_job_run_row(self._bq, self._job_run_row("start", "running", balance=balance))
 
-    def run_unit(self, target, fn: Callable[[], pd.DataFrame | None]) -> pd.DataFrame | None:
+    def run_unit(
+        self, target, fn: Callable[[], pd.DataFrame | None], *, mark_complete: bool = True,
+    ) -> pd.DataFrame | None:
+        """Run `fn` as one cost-tracked unit for `target`.
+
+        `mark_complete=False` lets a caller that fetches one target over several units
+        (e.g. one unit per page of pagination) record cost/rows for each unit without
+        `target` showing up in `completed_targets()` until the caller itself marks it
+        done — otherwise a mid-run balance stop would report a partially-fetched target
+        as finished.
+        """
         self._raise_if_stopped()
         unit = RunUnit(target)
         token = _ACTIVE_UNIT.set(unit)
@@ -229,7 +257,7 @@ class RunContext:
             return df
         finally:
             _ACTIVE_UNIT.reset(token)
-            self._absorb(unit, df, ok)
+            self._absorb(unit, df, ok, mark_complete=mark_complete)
 
     async def run_unit_async(
         self, target, coro_fn: Callable[[], Awaitable[pd.DataFrame | None]]
@@ -287,14 +315,30 @@ class RunContext:
             finally:
                 if self.cost_writer is not None:
                     self.cost_writer.close()
+                with self._lock:
+                    save_failures = list(self.save_failures)
                 if isinstance(cause, InsufficientBalanceError):
                     status = "stopped_low_balance"
+                    error_str = repr(cause)[:1000]
                 elif cause is not None:
                     status = "failed"
+                    error_str = repr(cause)[:1000]
+                elif save_failures:
+                    # No exception was raised (upload() swallows its own failures), but
+                    # one or more windows never reached BigQuery — the run must not be
+                    # allowed to report "completed" while that's true.
+                    status = "failed"
+                    error_str = (f"{len(save_failures)} save window(s) did not reach "
+                                 f"BigQuery: upload_id(s) {', '.join(save_failures)}")
+                    warning = (f"[{self.endpoint}] WARNING: {error_str}. cost_log rows for "
+                               f"these windows were recorded, but the underlying data was "
+                               f"NOT saved to BigQuery.")
+                    print(warning)
+                    logger.error(warning)
                 else:
                     status = "completed"
-                write_job_run_row(self._bq, self._job_run_row(
-                    "end", status, error=None if cause is None else repr(cause)[:1000]))
+                    error_str = None
+                write_job_run_row(self._bq, self._job_run_row("end", status, error=error_str))
             with self._lock:
                 frames = list(self._frames)
             if frames:
@@ -325,14 +369,15 @@ class RunContext:
             "ingest_timestamp": _now_iso(),
         }
 
-    def _absorb(self, unit: RunUnit, df, ok: bool) -> None:
+    def _absorb(self, unit: RunUnit, df, ok: bool, *, mark_complete: bool = True) -> None:
         # Cost is real the moment DFS billed it, whether or not `fn` returned normally
         # and whether or not `stamp` can make sense of the result — record spend and
-        # cost rows first, and only mark the target completed when `fn` itself succeeded.
+        # cost rows first, and only mark the target completed when `fn` itself succeeded
+        # (and, for multi-unit targets like paginated fetches, when the caller says so).
         spent = sum(r["cost_usd"] for r in unit.records)
         with self._lock:
             self.spent_usd += spent
-            if ok:
+            if ok and mark_complete:
                 self._completed.extend(target_list(unit.target))
 
         stamped = None
@@ -389,7 +434,7 @@ class RunContext:
                 ignore=self._ignore_balance, job_id=self.job_id, endpoint=self.endpoint,
                 completed_targets=self.completed_targets(),
                 remaining_targets=self.remaining_targets(),
-                upload_ids=self.upload_ids, stage="mid-run",
+                upload_ids=self.upload_ids, stage="mid-run", max_age_s=0,
             )
         except InsufficientBalanceError as e:
             self._stop_error = e

@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock
-
 import pytest
 
 from skyward.data.dataforseo import DataForSEOClient
@@ -36,12 +34,8 @@ class _Session:
 
 
 def _client(bq=None):
-    if bq is not None:
-        # RunContext._after_save calls bq.log_upload_event() after every saved window;
-        # FakeBigQueryClient has no such method, so mock it here for every test that
-        # goes through _client()/_make_run() rather than let each one see the
-        # AttributeError-derived "Cost-log upload event failed" print.
-        bq.log_upload_event = MagicMock()
+    # FakeBigQueryClient.log_upload_event is a MagicMock by default (tests/conftest.py) —
+    # RunContext._after_save and BaseEndpoint.upload() both call it after a saved window.
     return DataForSEOClient(username="u", password="p", bq_client=bq)
 
 
@@ -320,6 +314,38 @@ def test_mid_run_low_balance_saves_then_stops(monkeypatch):
         run.run_unit("b", _unit_fn("b"))       # no more spending after a stop
     run.close()
     assert _job_rows(bq)[-1]["status"] == "stopped_low_balance"
+
+
+def test_mid_run_balance_check_never_reuses_a_cached_reading(monkeypatch):
+    # get_balance_cached()'s default 60s TTL is right for the pre-run check (nothing has
+    # happened yet, a fresh-enough reading is fine), but a mid-run check must never reuse
+    # the pre-run reading or an earlier mid-run one — the balance may have moved since.
+    bq = FakeBigQueryClient()
+    run, _, client = _make_run(bq, upload_batch_rows=1, max_usd=10.0)
+    calls = []
+
+    def fake_get_balance_cached(max_age_s=60.0):
+        calls.append(max_age_s)
+        return {"balance": 1_000_000.0, "total": 0, "raw": {"b": 1}}
+
+    monkeypatch.setattr(client, "get_balance_cached", fake_get_balance_cached)
+    run.run_unit("a", _unit_fn("a"))
+    run.close()
+    assert calls == [0]   # the only call here is the mid-run one, and it must be max_age_s=0
+
+
+def test_pre_run_balance_check_keeps_the_default_cache_ttl():
+    from skyward.data.dataforseo.run import check_balance
+    calls = []
+
+    class _C:
+        def get_balance_cached(self, max_age_s=60.0):
+            calls.append(max_age_s)
+            return {"balance": 100.0, "total": 0, "raw": {"b": 1}}
+
+    check_balance(_C(), required_usd=1.0, balance_buffer=1.2, ignore=False,
+                 job_id="j", endpoint="e")
+    assert calls == [60.0]   # pre-run stage: unchanged default TTL
 
 
 def test_mid_run_override_continues(monkeypatch):

@@ -101,8 +101,8 @@ class BaseEndpoint(ABC):
             self.plan(target_list(targets), endpoint_mode=endpoint_mode, **kwargs))
 
     @staticmethod
-    def _in_unit(run: RunContext | None, target, fn: Callable):
-        return fn() if run is None else run.run_unit(target, fn)
+    def _in_unit(run: RunContext | None, target, fn: Callable, *, mark_complete: bool = True):
+        return fn() if run is None else run.run_unit(target, fn, mark_complete=mark_complete)
 
     def _check_location(self, plan_kwargs: dict, ignore: bool) -> None:
         flag = self.location_flag
@@ -167,10 +167,19 @@ class BaseEndpoint(ABC):
             self._write_rejection(job_id, plan, estimate, endpoint_mode, "rejected_low_balance", e)
             raise
         client = self._client
+
+        def _write(df: pd.DataFrame, uid: str) -> None:
+            # upload() never raises (it prints and returns False on failure) so a save
+            # that didn't reach BigQuery must be reported here, not inferred from an
+            # exception — otherwise the run's job_runs row and cost_log rows go on to
+            # claim a save that never happened.
+            if not self.upload(client.bq_client, df, job_id=job_id, upload_id=uid):
+                run.note_save_failure(uid)
+
         run = RunContext(
             client=client, endpoint_key=self.ENDPOINT_KEY, job_id=job_id, plan=plan,
             estimate=estimate, endpoint_mode=endpoint_mode, upload=upload,
-            write=lambda df, uid: self.upload(client.bq_client, df, job_id=job_id, upload_id=uid),
+            write=_write,
             stamp=lambda df: self._stamp_fetch_metadata(df, resolved, endpoint_mode=endpoint_mode),
             empty_columns=empty_columns, upload_batch_rows=upload_batch_rows,
             balance_buffer=balance_buffer, ignore_balance_check=ignore_balance_check,
@@ -325,15 +334,22 @@ class BaseEndpoint(ABC):
         job_id: str,
         client_id: str | None = None,
         upload_id: str | None = None,
-    ) -> None:
-        """Append rows to the endpoint's BQ table. Stamps job_id/upload_id/ingest_timestamp."""
+    ) -> bool:
+        """Append rows to the endpoint's BQ table. Stamps job_id/upload_id/ingest_timestamp.
+
+        Returns True when the rows were loaded (or there was nothing to load), and False
+        when the save did not happen — the table doesn't exist, or the load/log step
+        raised. Callers that must know whether data actually reached BigQuery (rather than
+        merely having attempted it) need this return value: the failure paths only print,
+        which is invisible to a caller and to RunContext's job_runs bookkeeping.
+        """
         from google.cloud import bigquery
 
         _validate_job_id(job_id)
 
         if df is None or df.empty:
             print("Skipping upload - DataFrame is empty.")
-            return
+            return True
 
         df = df.copy()
 
@@ -354,7 +370,7 @@ class BaseEndpoint(ABC):
                 bq_client.client.get_table(full_table_id)
             except Exception:
                 print(f"Table {full_table_id} does not exist. Create it before uploading.")
-                return
+                return False
 
             job_config = bigquery.LoadJobConfig(
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND
@@ -376,9 +392,11 @@ class BaseEndpoint(ABC):
                 client_id=client_id,
             )
             print(f"Upload complete: {row_count} rows appended into {full_table_id}.")
+            return True
 
         except Exception as e:
             print(f"Upload failed: {e}")
+            return False
 
     # ----- Helpers -----
 

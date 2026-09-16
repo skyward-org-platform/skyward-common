@@ -116,6 +116,11 @@ class FakeBigQueryClient:
     def __init__(self):
         self.client = FakeBQClient()
         self.project_id = "data-hub-468216"
+        # RunContext._after_save and BaseEndpoint.upload() both call log_upload_event()
+        # after a successful save. Mocking it here (rather than per-test) means a test
+        # that forgets to stub it gets a normal mock call, not a silently-swallowed
+        # "Cost-log upload event failed" print that could mask a real regression.
+        self.log_upload_event = MagicMock()
 
 
 @pytest.fixture

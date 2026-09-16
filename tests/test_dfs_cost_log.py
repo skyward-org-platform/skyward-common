@@ -55,9 +55,14 @@ def test_extract_ignores_non_billable_and_empty():
 
 
 def test_cost_flush_every_scales_to_one_percent_with_bounds():
-    assert cost_flush_every(0) == 1
-    assert cost_flush_every(50) == 1
-    assert cost_flush_every(1000) == 10
+    # A floor of 25 keeps flush_if_due() (called after every absorbed unit) from firing
+    # on nearly every unit for small/medium runs — CostLogWriter.flush() holds its write
+    # lock across a BigQuery round trip, so that cadence serializes fan-out workers.
+    assert cost_flush_every(0) == 25
+    assert cost_flush_every(50) == 25
+    assert cost_flush_every(1000) == 25
+    assert cost_flush_every(2500) == 25   # 1% scaling lands exactly on the floor
+    assert cost_flush_every(2600) == 26   # just above the floor, scaling still applies
     assert cost_flush_every(100_000) == 500
     assert cost_flush_every(10_000_000) == 500
 

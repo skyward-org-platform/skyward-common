@@ -17,6 +17,13 @@ COST_ESTIMATES_TABLE = "cost_estimates"
 ACTUALS_VIEW = "endpoint_cost_actuals"
 MIN_OBSERVED_SAMPLES = 20
 
+# DataForSEO.cost_estimates is hand-maintained; only endpoint/endpoint_mode are NOT NULL
+# in the DDL. These three feed price_plan()'s arithmetic directly (list_price_usd() and
+# `lp * (1 + rate.max_buffer)`), so a null here would raise a TypeError out of estimate()
+# and kill the run before it spends anything. max_items_per_request is legitimately
+# nullable (it means "no cap") and is not checked here.
+_REQUIRED_NUMERIC_FIELDS = ("price_per_request_usd", "price_per_item_usd", "max_buffer")
+
 
 @dataclass(frozen=True)
 class RunPlan:
@@ -106,9 +113,21 @@ class CostEstimator:
         names = {f.name for f in fields(Rate)}
         for row in df.to_dict("records"):
             kw = {k: (None if pd.isna(v) else v) for k, v in row.items() if k in names}
+            endpoint, mode = kw.get("endpoint"), kw.get("endpoint_mode")
+            bad_field = next((f for f in _REQUIRED_NUMERIC_FIELDS if kw.get(f) is None), None)
+            if bad_field is not None:
+                logger.warning(
+                    "DataForSEO.cost_estimates row for endpoint=%r endpoint_mode=%r has a "
+                    "null %r; skipping this row and keeping the packaged default rate.",
+                    endpoint, mode, bad_field)
+                continue
             try:
                 rate = Rate(**kw)
             except TypeError:
+                logger.warning(
+                    "DataForSEO.cost_estimates row for endpoint=%r endpoint_mode=%r has an "
+                    "unexpected field set; skipping this row and keeping the packaged "
+                    "default rate.", endpoint, mode)
                 continue
             loaded[(rate.endpoint, rate.endpoint_mode)] = rate
         return loaded

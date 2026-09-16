@@ -253,6 +253,40 @@ def test_serp_post_all_legacy_saves_windows_and_logs_every_task(serp_client, bq)
     assert sum(len(l["df"]) for l in data_loads) == 150
 
 
+def test_serp_legacy_worker_lets_insufficient_balance_propagate(serp_client, bq, monkeypatch):
+    # run.add_rows() can trigger a window save, and a mid-run balance check on that save
+    # can raise InsufficientBalanceError. The legacy worker's `except Exception` used to
+    # swallow that into a spurious "failed" keyword row instead of letting the real stop
+    # signal through.
+    import threading
+
+    from skyward.data.dataforseo.exceptions import InsufficientBalanceError
+    from skyward.data.dataforseo.run import RunContext
+
+    calls = {"n": 0}
+
+    def fake_add_rows(self, df):
+        calls["n"] += 1
+        raise InsufficientBalanceError(
+            "low balance mid-run", job_id="j", endpoint="serp_google_organic",
+            balance=0.0, required=1.0, upload_ids=[], completed_targets=[],
+            remaining_targets=[],
+        )
+
+    monkeypatch.setattr(RunContext, "add_rows", fake_add_rows)
+
+    captured = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: captured.append(args.exc_value))
+
+    results_df, failed_df = serp_client.serp_google_organic._post_all_sync(
+        ["kw0"], domain=None, job_id=generate_job_id(), batch_size=1, num_workers=1,
+        max_wait=1)
+
+    assert calls["n"] == 1
+    assert failed_df.empty   # not recorded as a spurious per-keyword failure
+    assert any(isinstance(e, InsufficientBalanceError) for e in captured)
+
+
 def test_serp_collector_path_logs_submit_cost(serp_client, bq, monkeypatch):
     monkeypatch.setattr(serp_mod, "submit_and_wait",
                         lambda **k: {"total_tasks": len(k["posted_tasks"]), "proceeded": True})

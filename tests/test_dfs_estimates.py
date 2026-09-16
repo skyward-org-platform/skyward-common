@@ -72,3 +72,48 @@ def test_estimator_caches_table_reads():
     est.estimate(_plan())
     est.estimate(_plan())
     assert len(bq.client.queries) == 2  # one rates read + one observed read, not repeated
+
+
+def test_null_numeric_field_in_rate_table_falls_back_to_packaged_rate(caplog):
+    # DataForSEO.cost_estimates is hand-maintained; the DDL only requires endpoint and
+    # endpoint_mode to be NOT NULL. A null in price_per_request_usd/price_per_item_usd/
+    # max_buffer used to construct a Rate with None and blow up later in price_plan()'s
+    # arithmetic, killing the run before it spent anything. The bad row must be skipped
+    # (packaged default kept) with a warning, not raise.
+    bq = FakeBigQueryClient()
+    row = rates_by_key()[("dataforseo_labs_google_ranked_keywords", "live")].to_row()
+    row["max_buffer"] = None
+    bq.client.queue_result(pd.DataFrame([row]))      # cost_estimates read
+    client = DataForSEOClient(username="u", password="p", bq_client=bq)
+    with caplog.at_level("WARNING"):
+        est = CostEstimator(client).estimate(_plan())
+    assert est.basis == "list_price"
+    assert est.max_usd > 0   # packaged default rate was used, not the broken row
+    assert any("null" in r.message and "max_buffer" in r.message for r in caplog.records)
+
+
+def test_null_price_per_item_in_rate_table_is_skipped_not_raised(caplog):
+    bq = FakeBigQueryClient()
+    row = rates_by_key()[("dataforseo_labs_google_ranked_keywords", "live")].to_row()
+    row["price_per_item_usd"] = None
+    bq.client.queue_result(pd.DataFrame([row]))
+    client = DataForSEOClient(username="u", password="p", bq_client=bq)
+    with caplog.at_level("WARNING"):
+        est = CostEstimator(client).estimate(_plan())
+    assert est.max_usd > 0
+    assert any("price_per_item_usd" in r.message for r in caplog.records)
+
+
+def test_null_max_items_per_request_is_allowed_not_flagged():
+    # max_items_per_request legitimately means "no cap" (e.g. serp_google_organic in the
+    # packaged rates) and must not be treated as a broken row.
+    bq = FakeBigQueryClient()
+    row = rates_by_key()[("dataforseo_labs_google_ranked_keywords", "live")].to_row()
+    row["max_items_per_request"] = None
+    bq.client.queue_result(pd.DataFrame([row]))
+    client = DataForSEOClient(username="u", password="p", bq_client=bq)
+    estimator = CostEstimator(client)
+    est = estimator.estimate(_plan())
+    assert est.basis == "list_price"
+    rate = estimator.rates()[("dataforseo_labs_google_ranked_keywords", "live")]
+    assert rate.max_items_per_request is None   # row was accepted, not skipped

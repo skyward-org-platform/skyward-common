@@ -346,13 +346,18 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
 
         while offset < limit and consecutive_empty < 2:
             remaining = min(page_size, limit - offset)
-
+            # Each page is its own cost-tracked unit, but with mark_complete=False so
+            # RunContext never counts the domain "completed" mid-pagination. A mid-run
+            # balance stop must be able to report this domain as still remaining, since
+            # only part of it was fetched (release notes tell callers to rerun only
+            # `remaining_targets`).
             async with semaphore:
                 df = await asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda o=offset, r=remaining: self._in_unit(
                         run, domain,
                         lambda: self._fetch_live(domain, limit=r, offset=o, **kwargs),
+                        mark_complete=False,
                     ),
                 )
 
@@ -363,6 +368,12 @@ class DataforseoLabsGoogleRankedKeywords(BaseEndpoint):
                 results.append(df)
 
             offset += page_size
+
+        # Pagination for this domain finished (ran out of pages or hit two empty pages in
+        # a row) without an exception cutting it short — only now is the domain actually
+        # complete.
+        if run is not None:
+            run.run_unit(domain, lambda: None)
 
         if results:
             return pd.concat(results, ignore_index=True)

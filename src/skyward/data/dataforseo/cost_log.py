@@ -102,8 +102,13 @@ def extract_cost_records(url: str, payload, resp, http_status) -> list[dict]:
 
 
 def cost_flush_every(planned_requests: int) -> int:
-    """Stream about every 1% of a run's planned requests, between 1 and 500 rows."""
-    return max(1, min(500, math.ceil(max(planned_requests, 0) / 100)))
+    """Stream about every 1% of a run's planned requests, between 25 and 500 rows.
+
+    Below a floor of 25, flush_if_due() (called after every absorbed unit) would fire on
+    almost every unit; CostLogWriter.flush() holds its write lock across a BigQuery round
+    trip, so that cadence serializes fan-out workers on small/medium runs for no benefit.
+    """
+    return max(25, min(500, math.ceil(max(planned_requests, 0) / 100)))
 
 
 class CostLogWriter:
