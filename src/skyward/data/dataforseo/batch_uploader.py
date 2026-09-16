@@ -7,12 +7,15 @@ private to one run; nothing is shared between runs and nothing is linked by time
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Callable
 
 import pandas as pd
 
 from skyward.functions import generate_upload_id
+
+logger = logging.getLogger(__name__)
 
 SINGLE_SAVE_BELOW_ROWS = 10_000
 MID_TIER_MAX_ROWS = 100_000
@@ -49,6 +52,7 @@ class BatchUploader:
         self._frames: list[pd.DataFrame] = []
         self._rows = 0
         self._upload_id = generate_upload_id()
+        self._closed = False
         self.saved_upload_ids: list[str] = []
 
     @property
@@ -58,26 +62,57 @@ class BatchUploader:
 
     def add(self, df: pd.DataFrame | None, on_joined: Callable[[str], None] | None = None) -> str:
         ready: tuple[list[pd.DataFrame], str] | None = None
+        refused = False
+        refused_rows = 0
         with self._lock:
             upload_id = self._upload_id
-            if on_joined is not None:
-                on_joined(upload_id)
-            if df is not None and not df.empty:
-                self._frames.append(df)
-                self._rows += len(df)
-            if self._threshold is not None and self._rows >= self._threshold:
-                ready = (self._frames, upload_id)
-                self._frames, self._rows = [], 0
-                self._upload_id = generate_upload_id()
+            if self._closed:
+                # A late writer. RunContext.add_rows must release its own lock before
+                # calling us -- the lock order forbids holding it across this call -- so a
+                # writer that passed its "am I too late" check can still arrive here after
+                # close() has run. Before this guard those rows were appended to a window
+                # that close() had just minted and that nothing would ever flush; with
+                # threshold None, which is every run under SINGLE_SAVE_BELOW_ROWS rows,
+                # it could never flush at all. The rows were already in the caller's
+                # frames, so the returned DataFrame looked complete while nothing reached
+                # BigQuery. Refuse loudly instead.
+                refused = True
+                refused_rows = 0 if df is None else len(df)
+                if on_joined is not None:
+                    # These rows will never land, so their cost rows must not be tagged
+                    # with an upload_id that has no data behind it. A null upload_id is
+                    # honest: the cost is real, the window is not.
+                    on_joined(None)
+            else:
+                if on_joined is not None:
+                    on_joined(upload_id)
+                if df is not None and not df.empty:
+                    self._frames.append(df)
+                    self._rows += len(df)
+                if self._threshold is not None and self._rows >= self._threshold:
+                    ready = (self._frames, upload_id)
+                    self._frames, self._rows = [], 0
+                    self._upload_id = generate_upload_id()
+        if refused:
+            if refused_rows:
+                # Never raise: RunContext.add_rows is called from the SERP legacy worker,
+                # whose `except Exception` would turn a raise into a bogus per-keyword
+                # failure row.
+                logger.error(
+                    "Uploader already closed: refused %d row(s) for window %s; they were "
+                    "NOT saved to BigQuery.", refused_rows, upload_id)
+            return upload_id
         if ready is not None:
             self._save(*ready)
         return upload_id
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             frames, upload_id = self._frames, self._upload_id
             self._frames, self._rows = [], 0
-            self._upload_id = generate_upload_id()
         if frames:
             self._save(frames, upload_id)
 

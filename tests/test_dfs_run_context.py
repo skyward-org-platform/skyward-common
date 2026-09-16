@@ -615,9 +615,10 @@ def test_balance_stop_survives_a_failing_final_save():
             raise
 
     assert _job_rows(bq)[-1]["status"] == "stopped_low_balance"
-    # The save failure is still reported, just not as the cause of death.
-    assert any("boom-write" in f for f in run.save_failures)
+    # The save failure is still reported, just not as the cause of death. It belongs in
+    # the end row's error field, NOT in save_failures, which holds upload_ids.
     assert "boom-write" in _job_rows(bq)[-1]["error"]
+    assert not any("boom-write" in f for f in run.save_failures)
 
 
 def test_final_save_failure_alone_still_raises_and_marks_failed():

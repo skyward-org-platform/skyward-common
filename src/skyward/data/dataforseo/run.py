@@ -372,8 +372,9 @@ class RunContext:
                     # letting the save failure replace it would report "failed" for what
                     # was actually a low-balance stop, and re-raising it below would
                     # pre-empt the caller's own `raise` and hand the consumer the save
-                    # error instead of the original. Record and log it instead.
-                    self.note_save_failure(f"final save failed: {e!r}")
+                    # error instead of the original. Log it and append it to the end row's
+                    # error field below; it must NOT go into save_failures, which holds
+                    # upload_ids and is rendered as such.
                     logger.error(
                         "[%s] job %s: the final save failed while the run was already "
                         "ending (%r); the run's original cause stands.",
