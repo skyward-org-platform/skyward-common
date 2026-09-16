@@ -78,11 +78,6 @@ class BatchUploader:
                 # BigQuery. Refuse loudly instead.
                 refused = True
                 refused_rows = 0 if df is None else len(df)
-                if on_joined is not None:
-                    # These rows will never land, so their cost rows must not be tagged
-                    # with an upload_id that has no data behind it. A null upload_id is
-                    # honest: the cost is real, the window is not.
-                    on_joined(None)
             else:
                 if on_joined is not None:
                     on_joined(upload_id)
@@ -94,6 +89,15 @@ class BatchUploader:
                     self._frames, self._rows = [], 0
                     self._upload_id = generate_upload_id()
         if refused:
+            if on_joined is not None:
+                # Deliberately OUTSIDE the lock, unlike the open path. This callback
+                # writes cost rows, and a closed cost writer flushes them inline -- a
+                # BigQuery insert with retries and sleeps, up to tens of seconds. Holding
+                # the uploader lock across that would stall every other add() in exactly
+                # the situation this path exists for. Passing None rather than an id is
+                # the honest answer: the cost is real, the window is not, so those cost
+                # rows must not point at an upload_id that will never land.
+                on_joined(None)
             if refused_rows:
                 # Never raise: RunContext.add_rows is called from the SERP legacy worker,
                 # whose `except Exception` would turn a raise into a bogus per-keyword

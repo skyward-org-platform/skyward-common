@@ -286,12 +286,17 @@ class CostLogWriter:
         return False
 
     def close(self) -> None:
-        # The flag only changes what a later add() does; this drain calls flush()
-        # directly, so it is unaffected either way. Ordered this way for readability:
-        # everything buffered goes out, and only then is the writer marked closed.
-        ok = self.flush()
+        # Mark closed BEFORE draining, under the same lock add() checks. The other two
+        # layers do it in this order (BatchUploader.close, RunContext.close) and this one
+        # did not, which left a real race rather than a stylistic difference: a concurrent
+        # add() could read _closed as False AFTER flush() had already drained, append to
+        # the buffer and skip flushing. Its follow-up flush_if_due() needs flush_every
+        # rows (floor 25) to fire, so a handful of stragglers -- real DataForSEO charges
+        # -- stayed buffered forever and the spend was under-counted. With the flag set
+        # first, a racing add() either lands in this drain or flushes itself.
         with self._lock:
             self._closed = True
+        ok = self.flush()
         if ok:
             return
         with self._lock:

@@ -260,6 +260,27 @@ def test_late_cost_rows_are_counted_in_the_writers_totals():
     assert w.written_rows == 1
 
 
+def test_close_marks_closed_before_draining_so_a_racing_add_is_not_stranded():
+    """Ordering, not style. If the flag flips AFTER the drain, a concurrent add() can read
+    _closed as False once flush() has already emptied the buffer, append, and skip
+    flushing -- and flush_if_due() needs flush_every rows (floor 25) to fire, so those
+    rows, real DataForSEO charges, stay buffered forever. BatchUploader.close and
+    RunContext.close both set their flag first; this writer must too.
+    """
+    bq = FakeBigQueryClient()
+    w = CostLogWriter(bq, flush_every=25, sleep=lambda s: None)
+    real_flush = w.flush
+    seen_closed = []
+
+    def spy_flush():
+        seen_closed.append(w._closed)
+        return real_flush()
+
+    w.flush = spy_flush
+    w.close()
+    assert seen_closed == [True], "close() drained before marking the writer closed"
+
+
 def test_close_still_drains_rows_buffered_below_the_flush_threshold():
     """Regression guard on the ordinary path: close() is what rescues rows that never
     reached flush_every. This is an invariant, not a kill test for the late-add guard.

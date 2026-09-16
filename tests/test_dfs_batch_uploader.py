@@ -150,6 +150,27 @@ def test_on_joined_after_close_gets_none_not_a_phantom_upload_id():
     assert joined == [None]
 
 
+def test_on_joined_after_close_runs_without_the_uploader_lock_held():
+    """The refused path's callback writes cost rows, and a closed cost writer flushes them
+    inline -- a BigQuery insert with retries and sleeps. Running that under the uploader
+    lock would stall every other add() for tens of seconds, precisely when a run is already
+    unwinding. The open path still calls on_joined under the lock, which is correct there:
+    it has to see the window id it is being handed.
+    """
+    up = BatchUploader(threshold=None, write=lambda df, uid: None)
+    up.close()
+    lock_was_free = []
+
+    def on_joined(uid):
+        got = up._lock.acquire(blocking=False)
+        lock_was_free.append(got)
+        if got:
+            up._lock.release()
+
+    up.add(_df(1), on_joined=on_joined)
+    assert lock_was_free == [True]
+
+
 def test_close_twice_does_not_save_twice():
     saved = []
     up = BatchUploader(threshold=None, write=lambda df, uid: saved.append(uid))
