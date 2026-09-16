@@ -71,6 +71,24 @@ def test_from_env():
     assert isinstance(m, BalanceMonitor)
 
 
+def test_from_env_rejects_inverted_thresholds_safely(capsys):
+    alerter = Alerter(send=lambda t: None, now=lambda: 0.0, vm_name="v")
+    result = BalanceMonitor.from_env(_Client([]), alerter, env={
+        "DFS_COLLECTOR_BALANCE_WARN_USD": "50", "DFS_COLLECTOR_BALANCE_CRITICAL_USD": "100"})
+    assert result is None
+    captured = capsys.readouterr()
+    assert "[balance] config error" in captured.out and "DFS_COLLECTOR_BALANCE_WARN_USD" in captured.out
+
+
+def test_from_env_rejects_non_numeric_safely(capsys):
+    alerter = Alerter(send=lambda t: None, now=lambda: 0.0, vm_name="v")
+    result = BalanceMonitor.from_env(_Client([]), alerter, env={
+        "DFS_COLLECTOR_BALANCE_WARN_USD": "abc", "DFS_COLLECTOR_BALANCE_CRITICAL_USD": "10"})
+    assert result is None
+    captured = capsys.readouterr()
+    assert "[balance] config error" in captured.out
+
+
 def test_run_forever_checks_balance_each_loop():
     calls = {"n": 0}
 

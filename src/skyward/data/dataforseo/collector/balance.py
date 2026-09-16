@@ -45,8 +45,17 @@ class BalanceMonitor:
         critical = env.get("DFS_COLLECTOR_BALANCE_CRITICAL_USD")
         if not warn or not critical:
             return None
-        return cls(client, alerter, warn_usd=float(warn), critical_usd=float(critical),
-                   interval_s=float(env.get("DFS_COLLECTOR_BALANCE_INTERVAL_S", 3600)))
+        try:
+            warn_val = float(warn)
+            critical_val = float(critical)
+            interval_val = float(env.get("DFS_COLLECTOR_BALANCE_INTERVAL_S", 3600))
+            return cls(client, alerter, warn_usd=warn_val, critical_usd=critical_val,
+                       interval_s=interval_val)
+        except (ValueError, TypeError) as e:
+            print(f"[balance] config error: DFS_COLLECTOR_BALANCE_WARN_USD={warn!r} "
+                  f"DFS_COLLECTOR_BALANCE_CRITICAL_USD={critical!r} - {e!r}; "
+                  f"balance alerting disabled")
+            return None
 
     def _level_for(self, balance: float) -> str:
         if balance < self._critical:
