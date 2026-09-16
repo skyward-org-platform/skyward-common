@@ -5,7 +5,8 @@ import pytest
 from skyward.data.dataforseo import DataForSEOClient
 from skyward.data.dataforseo.exceptions import InsufficientBalanceError
 from skyward.data.dataforseo.run import (
-    RunUnit, _ACTIVE_UNIT, active_unit, check_balance, target_list, write_job_run_row,
+    RunUnit, _ACTIVE_UNIT, active_unit, check_balance, round_money, target_list,
+    write_job_run_row,
 )
 from tests.conftest import FakeBigQueryClient
 
@@ -442,6 +443,61 @@ def test_after_save_logs_cost_upload_event_per_window():
         assert kwargs["source_program"] == "dfs_cost_log"
         assert kwargs["table"] == "cost_log"
         assert kwargs["row_count"] == expected_rows
+
+
+def test_round_money_rounds_to_six_decimal_places():
+    # Real DataForSEO balances (and float math generally) can carry far more than 9
+    # digits after the decimal point, which BigQuery NUMERIC rejects outright.
+    assert round_money(None) is None
+    assert round_money(33.36875400000026) == 33.368754
+    assert round_money(0.012399999999999995) == 0.0124
+    assert round_money(0.1) == 0.1
+    assert round_money(0) == 0.0
+
+
+def test_job_run_row_rounds_balance_and_estimate_fields():
+    bq = FakeBigQueryClient()
+    targets = ("a",)
+    plan = RunPlan("ep", "live", 1, 1, 1, targets)
+    # Bypass estimates.py's own rounding to simulate a CostEstimate whose fields still
+    # carry raw float noise by the time they reach the job_runs writer.
+    est = CostEstimate(max_usd=0.38279999999999936, avg_usd=0.34799999999999986,
+                       list_price_usd=0.348, basis="list_price", plan=plan)
+    run = RunContext(
+        client=_client(bq), endpoint_key="ep", job_id=generate_job_id(), plan=plan,
+        estimate=est, endpoint_mode="live", upload=False,
+        write=lambda df, uid: None, stamp=lambda df: df, empty_columns=["task_id"],
+    )
+    run.start(balance=33.36875400000026)
+    run.close()
+    rows = _job_rows(bq)
+    assert len(rows) == 2
+    for row in rows:
+        for field_name in ("balance_at_start", "estimate_max_usd", "estimate_avg_usd"):
+            value = row[field_name]
+            if value is not None:
+                assert round(value, 6) == value, f"{field_name}={value!r} has >6 decimals"
+    assert rows[0]["balance_at_start"] == 33.368754
+    assert rows[0]["estimate_max_usd"] == 0.3828
+    assert rows[0]["estimate_avg_usd"] == 0.348
+
+
+def test_cost_log_row_rounds_cost_usd():
+    bq = FakeBigQueryClient()
+    run, _, _ = _make_run(bq, upload=False)
+
+    def fn():
+        active_unit().record_http(
+            LIVE_URL, [{"keyword": "a"}],
+            {"tasks": [{"id": "a", "status_code": 20000, "cost": 0.012399999999999995,
+                        "result": [{"items": [{}]}]}]}, 200)
+        return pd.DataFrame([{"task_id": "a"}])
+
+    run.run_unit("a", fn)
+    run.close()
+    row = _cost_rows(bq)[0]
+    assert round(row["cost_usd"], 6) == row["cost_usd"]
+    assert row["cost_usd"] == 0.0124
 
 
 def test_close_done_is_set_even_when_cost_writer_close_raises():

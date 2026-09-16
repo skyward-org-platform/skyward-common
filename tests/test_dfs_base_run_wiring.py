@@ -139,6 +139,20 @@ def test_low_balance_rejects_before_spending(ep, bq, monkeypatch):
     assert rejection["balance_at_start"] == 0.001
 
 
+def test_low_balance_rejection_rounds_balance_at_start(ep, bq, monkeypatch):
+    # Real DataForSEO balances carry far more than 9 decimal digits (e.g. from cents
+    # division); BigQuery NUMERIC only allows 9, so the writer must round defensively.
+    monkeypatch.setattr(ep._client, "get_balance_cached",
+                        lambda max_age_s=60.0: {"balance": 0.00133360000000123,
+                                                "total": 0, "raw": {"b": 1}})
+    with pytest.raises(InsufficientBalanceError):
+        ep.live("pizza", domain=None, job_id=generate_job_id())
+    rejection = _inserted(bq, "job_runs")[-1]
+    assert rejection["status"] == "rejected_low_balance"
+    assert rejection["balance_at_start"] == round(0.00133360000000123, 6)
+    assert round(rejection["balance_at_start"], 6) == rejection["balance_at_start"]
+
+
 def test_balance_override_proceeds_with_warning(ep, bq, monkeypatch, capsys):
     monkeypatch.setattr(ep._client, "get_balance_cached",
                         lambda max_age_s=60.0: {"balance": 0.001, "total": 0, "raw": {"b": 1}})

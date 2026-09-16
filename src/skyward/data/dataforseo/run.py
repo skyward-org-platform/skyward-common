@@ -43,6 +43,20 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def round_money(value: float | None) -> float | None:
+    """Round a money value to 6 decimal places so it fits BigQuery NUMERIC.
+
+    DataForSEO's balance endpoint (and float math in general) can return values with
+    far more than 9 digits after the decimal point (e.g. 33.357433999999557). BigQuery
+    NUMERIC allows at most 9 fractional digits, so an unrounded value like that makes
+    the whole row insert fail — silently, since job_runs/cost_log writers only log a
+    warning on failure. Round defensively at every writer that touches a money field
+    (balance_at_start, estimate_max_usd, estimate_avg_usd, cost_usd) so this can't
+    happen regardless of how the float arrived.
+    """
+    return None if value is None else round(float(value), 6)
+
+
 def target_list(target) -> list[str]:
     if isinstance(target, (list, tuple)):
         return [str(t) for t in target]
@@ -302,6 +316,7 @@ class RunContext:
     def _finalize(self, record: dict, upload_id: str | None) -> dict:
         return {
             **record,
+            "cost_usd": round_money(record.get("cost_usd")),
             "job_id": self.job_id,
             "upload_id": upload_id,
             "endpoint": self.endpoint,
@@ -391,9 +406,9 @@ class RunContext:
             "planned_requests": self.plan.planned_requests,
             "planned_items": self.plan.planned_items,
             "planned_max_rows": self.plan.planned_max_rows,
-            "estimate_max_usd": self.estimate.max_usd,
-            "estimate_avg_usd": self.estimate.avg_usd,
-            "balance_at_start": balance,
+            "estimate_max_usd": round_money(self.estimate.max_usd),
+            "estimate_avg_usd": round_money(self.estimate.avg_usd),
+            "balance_at_start": round_money(balance),
             "balance_override": self._ignore_balance,
             "error": error,
             "client_id": None,

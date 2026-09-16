@@ -77,6 +77,23 @@ def _report(est, costs):
     return actual
 
 
+def _report_logged_only(est, costs):
+    """Like `_report`, but without the "actual <= max estimate" bound.
+
+    Documented limitation (docs/v1.6.1-release-notes.md, "Known limits"):
+    backlinks_bulk_pages_summary's recursive split-and-retry fallback for batches with
+    URLs DataForSEO can't parse makes real billed calls outside the plan, so its actual
+    cost is not bounded by the estimate the way every other endpoint's is. We only
+    assert the spend was logged.
+    """
+    actual = float(costs["cost_usd"].astype(float).sum())
+    print(f"  actual=${actual:.4f} over {len(costs)} billed tasks "
+          f"(max estimate ${est.max_usd:.4f}) -- known limit: invalid-URL retry "
+          "splitting is not included in the estimate, so no upper-bound check here")
+    assert not costs.empty and actual > 0
+    return actual
+
+
 @pytest.mark.live
 def test_keyword_overview_windows_link_cost_to_data(dfs_client_live):
     ep = dfs_client_live.dataforseo_labs_google_keyword_overview
@@ -173,14 +190,17 @@ def test_backlinks_over_1k_and_bulk_summary(dfs_client_live):
     est2 = _estimate(bulk, urls)
     job2 = generate_job_id()
     asyncio.run(bulk.live_all(urls, domain=None, job_id=job2, upload=False, batch_delay=0))
-    _report(est2, _costs(dfs_client_live, job2))
+    _report_logged_only(est2, _costs(dfs_client_live, job2))
 
+
+@pytest.mark.live
+def test_backlinks_summary(dfs_client_live):
     summ = dfs_client_live.backlinks_summary
     targets = ["busbank.com", "gotobus.com", "coachusa.com", "greyhound.com", "megabus.com"]
-    est3 = _estimate(summ, targets)
-    job3 = generate_job_id()
-    asyncio.run(summ.live_all(targets, domain=None, job_id=job3, upload=False, batch_delay=0))
-    _report(est3, _costs(dfs_client_live, job3))
+    est = _estimate(summ, targets)
+    job = generate_job_id()
+    asyncio.run(summ.live_all(targets, domain=None, job_id=job, upload=False, batch_delay=0))
+    _report(est, _costs(dfs_client_live, job))
 
 
 @pytest.mark.live

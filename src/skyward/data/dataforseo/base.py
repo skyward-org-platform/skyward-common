@@ -23,7 +23,8 @@ from skyward.data.dataforseo.debug_log import build_attempt_record
 from skyward.data.dataforseo.estimates import CostEstimate, RunPlan
 from skyward.data.dataforseo.exceptions import InsufficientBalanceError, InvalidLocationError
 from skyward.data.dataforseo.run import (
-    DEFAULT_BALANCE_BUFFER, RunContext, check_balance, target_list, write_job_run_row,
+    DEFAULT_BALANCE_BUFFER, RunContext, check_balance, round_money, target_list,
+    write_job_run_row,
 )
 from skyward.functions import _validate_job_id, generate_upload_id
 
@@ -125,8 +126,10 @@ class BaseEndpoint(ABC):
             "event": "end", "status": status,
             "planned_requests": plan.planned_requests, "planned_items": plan.planned_items,
             "planned_max_rows": plan.planned_max_rows,
-            "estimate_max_usd": estimate.max_usd, "estimate_avg_usd": estimate.avg_usd,
-            "balance_at_start": getattr(error, "balance", None), "balance_override": False,
+            "estimate_max_usd": round_money(estimate.max_usd),
+            "estimate_avg_usd": round_money(estimate.avg_usd),
+            "balance_at_start": round_money(getattr(error, "balance", None)),
+            "balance_override": False,
             "error": repr(error)[:1000], "client_id": None,
             "ingest_timestamp": datetime.now(timezone.utc).isoformat(),
         })

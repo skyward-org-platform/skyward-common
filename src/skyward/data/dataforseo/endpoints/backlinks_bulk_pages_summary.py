@@ -37,6 +37,18 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         return [{"targets": targets}]
 
     def plan(self, targets, *, endpoint_mode="live", **kwargs):
+        """Worst-case requests for a clean target list: ceil(n / batch_size).
+
+        Known limit: this does NOT account for `_fetch_batch_with_fallback`'s
+        error-recovery path. When a batch contains a target DataForSEO rejects as an
+        unparseable invalid URL (status 40501) and the bad URL can't be extracted from
+        the error message, that batch is recursively split in half (up to
+        MAX_SPLIT_DEPTH=5) and each half is re-sent as its own billed request. Every
+        extra split is a real DataForSEO call outside this plan, so a target list with
+        unparseable invalid URLs can cost several times this estimate. Clean URL lists
+        (the common case) are unaffected. See docs/v1.6.1-release-notes.md, "Known
+        limits".
+        """
         batch = min(kwargs.get("batch_size") or 1000, 1000)
         n = len(targets)
         return self._make_plan(targets, endpoint_mode, requests=math.ceil(n / batch),
