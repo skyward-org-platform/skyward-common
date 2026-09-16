@@ -80,3 +80,13 @@ def test_tables_are_created_before_views():
     assert names.index("locations") < names.index("locations_countries")
     assert names.index("cost_log") < names.index("job_costs")
     assert names.index("job_runs") < names.index("job_progress")
+
+
+def test_job_progress_includes_rejected_runs_in_estimates():
+    m = _load()
+    view_sql = m.JOB_PROGRESS_VIEW
+    # Rejection rows (status LIKE 'rejected%') must be included in planned_requests and estimate_max_usd sums
+    # so that rejected runs show the estimates that caused the rejection
+    assert "event = 'start' OR status LIKE 'rejected%'" in view_sql
+    # Should appear in both the planned_requests and estimate_max_usd calculations
+    assert view_sql.count("event = 'start' OR status LIKE 'rejected%'") >= 2

@@ -118,8 +118,8 @@ CREATE OR REPLACE VIEW `{T}.job_progress` AS
 WITH runs AS (
   SELECT
     job_id, endpoint, endpoint_mode,
-    SUM(IF(event = 'start', planned_requests, 0)) AS planned_requests,
-    SUM(IF(event = 'start', estimate_max_usd, 0)) AS estimate_max_usd,
+    SUM(IF(event = 'start' OR status LIKE 'rejected%', planned_requests, 0)) AS planned_requests,
+    SUM(IF(event = 'start' OR status LIKE 'rejected%', estimate_max_usd, 0)) AS estimate_max_usd,
     COUNTIF(event = 'start') AS runs_started,
     COUNTIF(event = 'end' AND status NOT LIKE 'rejected%') AS runs_ended,
     COUNTIF(event = 'end' AND status = 'failed') AS runs_failed,
