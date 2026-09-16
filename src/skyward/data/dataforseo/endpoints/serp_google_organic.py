@@ -19,6 +19,7 @@ import requests
 
 from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
 from skyward.data.dataforseo.collector.producer import parse_task_post, submit_and_wait
+from skyward.data.dataforseo.run import DEFAULT_BALANCE_BUFFER
 from skyward.functions import _validate_job_id
 
 
@@ -243,8 +244,12 @@ class SerpGoogleOrganic(BaseEndpoint):
         language_code: str | None = None,
         max_wait: int = 300,
         debug: bool | None = None,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
     ) -> pd.DataFrame:
-        """POST/GET workflow for ≤100 keywords."""
+        """POST/GET workflow for <=100 keywords. Submits are cost-logged."""
         _validate_job_id(job_id)
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
@@ -253,47 +258,46 @@ class SerpGoogleOrganic(BaseEndpoint):
             raise ValueError("Maximum 100 keywords. Use post_all() for larger batches.")
 
         debug = debug if debug is not None else self.config.debug
+        run = self._start_run(
+            keywords, job_id=job_id, resolved=resolved, endpoint_mode="standard",
+            upload=upload, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={"location_code": location_code},
+            empty_columns=self._get_schema() + ["domain_id", "domain", "endpoint_mode"],
+            tag_cost_with_upload=False,
+        )
 
-        empty_cols = self._get_schema() + ["domain_id", "domain", "endpoint_mode"]
+        try:
+            tasks = run.run_unit(keywords, lambda: self._task_post(
+                keywords, location_code, language_code, debug))
+            if not tasks:
+                return run.close(quiet=True)
 
-        tasks = self._task_post(keywords, location_code, language_code, debug)
-        if not tasks:
-            return pd.DataFrame(columns=empty_cols)
+            task_map = {t["id"]: t["keyword"] for t in tasks}
+            pending = set(task_map.keys())
+            start_time = time.time()
 
-        task_map = {t["id"]: t["keyword"] for t in tasks}
-        pending = set(task_map.keys())
-        results = []
-        start_time = time.time()
+            while pending and (time.time() - start_time) < max_wait:
+                for task_id in list(pending):
+                    keyword = task_map[task_id]
+                    df, error = self._task_get(task_id, keyword)
+                    if df is not None:
+                        run.add_rows(df)
+                        pending.remove(task_id)
+                    elif error:
+                        if debug:
+                            print(f"[{keyword}] Failed: {error}")
+                        pending.remove(task_id)
+                if pending:
+                    time.sleep(1)
 
-        while pending and (time.time() - start_time) < max_wait:
-            for task_id in list(pending):
-                keyword = task_map[task_id]
-                df, error = self._task_get(task_id, keyword)
-
-                if df is not None:
-                    results.append(df)
-                    pending.remove(task_id)
-                elif error:
-                    if debug:
-                        print(f"[{keyword}] Failed: {error}")
-                    pending.remove(task_id)
-
-            if pending:
-                time.sleep(1)
-
-        if pending and debug:
-            print(f"Warning: {len(pending)} tasks did not complete within {max_wait}s")
-
-        if not results:
-            return pd.DataFrame(columns=empty_cols)
-
-        combined = pd.concat(results, ignore_index=True)
-        combined = self._stamp_fetch_metadata(combined, resolved, endpoint_mode="standard")
-
-        if upload:
-            self.upload(self._client.bq_client, combined, job_id=job_id)
-
-        return combined
+            if pending and debug:
+                print(f"Warning: {len(pending)} tasks did not complete within {max_wait}s")
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
+        return run.close(quiet=True)
 
     def _post_all_collector(
         self,
@@ -307,6 +311,7 @@ class SerpGoogleOrganic(BaseEndpoint):
         language_code: int | None = None,
         depth: int | None = None,
         debug: bool | None = None,
+        _run=None,
     ) -> dict:
         """Collector path: task_post in chunks, record tracking rows, wait on BQ.
 
@@ -329,7 +334,8 @@ class SerpGoogleOrganic(BaseEndpoint):
         for i in range(0, len(targets), batch_size):
             chunk = targets[i:i + batch_size]
             payload = [{"keyword": kw, "tag": kw, **base} for kw in chunk]
-            parsed = parse_task_post(self._client._post(url, payload))
+            parsed = parse_task_post(self._in_unit(
+                _run, chunk, lambda p=payload: self._client._post(url, p)))
             posted.extend(parsed["posted"])
             rejected_payment += parsed["rejected_payment"]
             rejected_other += parsed["rejected_other"]
@@ -382,36 +388,67 @@ class SerpGoogleOrganic(BaseEndpoint):
         depth: int | None = None,
         use_collector: bool | None = None,
         proceed_at_pct: float = 1.0,
+        balance_buffer: float = DEFAULT_BALANCE_BUFFER,
+        ignore_balance_check: bool = False,
+        ignore_location_check: bool = False,
+        upload_batch_rows: int | None = None,
     ):
         """High-volume POST/GET.
 
-        Legacy (default): in-process poll, returns (results_df, failed_df).
+        Legacy (default): in-process poll, returns (results_df, failed_df). Results are
+        saved to BQ in windows while workers collect.
         Collector mode (`use_collector=True` or `config.use_collector`): submit + track in
         BQ and wait on dfs_job_summary; returns a summary receipt dict (data lands in the
         canonical table via the collector service). See ClickUp 86bac9q9y.
+        Every task_post is cost-logged in both modes.
         """
         _validate_job_id(job_id)
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
         use_collector = self.config.use_collector if use_collector is None else use_collector
+        empty_cols = self._get_schema() + ["domain_id", "domain", "endpoint_mode"]
+        run = self._start_run(
+            list(targets), job_id=job_id, resolved=resolved, endpoint_mode="standard",
+            upload=upload and not use_collector, balance_buffer=balance_buffer,
+            ignore_balance_check=ignore_balance_check,
+            ignore_location_check=ignore_location_check, upload_batch_rows=upload_batch_rows,
+            plan_kwargs={"depth": depth, "location_code": location_code},
+            empty_columns=empty_cols, tag_cost_with_upload=False,
+        )
+
         if use_collector:
-            return self._post_all_collector(
-                targets, job_id=job_id, resolved=resolved, proceed_at_pct=proceed_at_pct,
-                batch_size=batch_size, location_code=location_code,
-                language_code=language_code, depth=depth, debug=debug,
-            )
+            try:
+                summary = self._post_all_collector(
+                    targets, job_id=job_id, resolved=resolved, proceed_at_pct=proceed_at_pct,
+                    batch_size=batch_size, location_code=location_code,
+                    language_code=language_code, depth=depth, debug=debug, _run=run,
+                )
+            except BaseException as exc:
+                run.close(error=exc)
+                raise
+            run.close(quiet=True)
+            return summary
 
         if batch_size > 100:
             batch_size = 100
-
         debug = debug if debug is not None else self.config.debug
 
-        empty_cols = self._get_schema() + ["domain_id", "domain", "endpoint_mode"]
+        try:
+            return self._post_all_legacy(
+                run, targets, batch_size=batch_size, num_workers=num_workers,
+                max_wait=max_wait, max_error_retries=max_error_retries,
+                location_code=location_code, language_code=language_code, debug=debug,
+                depth=depth, empty_cols=empty_cols,
+            )
+        except BaseException as exc:
+            run.close(error=exc)
+            raise
 
+    def _post_all_legacy(self, run, targets, *, batch_size, num_workers, max_wait,
+                         max_error_retries, location_code, language_code, debug, depth,
+                         empty_cols):
         task_queue: Queue = Queue()
-        results: list[pd.DataFrame] = []
         failed_rows: list[dict] = []
-        results_lock = Lock()
         failed_lock = Lock()
 
         stats = {
@@ -432,14 +469,16 @@ class SerpGoogleOrganic(BaseEndpoint):
             print(f"Submitting {len(targets):,} keywords in {len(batches)} batches...")
 
         for i, batch in enumerate(batches):
-            tasks = self._task_post(batch, location_code, language_code, debug=False, depth=depth)
-            for t in tasks:
+            tasks = run.run_unit(batch, lambda b=batch: self._task_post(
+                b, location_code, language_code, debug=False, depth=depth))
+            for t in tasks or []:
                 task_id_to_keyword[t["id"]] = t["keyword"]
             if debug and (i + 1) % 100 == 0:
                 print(f"  Submitted {i+1}/{len(batches)} batches...")
 
         if not task_id_to_keyword:
             print("ERROR: No tasks submitted")
+            run.close(quiet=True)
             return pd.DataFrame(columns=empty_cols), pd.DataFrame(columns=["keyword", "task_id", "reason"])
 
         total_tasks = len(task_id_to_keyword)
@@ -535,9 +574,7 @@ class SerpGoogleOrganic(BaseEndpoint):
 
                     response = {"tasks": [task_data]}
                     df = self._parse_response(response, keyword)
-
-                    with results_lock:
-                        results.append(df)
+                    run.add_rows(df)
                     with stats_lock:
                         stats["collected"] += 1
                     task_queue.task_done()
@@ -624,21 +661,15 @@ class SerpGoogleOrganic(BaseEndpoint):
         if not failed_df.empty:
             print(f"WARNING: {len(failed_df):,} keywords failed")
 
-        if results:
-            results_df = pd.concat(results, ignore_index=True)
-            results_df = self._stamp_fetch_metadata(results_df, resolved, endpoint_mode="standard")
+        results_df = run.close(quiet=True)
+        if not results_df.empty and debug:
             elapsed = (time.time() - stats["start_time"]) / 60
-            if debug:
-                print(f"Done. {len(results_df):,} rows for {stats['collected']:,} keywords in {elapsed:.1f}min")
-                print(f"Total GET requests: {stats['get_requests']:,}")
-                print(f"Not-ready cycles: {stats['not_ready_cycles']:,}")
-                if elapsed > 0:
-                    print(f"Effective rate: {stats['collected'] / elapsed:.0f}/min")
-            if upload:
-                self.upload(self._client.bq_client, results_df, job_id=job_id)
-            return results_df, failed_df
-
-        return pd.DataFrame(columns=empty_cols), failed_df
+            print(f"Done. {len(results_df):,} rows for {stats['collected']:,} keywords in {elapsed:.1f}min")
+            print(f"Total GET requests: {stats['get_requests']:,}")
+            print(f"Not-ready cycles: {stats['not_ready_cycles']:,}")
+            if elapsed > 0:
+                print(f"Effective rate: {stats['collected'] / elapsed:.0f}/min")
+        return results_df, failed_df
 
     def extract_paa(self, df: pd.DataFrame) -> pd.DataFrame:
         if df.empty or "item_type" not in df.columns:

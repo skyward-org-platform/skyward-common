@@ -200,3 +200,64 @@ def test_search_volume_collector_path_logs_submit_cost(std_client, bq, monkeypat
     rows = cost_rows(bq)
     assert len(rows) == 3 and {r["call_type"] for r in rows} == {"task_post"}
     assert [l for l in bq.client.loaded_tables if "task_id" in l["df"].columns] == []
+
+
+import skyward.data.dataforseo.endpoints.serp_google_organic as serp_mod
+
+
+class _SerpGetSession:
+    """task_get answers for tasks the FakeDfsSession accepted; repeats the task cost like DFS."""
+
+    def __init__(self, posting_session):
+        self._s = posting_session
+
+    def get(self, url, timeout=None):
+        tid = url.rsplit("/", 1)[-1]
+        task = self._s.posted[tid]
+        return _Resp({"tasks": [{"id": tid, "status_code": 20000, "cost": 0.0006, "data": task,
+                                 "result": [{"items": [{"type": "organic", "rank_absolute": 1,
+                                                        "url": "https://x.com"}]}]}]})
+
+
+@pytest.fixture
+def serp_client(bq):
+    c = DataForSEOClient(username="u", password="p", bq_client=bq,
+                         config=ClientConfig(task_poll_interval=0))
+    c._session = FakeDfsSession(cost=0.0006)
+    getter = _SerpGetSession(c._session)
+    c._get = lambda url, session=None, max_retries=None, retry_delay=None: getter.get(url).json()
+    c._create_session = lambda: _SerpGetSession(c._session)
+    return c
+
+
+def test_serp_post_logs_task_post_cost_once(serp_client, bq):
+    df = serp_client.serp_google_organic.post(["a", "b"], domain=None, job_id=generate_job_id())
+    assert len(df) == 2
+    rows = cost_rows(bq)
+    assert len(rows) == 2
+    assert {r["call_type"] for r in rows} == {"task_post"}
+    assert round(sum(r["cost_usd"] for r in rows), 6) == 0.0012   # task_get echo not counted
+
+
+def test_serp_post_all_legacy_saves_windows_and_logs_every_task(serp_client, bq):
+    kws = [f"kw{i}" for i in range(150)]
+    results_df, failed_df = serp_client.serp_google_organic._post_all_sync(
+        kws, domain=None, job_id=generate_job_id(), batch_size=100, num_workers=2,
+        max_wait=60, upload_batch_rows=50)
+    assert len(results_df) == 150 and failed_df.empty
+    rows = cost_rows(bq)
+    assert len(rows) == 150
+    assert {r["endpoint_mode"] for r in rows} == {"standard"}
+    data_loads = [l for l in bq.client.loaded_tables if "task_id" in l["df"].columns]
+    assert len(data_loads) == 3
+    assert sum(len(l["df"]) for l in data_loads) == 150
+
+
+def test_serp_collector_path_logs_submit_cost(serp_client, bq, monkeypatch):
+    monkeypatch.setattr(serp_mod, "submit_and_wait",
+                        lambda **k: {"total_tasks": len(k["posted_tasks"]), "proceeded": True})
+    summary = asyncio.run(serp_client.serp_google_organic.post_all(
+        [f"kw{i}" for i in range(250)], domain=None, job_id=generate_job_id(),
+        use_collector=True))
+    assert summary["total_tasks"] == 250
+    assert len(cost_rows(bq)) == 250
