@@ -26,14 +26,17 @@ from skyward.data.supabase import SupabaseClient
 REVERSE_SPLIT = {}
 
 # Stable business columns to compare per table (exclude derived/volatile/dropped).
+# client_domains and client_datasets are gone: renamed to *_deprecated on
+# 2026-09-15 (commit 2d8d101) once meta.site, meta.site_competitors and
+# meta.data_access replaced them. They are dropped from this comparison rather
+# than re-pointed, because the replacements have no BigQuery counterpart to
+# diff against -- the BQ Meta dataset was retired at the Supabase cutover.
 TABLES = {
     "clients": ["client_id", "client_name", "abbreviation", "is_active", "notes"],
     "domains": ["domain_id", "domain", "domain_name", "is_active", "notes"],
-    "client_domains": ["client_id", "domain_id", "is_competitor", "priority", "notes"],
     "projects": ["project_id", "client_id", "project_type", "project_name", "status", "notes"],
     "project_domains": ["project_id", "domain_id", "role", "priority", "notes"],
     "dataset_catalog": ["dataset", "dataset_type", "hostname", "is_standardized", "owner", "active"],
-    "client_datasets": ["client_id", "domain_id", "dataset_id", "is_active", "notes"],
     "table_catalog": ["dataset", "table_name", "row_count", "size_bytes", "is_active"],
 }
 

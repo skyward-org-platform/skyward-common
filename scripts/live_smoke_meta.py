@@ -20,12 +20,14 @@ from skyward.data.hub import DataHub
 
 TS_COLS = [
     ("clients", "created_at"), ("domains", "created_at"),
-    ("projects", "created_at"), ("client_datasets", "created_at"),
+    ("projects", "created_at"), ("data_access", "created_at"),
     ("dataset_catalog", "updated_at"),
     ("table_catalog", "status_changed_at"), ("table_catalog", "last_indexed_at"),
 ]
-COUNT_TABLES = ["clients", "domains", "client_domains", "projects",
-                "project_domains", "client_datasets", "dataset_catalog", "table_catalog"]
+# client_domains/client_datasets were renamed to *_deprecated on 2026-09-15;
+# meta.site, meta.site_competitors and meta.data_access replaced them.
+COUNT_TABLES = ["clients", "domains", "site", "site_competitors", "projects",
+                "project_domains", "data_access", "dataset_catalog", "table_catalog"]
 
 
 def main():
@@ -95,9 +97,15 @@ def main():
 
         print("=== additional create/modify coverage ===")
         # add_domain (singular wrapper) + update_domains_batch
-        d2 = hub.add_domain("zzlive2.com", client_id=cid, is_competitor=True, priority="LOW")
+        d2 = hub.add_domain("zzlive2.com", client_id=cid, priority="LOW")
         check("add_domain singular", isinstance(d2, int) and "zzlive2.com" in list(hub.get_client_domains(cid)["domain"]))
-        check("add_domain is_competitor link", hub.get_client_domains(cid, is_competitor=True).iloc[0]["domain"] == "zzlive2.com")
+        # is_competitor=True is refused now: a competitor attaches to the site it
+        # competes with, not to the client. Site-to-site coverage is below.
+        try:
+            hub.add_domain("zzlive3.com", client_id=cid, is_competitor=True)
+            check("add_domain is_competitor refused", False)
+        except ValueError:
+            check("add_domain is_competitor refused", True)
 
         # site competitors (site -> site)
         sc_site = hub.add_domain("zzlive_site.com", client_id=cid)
@@ -117,7 +125,7 @@ def main():
         check("deactivate_project", hub.list_projects(client_id=cid, status="deactivated").iloc[0]["project_id"] == p2)
 
         # deactivate_client_dataset (soft delete)
-        hub.add_client_dataset(cid, "zz_ds2", "gsc", hostname="zzlive2.com")
+        hub.add_client_dataset(cid, "zz_ds2", "gsc", hostname="zzlive2.com", domain_id=d2)
         hub.deactivate_client_dataset("zz_ds2")
         check("deactivate_client_dataset", bool((hub.get_client_datasets(client_id=cid, active_only=False)["dataset_id"] == "zz_ds2").any())
               and not bool((hub.get_client_datasets(client_id=cid, active_only=True)["dataset_id"] == "zz_ds2").any()))
