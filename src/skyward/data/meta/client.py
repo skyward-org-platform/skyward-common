@@ -318,19 +318,39 @@ class MetaClient:
         )
 
     def get_client_domains(self, client_id: int, is_competitor: Optional[bool] = None) -> pd.DataFrame:
-        params = {"client_id": client_id}
-        competitor_filter = ""
-        if is_competitor is not None:
-            competitor_filter = "AND cd.is_competitor = %(is_competitor)s"
-            params["is_competitor"] = is_competitor
-        query = f"""
-            SELECT d.domain_id, d.domain, d.domain_name, d.is_active, cd.is_competitor, cd.priority, d.notes
-            FROM meta.client_domains cd
-            JOIN meta.domains d ON cd.domain_id = d.domain_id
-            WHERE cd.client_id = %(client_id)s {competitor_filter}
-            ORDER BY cd.is_competitor, d.domain
+        """A client's domains: the sites it owns, and their competitors.
+
+        meta.client_domains was renamed to client_domains_deprecated on
+        2026-09-15, so this reads the tables that replaced it -- meta.site for
+        owned sites, meta.site_competitors (reached through those sites) for
+        competitors. is_competitor is synthesised so the returned shape is
+        unchanged for callers.
         """
-        return self.sb.query(query, params)
+        owned = """
+            SELECT d.domain_id, d.domain, d.domain_name, d.is_active,
+                   FALSE AS is_competitor, s.priority, d.notes
+            FROM meta.site s
+            JOIN meta.domains d ON s.domain_id = d.domain_id
+            WHERE s.client_id = %(client_id)s
+        """
+        competitors = """
+            SELECT DISTINCT d.domain_id, d.domain, d.domain_name, d.is_active,
+                   TRUE AS is_competitor, sc.priority, d.notes
+            FROM meta.site own
+            JOIN meta.site_competitors sc ON sc.domain_id = own.domain_id
+            JOIN meta.domains d ON d.domain_id = sc.competitor_domain_id
+            WHERE own.client_id = %(client_id)s
+        """
+        if is_competitor is True:
+            inner = competitors
+        elif is_competitor is False:
+            inner = owned
+        else:
+            inner = f"{owned} UNION ALL {competitors}"
+        return self.sb.query(
+            f"SELECT * FROM ({inner}) t ORDER BY is_competitor, domain",
+            {"client_id": client_id},
+        )
 
     VALID_PRIORITIES = {"VERY LOW", "LOW", "NORMAL", "HIGH", "VERY HIGH"}
 
@@ -387,35 +407,44 @@ class MetaClient:
         skipped: list[str] = []
 
         if client_id is not None:
-            # 3. Check which client_domains links already exist
-            all_domain_ids = [existing_map[d] for d in clean_domains]
-            existing_links_df = self.sb.query(
-                "select domain_id from meta.client_domains "
-                "where client_id = %(client_id)s and domain_id = ANY(%(domain_ids)s)",
-                {"client_id": client_id, "domain_ids": all_domain_ids},
-            )
-            already_linked = set(existing_links_df["domain_id"].tolist()) if not existing_links_df.empty else set()
+            if is_competitor:
+                raise ValueError(
+                    "add_domains(is_competitor=True) is no longer supported. "
+                    "meta.client_domains was replaced by meta.site for owned "
+                    "sites and meta.site_competitors for competitors, and a "
+                    "competitor now attaches to the specific site it competes "
+                    "with rather than to the client as a whole. Add the domain "
+                    "without a client_id, then call add_site_competitor("
+                    "domain_id=<the site>, competitor_domain_id=<this domain>)."
+                )
 
-            # 4. Bulk insert only new client_domains links (all share competitor/priority)
-            new_link_ids = []
+            # 3. Which of these are already sites, and whose. meta.site holds
+            #    one row per domain, so a domain belongs to a single client --
+            #    client_domains was many-to-many. A domain already owned by
+            #    another client is skipped, never silently reassigned.
+            all_domain_ids = [existing_map[d] for d in clean_domains]
+            existing_sites_df = self.sb.query(
+                "select domain_id from meta.site "
+                "where domain_id = ANY(%(domain_ids)s)",
+                {"domain_ids": all_domain_ids},
+            )
+            already_linked = (
+                set(existing_sites_df["domain_id"].tolist())
+                if not existing_sites_df.empty else set()
+            )
+
+            # 4. Everything not already a site becomes one for this client.
             for domain in clean_domains:
                 domain_id = existing_map[domain]
                 if domain_id in already_linked:
                     skipped.append(domain)
                     continue
-                new_link_ids.append(domain_id)
-
-            if new_link_ids:
-                self.sb.execute(
-                    "insert into meta.client_domains (client_id, domain_id, is_competitor, priority) "
-                    "select %(client_id)s, did, %(is_competitor)s, %(priority)s "
-                    "from unnest(%(domain_ids)s::bigint[]) as did",
-                    {
-                        "client_id": client_id,
-                        "is_competitor": is_competitor,
-                        "priority": priority,
-                        "domain_ids": new_link_ids,
-                    },
+                self.upsert_site(
+                    domain_id=domain_id,
+                    client_id=client_id,
+                    engagement_status="client",
+                    source="add_domains",
+                    priority=priority,
                 )
 
         # 5. Return results
@@ -472,28 +501,29 @@ class MetaClient:
         if not rows:
             return
 
+        normalized = []
         for row in rows:
-            domain_id = row["domain_id"]
             priority = str(row.get("priority") or "NORMAL").upper()
             if priority not in self.VALID_PRIORITIES:
                 priority = "NORMAL"
-
-            query = """
-                UPDATE meta.client_domains
-                SET priority = %(priority)s
-                WHERE client_id = %(client_id)s AND domain_id = %(domain_id)s
-            """
-            self.sb.execute(
-                query,
-                {"priority": priority, "client_id": client_id, "domain_id": domain_id},
+            normalized.append(
+                {"domain_id": row["domain_id"], "priority": priority}
             )
+        # meta.site is keyed on domain_id alone, so client_id no longer narrows
+        # the update; it stays in the signature for callers.
+        self.update_site_priority_batch(normalized)
 
     def remove_client_domain(self, client_id: int, domain_id: int) -> None:
-        self.sb.execute(
-            "delete from meta.client_domains "
-            "where client_id = %(client_id)s and domain_id = %(domain_id)s",
-            {"client_id": client_id, "domain_id": domain_id},
+        # Only unlink the domain if it really is this client's site; the old
+        # client_domains delete was scoped by both ids and this must not become
+        # a way to delete another client's site by guessing a domain_id.
+        df = self.sb.query(
+            "select client_id from meta.site where domain_id = %(domain_id)s",
+            {"domain_id": domain_id},
         )
+        if df.empty or int(df.iloc[0]["client_id"]) != int(client_id):
+            return
+        self.remove_site(domain_id)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Project CRUD
@@ -793,11 +823,10 @@ class MetaClient:
         return self.sb.query(
             """
             SELECT DISTINCT sc.competitor_domain_id, d.domain, d.domain_name
-            FROM meta.client_domains own
+            FROM meta.site own
             JOIN meta.site_competitors sc ON sc.domain_id = own.domain_id
             JOIN meta.domains d ON d.domain_id = sc.competitor_domain_id
             WHERE own.client_id = %(client_id)s
-              AND own.is_competitor = FALSE
             ORDER BY d.domain
             """,
             {"client_id": client_id},
@@ -808,10 +837,15 @@ class MetaClient:
         """Flip the legacy client_domains.is_competitor flag on an existing link
         without raw SQL. (Legacy flag is retained during the site_competitors
         transition; see docs/superpowers/specs/2026-06-15-site-competitors-design.md.)"""
-        self.sb.execute(
-            "UPDATE meta.client_domains SET is_competitor = %(is_competitor)s "
-            "WHERE client_id = %(client_id)s AND domain_id = %(domain_id)s",
-            {"is_competitor": is_competitor, "client_id": client_id, "domain_id": domain_id},
+        raise ValueError(
+            "set_client_domain_competitor is no longer supported. The "
+            "client-level is_competitor flag lived on meta.client_domains, "
+            "which was renamed to client_domains_deprecated on 2026-09-15. "
+            "Competitors are now site-to-site: use add_site_competitor("
+            "domain_id=<the site>, competitor_domain_id=<the competitor>) or "
+            "remove_site_competitor(...). Which site the competitor belongs to "
+            "cannot be inferred from a client_id, which is why this raises "
+            "rather than guessing."
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -839,7 +873,8 @@ class MetaClient:
         if unassigned_only:
             conditions.append("""
                 dc.dataset NOT IN (
-                    SELECT dataset_id FROM meta.client_datasets
+                    SELECT dataset_id FROM meta.data_access
+                    WHERE dataset_id IS NOT NULL
                 )
             """)
 
@@ -1247,10 +1282,12 @@ class MetaClient:
         active_only: bool = True,
     ) -> pd.DataFrame:
         """
-        Get cached dataset mappings from Meta.client_datasets.
+        Get cached dataset mappings for a client's sites.
 
-        Joins with dataset_catalog to pull dataset_type and hostname
-        (source of truth for dataset metadata).
+        Reads meta.data_access (joined to meta.site for the client scope, and
+        to dataset_catalog for dataset_type/hostname). The client_datasets
+        table this used to read was renamed to client_datasets_deprecated on
+        2026-09-15.
 
         Args:
             client_id: Filter to datasets for this client
@@ -1265,7 +1302,7 @@ class MetaClient:
         conditions = []
 
         if client_id is not None:
-            conditions.append("cd.client_id = %(client_id)s")
+            conditions.append("s.client_id = %(client_id)s")
             params["client_id"] = client_id
 
         if dataset_type is not None:
@@ -1273,19 +1310,25 @@ class MetaClient:
             params["dataset_type"] = dataset_type
 
         if active_only:
-            conditions.append("cd.is_active = TRUE")
+            conditions.append("da.is_active = TRUE")
+        conditions.append("da.dataset_id IS NOT NULL")
 
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
+        # meta.client_datasets was renamed to client_datasets_deprecated on
+        # 2026-09-15. meta.data_access is keyed on the domain and carries no
+        # client_id, so the join through meta.site is what makes a client scope
+        # possible -- and is why a dataset can no longer float free of a site.
         query = f"""
-            SELECT cd.client_id, cd.domain_id, cd.dataset_id,
-                   dc.dataset_type, dc.hostname,
-                   cd.is_active, cd.notes, cd.created_at
-            FROM meta.client_datasets cd
+            SELECT s.client_id, da.domain_id, da.dataset_id,
+                   dc.dataset_type, COALESCE(da.hostname, dc.hostname) AS hostname,
+                   da.is_active, da.notes, da.created_at
+            FROM meta.data_access da
+            JOIN meta.site s ON da.domain_id = s.domain_id
             LEFT JOIN meta.dataset_catalog dc
-                ON cd.dataset_id = dc.dataset
+                ON da.dataset_id = dc.dataset
             {where_clause}
-            ORDER BY cd.client_id, dc.dataset_type, cd.dataset_id
+            ORDER BY s.client_id, dc.dataset_type, da.dataset_id
         """
 
         df = self.sb.query(query, params)
@@ -1303,10 +1346,11 @@ class MetaClient:
             dict with client_id and client_name if assigned, None if unassigned.
         """
         query = """
-            SELECT cd.client_id, c.client_name
-            FROM meta.client_datasets cd
-            JOIN meta.clients c ON cd.client_id = c.client_id
-            WHERE cd.dataset_id = %(dataset_id)s
+            SELECT s.client_id, c.client_name
+            FROM meta.data_access da
+            JOIN meta.site s ON da.domain_id = s.domain_id
+            JOIN meta.clients c ON s.client_id = c.client_id
+            WHERE da.dataset_id = %(dataset_id)s
             LIMIT 1
         """
         df = self.sb.query(query, {"dataset_id": dataset_id})
@@ -1361,14 +1405,25 @@ class MetaClient:
             {"dataset": dataset_id, "dataset_type": dataset_type, "hostname": hostname},
         )
 
-        # 2. Insert the link row into client_datasets
-        self.sb.execute(
-            """
-            INSERT INTO meta.client_datasets
-            (client_id, domain_id, dataset_id, notes)
-            VALUES (%(client_id)s, %(domain_id)s, %(dataset_id)s, %(notes)s)
-            """,
-            {"client_id": client_id, "domain_id": domain_id, "dataset_id": dataset_id, "notes": notes},
+        # 2. Record the access row. meta.data_access is domain-scoped, which
+        #    is the whole point of the replacement: client_datasets.domain_id
+        #    was nullable, so a row that should have been scoped to one site
+        #    silently applied to every sibling site of that client.
+        if domain_id is None:
+            raise ValueError(
+                f"add_client_dataset needs a domain_id for dataset "
+                f"{dataset_id!r}. meta.client_datasets allowed a null domain_id "
+                "and was renamed to client_datasets_deprecated on 2026-09-15; "
+                "meta.data_access is keyed on the domain. Pass the site this "
+                "dataset belongs to."
+            )
+        self.add_data_access(
+            domain_id=domain_id,
+            tool=dataset_type,
+            source="add_client_dataset",
+            dataset_id=dataset_id,
+            hostname=hostname,
+            notes=notes,
         )
 
         return {"status": "added", "warning": warning}
@@ -1405,17 +1460,25 @@ class MetaClient:
         if not set_clauses:
             return
         query = f"""
-            UPDATE meta.client_datasets
-            SET {', '.join(set_clauses)}
-            WHERE client_id = %(client_id)s AND dataset_id = %(dataset_id)s
+            UPDATE meta.data_access
+            SET {', '.join(set_clauses)}, updated_at = now()
+            WHERE dataset_id = %(dataset_id)s
+              AND domain_id IN (
+                  SELECT domain_id FROM meta.site
+                  WHERE client_id = %(client_id)s
+              )
         """
         self.sb.execute(query, params)
 
     def delete_client_dataset(self, client_id: int, dataset_id: str) -> None:
         """Remove a dataset mapping entirely."""
         query = """
-            DELETE FROM meta.client_datasets
-            WHERE client_id = %(client_id)s AND dataset_id = %(dataset_id)s
+            DELETE FROM meta.data_access
+            WHERE dataset_id = %(dataset_id)s
+              AND domain_id IN (
+                  SELECT domain_id FROM meta.site
+                  WHERE client_id = %(client_id)s
+              )
         """
         self.sb.execute(query, {"client_id": client_id, "dataset_id": dataset_id})
 
@@ -1427,8 +1490,8 @@ class MetaClient:
             dataset_id: The dataset to deactivate
         """
         query = """
-            UPDATE meta.client_datasets
-            SET is_active = FALSE
+            UPDATE meta.data_access
+            SET is_active = FALSE, updated_at = now()
             WHERE dataset_id = %(dataset_id)s
         """
         self.sb.execute(query, {"dataset_id": dataset_id})
@@ -1458,11 +1521,13 @@ class MetaClient:
         existing_ids = set(existing_df["dataset_id"].tolist()) if not existing_df.empty else set()
 
         # Get all non-competitor domains mapped to clients WITH domain_id
+        # Owned sites only. Competitors live in meta.site_competitors now, so
+        # "not a competitor" is simply "is a site".
         domain_query = """
-            SELECT d.domain_id, d.domain, cd.client_id
-            FROM meta.client_domains cd
-            JOIN meta.domains d ON cd.domain_id = d.domain_id
-            WHERE cd.is_competitor = FALSE AND d.is_active = TRUE
+            SELECT d.domain_id, d.domain, s.client_id
+            FROM meta.site s
+            JOIN meta.domains d ON s.domain_id = d.domain_id
+            WHERE d.is_active = TRUE
         """
         domains_df = self.sb.query(domain_query)
 
@@ -1486,7 +1551,7 @@ class MetaClient:
             2. Fuzzy match: "busbank" → best domain starting with "busbank"
                (picks longest match to avoid "bus" matching "busbank.com")
             """
-            if not hostname:
+            if not isinstance(hostname, str) or not hostname:
                 return None
             normalized = hostname.lower().replace("www.", "")
 
@@ -1530,8 +1595,13 @@ class MetaClient:
 
         for _, row in catalog_df.iterrows():
             dataset_id = row["dataset"]
-            ds_type = row.get("dataset_type") or ""
-            hostname = row.get("hostname") or None
+            # `or None` is not enough: a missing hostname arrives from pandas as
+            # NaN, which is truthy, so it survived every `if hostname` guard and
+            # reached .lower() as a float. Coerce anything non-string to None.
+            ds_type = row.get("dataset_type")
+            ds_type = ds_type if isinstance(ds_type, str) else ""
+            hostname = row.get("hostname")
+            hostname = hostname if isinstance(hostname, str) and hostname.strip() else None
 
             if dataset_id in existing_ids:
                 results["already_cached"].append(dataset_id)
@@ -1677,11 +1747,28 @@ class MetaClient:
                 "notes": None,
             })
 
+        missing = [r["dataset_id"] for r in link_rows if r.get("domain_id") is None]
+        if missing:
+            raise ValueError(
+                "approve_scanned_datasets needs a domain_id for every approval; "
+                f"missing for {', '.join(map(str, missing))}. meta.data_access "
+                "is keyed on the domain, unlike the nullable domain_id on the "
+                "retired client_datasets."
+            )
+        types_df = self.sb.query(
+            "select dataset, dataset_type from meta.dataset_catalog "
+            "where dataset = ANY(%(ids)s)",
+            {"ids": [r["dataset_id"] for r in link_rows]},
+        )
+        type_by_id = dict(zip(types_df["dataset"], types_df["dataset_type"])) \
+            if not types_df.empty else {}
         for row in link_rows:
-            self.sb.execute(
-                "insert into meta.client_datasets (client_id, domain_id, dataset_id, notes) "
-                "values (%(client_id)s, %(domain_id)s, %(dataset_id)s, %(notes)s)",
-                row,
+            self.add_data_access(
+                domain_id=row["domain_id"],
+                tool=type_by_id.get(row["dataset_id"], "other"),
+                source="approve_scanned_datasets",
+                dataset_id=row["dataset_id"],
+                notes=row["notes"],
             )
 
         return len(link_rows)
