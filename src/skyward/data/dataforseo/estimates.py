@@ -50,10 +50,17 @@ def list_price_usd(plan: RunPlan, rate: Rate) -> float:
             + plan.planned_items * rate.price_per_item_usd)
 
 
+# Units billed at a fixed price per unit the plan already counts (a SERP page per 10
+# results of depth). The list price is exact for these, while an observed per-request
+# average carries whatever depth past requests happened to use.
+_FIXED_PRICE_UNITS = frozenset({"serp_page"})
+
+
 def price_plan(plan: RunPlan, rate: Rate, observed: dict | None = None) -> CostEstimate:
     lp = list_price_usd(plan, rate)
     max_usd = round(lp * (1 + rate.max_buffer), 6)
     if (observed
+            and rate.item_unit not in _FIXED_PRICE_UNITS
             and (observed.get("sample_requests") or 0) >= MIN_OBSERVED_SAMPLES
             and observed.get("avg_cost_per_request") is not None):
         avg = round(plan.planned_requests * float(observed["avg_cost_per_request"]), 6)
@@ -61,6 +68,10 @@ def price_plan(plan: RunPlan, rate: Rate, observed: dict | None = None) -> CostE
     else:
         avg = round(lp, 6)
         basis = "list_price"
+    # Observed spend above the buffered list price means the rate card is low. Lift the
+    # upper bound rather than clamp the expected figure: gates read max_usd, so this
+    # errs towards refusing a run, never towards under-pricing one.
+    max_usd = max(max_usd, avg)
     return CostEstimate(max_usd=max_usd, avg_usd=avg, list_price_usd=round(lp, 6),
                         basis=basis, plan=plan)
 
