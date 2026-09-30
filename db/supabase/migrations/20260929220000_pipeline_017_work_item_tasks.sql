@@ -31,7 +31,9 @@
 -- somebody deleted it.
 
 create table if not exists pipeline.work_item_task (
-    work_item_task_id     bigserial primary key,
+    -- uuid, matching work_item's own key. The dry run caught this as
+    -- bigserial against a uuid foreign key, which is what a dry run is for.
+    work_item_task_id     uuid        primary key default gen_random_uuid(),
 
     -- Scope, on every row, like every other table here.
     domain_id             bigint      not null,
@@ -40,7 +42,7 @@ create table if not exists pipeline.work_item_task (
     -- The action this task came from. Deleting the action takes its tasks
     -- with it: a task row pointing at nothing cannot be read back onto
     -- anything.
-    work_item_id          bigint      not null
+    work_item_id          uuid        not null
                             references pipeline.work_item(work_item_id)
                             on delete cascade,
 
