@@ -15,6 +15,14 @@ class MetaClient:
         "gsc": ["jepto_gsc_", "searchconsole_"],
         "gmb": ["jepto_gmb_"],
         "facebook": ["jepto_facebook_"],
+        # `gads_backfill` was already a dataset_type in the catalogue --
+        # twelve rows carried it -- so Ads datasets had been catalogued
+        # before by some route other than this vocabulary. The PREFIX was
+        # what was missing, so every scan left every client's Ads backfill
+        # out, and meta.data_access could not link one: dataset_id is a
+        # foreign key into the catalogue, so an uncatalogued dataset is
+        # refused by the constraint (insofast, 2026-09-24).
+        "gads_backfill": ["gads_backfill_"],
     }
 
     def __init__(self, sb_client):
