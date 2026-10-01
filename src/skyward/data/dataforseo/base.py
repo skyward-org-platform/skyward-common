@@ -24,7 +24,7 @@ from skyward.data.dataforseo.debug_log import build_attempt_record
 from skyward.data.dataforseo.estimates import CostEstimate, RunPlan
 from skyward.data.dataforseo.exceptions import InsufficientBalanceError, InvalidLocationError
 from skyward.data.dataforseo.run import (
-    DEFAULT_BALANCE_BUFFER, RunContext, check_balance, round_money, target_list,
+    DEFAULT_BALANCE_BUFFER, RunContext, active_unit, check_balance, round_money, target_list,
     write_job_run_row,
 )
 from skyward.functions import _validate_job_id, generate_upload_id
@@ -60,6 +60,8 @@ class BaseEndpoint(ABC):
 
     def __init__(self, client: "DataForSEOClient") -> None:
         self._client = client
+        # Keywords DataForSEO refused (see _fetch_keyword_batch), most recent run's.
+        self.rejected_keywords: list[str] = []
 
     @property
     def config(self) -> "ClientConfig":
@@ -409,6 +411,66 @@ class BaseEndpoint(ABC):
             return False
 
     # ----- Helpers -----
+
+    def _fetch_keyword_batch(self, keywords: list[str], *, label: str, build_payload,
+                             parse, empty, max_retries: int, retry_delay: float,
+                             debug: bool) -> pd.DataFrame:
+        """One live request for a keyword list, for endpoints that take `keywords: [...]`.
+
+        A 4xxxx task status is DataForSEO refusing the input, so it is never retried
+        (the old loop re-sent the same batch `max_retries` times). A 40501 that names
+        'keywords' means one or more keywords in the batch are unacceptable: the batch is
+        split in half and each half sent on its own, down to the offending keyword(s),
+        which are skipped and reported. Refused requests cost nothing, so this pays only
+        for the good halves. Transport failures and empty results keep the old retry.
+        """
+        url = f"{self._client.BASE_URL}/{self.LIVE_URL}"
+        payload = build_payload(keywords)
+        for attempt in range(1, max_retries + 1):
+            if attempt > 1:
+                time.sleep(retry_delay)
+            resp = self._client._post(url, payload, max_retries=1, retry_delay=0)
+            if not resp:
+                if debug:
+                    print(f"[{label}] Invalid response. Attempt {attempt}/{max_retries}")
+                continue
+            task = (resp.get("tasks") or [{}])[0] or {}
+            code = task.get("status_code")
+            if isinstance(code, int) and 40000 <= code < 50000:
+                message = task.get("status_message") or ""
+                if code == 40501 and "keywords" in message:
+                    if len(keywords) > 1:
+                        mid = len(keywords) // 2
+                        parts = [self._fetch_keyword_batch(
+                            half, label=label, build_payload=build_payload, parse=parse,
+                            empty=empty, max_retries=max_retries, retry_delay=retry_delay,
+                            debug=debug) for half in (keywords[:mid], keywords[mid:])]
+                        parts = [p for p in parts if p is not None and not p.empty]
+                        return pd.concat(parts, ignore_index=True) if parts else empty()
+                    self._reject_keywords(keywords, code, message, label)
+                    return empty()
+                logger.warning("[%s] DataForSEO refused the task (%s %s); not retrying.",
+                               label, code, message)
+                return empty()
+            try:
+                df = parse(resp, keywords)
+                if not df.empty:
+                    return df
+                if debug:
+                    print(f"[{label}] Empty result. Attempt {attempt}/{max_retries}")
+            except Exception as e:
+                if debug:
+                    print(f"[{label}] Parse error: {e}. Attempt {attempt}/{max_retries}")
+                continue
+        return empty()
+
+    def _reject_keywords(self, keywords: list[str], code: int, message: str, label: str) -> None:
+        logger.warning("[%s] DataForSEO rejected %d keyword(s) (%s %s): %s", label,
+                       len(keywords), code, message, "; ".join(repr(k[:80]) for k in keywords))
+        self.rejected_keywords.extend(keywords)
+        unit = active_unit()
+        if unit is not None:
+            unit.rejected_keywords.extend(keywords)
 
     def _make_debug_collector(self, job_id: str, include_debug_logs: bool):
         """Allocate a run-scoped DebugLogCollector, or None when logging is off.
