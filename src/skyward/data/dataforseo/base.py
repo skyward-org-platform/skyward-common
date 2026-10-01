@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
@@ -34,6 +35,14 @@ if TYPE_CHECKING:
     from skyward.data.dataforseo.client import ClientConfig, DataForSEOClient
 
 logger = logging.getLogger(__name__)
+
+_NAMED_KEYWORD = re.compile(r"symbols: '(.*)'\.?\s*$", re.S)
+
+
+def _named_keyword(message: str) -> str | None:
+    """The keyword a 40501 message names, when it names one (Google Ads search_volume)."""
+    m = _NAMED_KEYWORD.search(message or "")
+    return m.group(1) if m else None
 
 
 # Sentinel for "arg not provided" to distinguish from explicit None
@@ -414,15 +423,18 @@ class BaseEndpoint(ABC):
 
     def _fetch_keyword_batch(self, keywords: list[str], *, label: str, build_payload,
                              parse, empty, max_retries: int, retry_delay: float,
-                             debug: bool) -> pd.DataFrame:
+                             debug: bool, retry_empty: bool = True) -> pd.DataFrame:
         """One live request for a keyword list, for endpoints that take `keywords: [...]`.
 
         A 4xxxx task status is DataForSEO refusing the input, so it is never retried
         (the old loop re-sent the same batch `max_retries` times). A 40501 that names
         'keywords' means one or more keywords in the batch are unacceptable: the batch is
         split in half and each half sent on its own, down to the offending keyword(s),
-        which are skipped and reported. Refused requests cost nothing, so this pays only
-        for the good halves. Transport failures and empty results keep the old retry.
+        which are skipped and reported. When the message names the keyword (Google Ads
+        search_volume: "...invalid characters or symbols: '<keyword>'."), that keyword is
+        dropped and the rest resent instead of halving. Refused requests cost nothing, so
+        this pays only for accepted requests. Transport failures keep the old retry; an
+        empty result is retried only when `retry_empty` (each such retry is billed).
         """
         url = f"{self._client.BASE_URL}/{self.LIVE_URL}"
         payload = build_payload(keywords)
@@ -439,12 +451,21 @@ class BaseEndpoint(ABC):
             if isinstance(code, int) and 40000 <= code < 50000:
                 message = task.get("status_message") or ""
                 if code == 40501 and "keywords" in message:
+                    named = _named_keyword(message)
+                    if named is not None and named in keywords and len(keywords) > 1:
+                        self._reject_keywords([named], code, message, label)
+                        rest = [k for k in keywords if k != named]
+                        return self._fetch_keyword_batch(
+                            rest, label=label, build_payload=build_payload, parse=parse,
+                            empty=empty, max_retries=max_retries, retry_delay=retry_delay,
+                            debug=debug, retry_empty=retry_empty)
                     if len(keywords) > 1:
                         mid = len(keywords) // 2
                         parts = [self._fetch_keyword_batch(
                             half, label=label, build_payload=build_payload, parse=parse,
                             empty=empty, max_retries=max_retries, retry_delay=retry_delay,
-                            debug=debug) for half in (keywords[:mid], keywords[mid:])]
+                            debug=debug, retry_empty=retry_empty)
+                            for half in (keywords[:mid], keywords[mid:])]
                         parts = [p for p in parts if p is not None and not p.empty]
                         return pd.concat(parts, ignore_index=True) if parts else empty()
                     self._reject_keywords(keywords, code, message, label)
@@ -454,7 +475,7 @@ class BaseEndpoint(ABC):
                 return empty()
             try:
                 df = parse(resp, keywords)
-                if not df.empty:
+                if not df.empty or not retry_empty:
                     return df
                 if debug:
                     print(f"[{label}] Empty result. Attempt {attempt}/{max_retries}")
