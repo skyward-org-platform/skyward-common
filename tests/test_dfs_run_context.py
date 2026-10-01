@@ -61,7 +61,9 @@ def test_post_records_into_active_unit_and_counts_attempts():
     assert unit.records[0]["cost_usd"] == 0.0121
 
 
-def test_post_without_active_unit_records_nothing():
+def test_post_without_active_unit_and_without_bigquery_records_nothing():
+    # With a bq_client, a billed call outside a run is logged as job_id "unattributed"
+    # (tests/test_dfs_failed_task_handling.py). Without one there is nowhere to write.
     client = _client()
     client._session = _Session({"tasks": [{"id": "t", "cost": 1}]})
     assert active_unit() is None
