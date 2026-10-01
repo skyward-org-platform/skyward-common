@@ -170,6 +170,24 @@ class DataForSEOClient:
         session.mount("https://", HTTPAdapter(max_retries=retry))
         return session
 
+    def _record_unattributed(self, url: str, payload, resp, http_status) -> None:
+        """Cost-log a billed call made outside any run (no RunUnit is active).
+
+        Probes, scripts and other callers of `_post` used to spend without writing a
+        cost_log row, so the balance fell with nothing to account for it. Written
+        straight away, one call at a time, under job_id 'unattributed'. A client without
+        a bq_client cannot log; the call itself is unaffected either way.
+        """
+        if self.bq_client is None:
+            return
+        from skyward.data.dataforseo.cost_log import CostLogWriter, unattributed_cost_rows
+        rows = unattributed_cost_rows(url, payload, resp, http_status)
+        if not rows:
+            return
+        writer = CostLogWriter(self.bq_client, flush_every=len(rows))
+        writer.add(rows)
+        writer.close()
+
     def _post(
         self,
         endpoint: str,
@@ -204,11 +222,13 @@ class DataForSEOClient:
                 data = resp.json()
                 # Cost recording must never fail a successful data pull
                 unit = active_unit()
-                if unit is not None:
-                    try:
+                try:
+                    if unit is not None:
                         unit.record_http(endpoint, payload, data, resp.status_code)
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to record cost for successful HTTP response: %r", e)
+                    else:
+                        self._record_unattributed(endpoint, payload, data, resp.status_code)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Failed to record cost for successful HTTP response: %r", e)
                 return data
             except Exception as e:
                 if status_sink is not None:
