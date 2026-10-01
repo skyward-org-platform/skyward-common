@@ -1056,7 +1056,7 @@ class MetaClient:
         "title_brand_abbrev", "drive_client_folder_id",
         "drive_site_folder_id", "clickup_space_id", "clickup_folder_id",
         "clickup_list_id", "clickup_task_id", "account_manager",
-        "priority", "source", "notes",
+        "priority", "source", "notes", "white_label",
     )
 
     def upsert_site(self, domain_id: int, client_id: int,
