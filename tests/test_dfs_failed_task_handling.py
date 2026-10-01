@@ -185,3 +185,66 @@ def test_job_runs_end_row_stays_completed_when_every_task_succeeded(bq):
                             upload=False, ignore_balance_check=True))
     end = [r for r in _rows(bq, "job_runs") if r["event"] == "end"][-1]
     assert end["status"] == "completed"
+
+
+# ---- Google Ads search_volume: the 40501 message names the bad keyword --------------------
+
+class NamingSession:
+    """keywords_data/google_ads/search_volume/live as observed 2026-10-01: a task holding
+    any keyword with a comma, '?' or an em dash is refused with 40501 and the message names
+    the first such keyword; otherwise every keyword gets a row."""
+
+    BAD_CHARS = (",", "?", "—")
+
+    def __init__(self):
+        self.calls = []
+        self._ids = itertools.count(1)
+
+    def post(self, url, json=None, timeout=None):
+        self.calls.append((url, json))
+        tasks = []
+        for task in json:
+            tid = f"task-{next(self._ids)}"
+            bad = next((k for k in task["keywords"] if any(c in k for c in self.BAD_CHARS)), None)
+            if bad is not None:
+                tasks.append({"id": tid, "status_code": 40501, "cost": 0, "result": None,
+                              "status_message": "Invalid Field: 'keywords'. Keyword text has "
+                                                f"invalid characters or symbols: '{bad}'."})
+                continue
+            tasks.append({"id": tid, "status_code": 20000, "cost": 0.09, "data": task,
+                          "result": [{"keyword": k, "search_volume": 10, "location_code": 2840,
+                                      "language_code": "en", "monthly_searches": []}
+                                     for k in task["keywords"]]})
+        return _Resp({"status_code": 20000, "tasks": tasks})
+
+
+def test_search_volume_drops_each_named_keyword_and_keeps_the_rest(bq):
+    session = NamingSession()
+    ep = _client(bq, session).keywords_data_google_ads_search_volume
+    keywords = ["charter bus", "charter bus, boston", "what is a bus?", "a — b", "coach hire"]
+    df = asyncio.run(ep.live_all(keywords, domain=None, job_id=generate_job_id(),
+                                 upload=False, ignore_balance_check=True))
+    assert sorted(df["keyword"]) == ["charter bus", "coach hire"]
+    assert sorted(ep.rejected_keywords) == sorted(keywords[1:4])
+    # Named keywords are dropped one by one (free refusals), then ONE paid request.
+    assert len(session.calls) == 4
+    paid = [r for r in _rows(bq, "cost_log") if r["cost_usd"] > 0]
+    assert len(paid) == 1
+
+
+def test_search_volume_permanent_error_is_not_retried(bq):
+    session = RejectingSession(status=40200, message="Payment Required.")
+    ep = _client(bq, session).keywords_data_google_ads_search_volume
+    df = asyncio.run(ep.live_all(["a", BAD], domain=None, job_id=generate_job_id(),
+                                 upload=False, ignore_balance_check=True))
+    assert df.empty
+    assert len(session.calls) == 1
+
+
+def test_search_volume_job_runs_partial_names_rejected_keywords(bq):
+    ep = _client(bq, NamingSession()).keywords_data_google_ads_search_volume
+    asyncio.run(ep.live_all(["charter bus", "a, b"], domain=None, job_id=generate_job_id(),
+                            upload=False, ignore_balance_check=True))
+    end = [r for r in _rows(bq, "job_runs") if r["event"] == "end"][-1]
+    assert end["status"] == "partial"
+    assert "'a, b'" in end["error"]

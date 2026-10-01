@@ -135,31 +135,16 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
         if len(keywords) > 1000:
             raise ValueError("Maximum 1000 keywords per request")
 
-        url = f"{self._client.BASE_URL}/{self.LIVE_URL}"
-        payload = self._build_payload(keywords, **kwargs)
-
-        max_retries = kwargs.get("max_retries") or self.config.max_retries
-        retry_delays = [3, 5, 15, 30]
-
-        for attempt in range(max_retries):
-            delay = retry_delays[attempt] if attempt < len(retry_delays) else retry_delays[-1]
-            if attempt > 0:
-                time.sleep(delay)
-
-            resp = self._client._post(url, payload, max_retries=1, retry_delay=0)
-            if not resp:
-                continue
-
-            try:
-                status_code = resp["tasks"][0].get("status_code")
-                if status_code == 20000:
-                    return self._parse_response(resp, keywords)
-                if self.config.debug:
-                    print(f"Attempt {attempt + 1}: status_code {status_code}")
-            except (KeyError, IndexError):
-                continue
-
-        return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        max_retries = kwargs.pop("max_retries", None) or self.config.max_retries
+        # An accepted request with no rows is a real answer (no volume), not a glitch:
+        # retrying it re-bills the whole $0.09 task, so empty results are not retried.
+        return self._fetch_keyword_batch(
+            keywords, label="search_volume",
+            build_payload=lambda kws: self._build_payload(kws, **kwargs),
+            parse=self._parse_response,
+            empty=lambda: pd.DataFrame(columns=self._get_schema() + ["task_id"]),
+            max_retries=max_retries, retry_delay=self.config.retry_delay,
+            debug=self.config.debug, retry_empty=False)
 
     async def live_all(
         self,
@@ -197,6 +182,7 @@ class KeywordsDataGoogleAdsSearchVolume(BaseEndpoint):
             Combined DataFrame with all search volumes, stamped with fetch metadata.
         """
         _validate_job_id(job_id)
+        self.rejected_keywords = []
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
         batch_size = min(batch_size, 1000)
