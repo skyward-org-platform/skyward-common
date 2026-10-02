@@ -136,3 +136,43 @@ def test_full_prune_still_requires_prune():
     hub.scan_datasets(full=True)
 
     assert "delete from meta.dataset_catalog" not in sb.sql.lower()
+
+
+# ── our own datasets must not be catalogued as a client's ────────────
+
+
+def test_our_own_dbt_layers_are_not_catalogued_as_client_ga4():
+    """The bare `analytics_` prefix sweeps in our OWN modelled data.
+
+    Found by the shape survey on 2026-10-02: analytics_staging,
+    analytics_mart and analytics_intermediate are dbt layers holding stg_*,
+    mart_* and int_* tables, and analytics_gcs_portfolio and
+    analytics_tna_portfolio are our own rollups holding
+    analytics_combined_data. None carries events_*, so none is a GA4
+    export. All five sat in the catalogue typed `ga4`, where something
+    could link one to a client as their analytics.
+    """
+    hub, sb = _hub([
+        "analytics_387603466",      # a real GA4 export
+        "analytics_staging",
+        "analytics_mart",
+        "analytics_intermediate",
+        "analytics_gcs_portfolio",
+        "analytics_tna_portfolio",
+    ])
+
+    out = hub.scan_datasets()
+
+    catalogued = [d["dataset"] for d in out.get("ga4", [])]
+    assert catalogued == ["analytics_387603466"], (
+        f"only the real export may be catalogued, got {catalogued}")
+
+
+def test_a_client_export_is_still_catalogued():
+    """The exclusion must be exact names, not a loose pattern: a client
+    whose property id happened to contain 'mart' must not be dropped."""
+    hub, sb = _hub(["analytics_387603466"])
+
+    out = hub.scan_datasets()
+
+    assert [d["dataset"] for d in out["ga4"]] == ["analytics_387603466"]

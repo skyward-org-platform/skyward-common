@@ -25,6 +25,26 @@ class MetaClient:
         "gads_backfill": ["gads_backfill_"],
     }
 
+    # OUR OWN DATASETS THAT MATCH A CLIENT PREFIX. The bare `analytics_`
+    # prefix sweeps in our own modelled data: analytics_staging,
+    # analytics_mart and analytics_intermediate are dbt layers holding
+    # stg_*, mart_* and int_* tables, and the two portfolio datasets are
+    # our own rollups holding analytics_combined_data. None carries
+    # events_*, so none is a GA4 export, yet all five sat in the catalogue
+    # typed `ga4` where something could link one to a client as their
+    # analytics (found by the shape survey, 2026-10-02).
+    #
+    # EXACT NAMES, not a pattern. A client whose GA4 property id happened
+    # to contain "mart" must not be dropped, and a prefix rule here would
+    # be the same over-matching that caused this.
+    DATASETS_THAT_ARE_OURS = frozenset({
+        "analytics_staging",
+        "analytics_mart",
+        "analytics_intermediate",
+        "analytics_gcs_portfolio",
+        "analytics_tna_portfolio",
+    })
+
     def __init__(self, sb_client):
         self.sb = sb_client
         self._max_ids = {}  # Cache: (schema, table, id_column) -> max_id

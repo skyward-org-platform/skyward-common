@@ -410,6 +410,10 @@ class DataHub(MetaClient):
         unrecognized = []
         for ds in all_datasets:
             dataset_id = ds.dataset_id
+            # Ours, despite matching a client prefix. Skipped before the
+            # prefix test so it cannot be catalogued as somebody's data.
+            if dataset_id in self.DATASETS_THAT_ARE_OURS:
+                continue
             dataset_lower = dataset_id.lower()
             matched_type = None
             for prefix, ds_type in prefix_map:
