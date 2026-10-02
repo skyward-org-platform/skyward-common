@@ -36,7 +36,7 @@ TABLES = {
     "domains": ["domain_id", "domain", "domain_name", "is_active", "notes"],
     "projects": ["project_id", "client_id", "project_type", "project_name", "status", "notes"],
     "project_domains": ["project_id", "domain_id", "role", "priority", "notes"],
-    "dataset_catalog": ["dataset", "dataset_type", "hostname", "is_standardized", "owner", "active"],
+    "dataset_catalog": ["dataset", "dataset_type", "hostname", "shape", "shape_checked_at", "shape_detail", "owner", "active"],
     "table_catalog": ["dataset", "table_name", "row_count", "size_bytes", "is_active"],
 }
 

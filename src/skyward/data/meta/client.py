@@ -890,7 +890,8 @@ class MetaClient:
 
         query = f"""
             SELECT dc.dataset, dc.dataset_type, dc.hostname,
-                   dc.is_standardized, dc.owner, dc.active, dc.updated_at
+                   dc.shape, dc.shape_checked_at, dc.shape_detail,
+                   dc.owner, dc.active, dc.updated_at
             FROM meta.dataset_catalog dc
             {where_clause}
             ORDER BY dc.dataset_type, dc.dataset
