@@ -43,7 +43,8 @@ def test_scan_and_match_uses_dataset_catalog(hub, fake_bq):
     fake_bq.client.queue_result(pd.DataFrame(columns=["domain_id", "domain", "client_id"]))
     # get_dataset_catalog returns empty
     fake_bq.client.queue_result(pd.DataFrame(columns=[
-        "dataset", "dataset_type", "hostname", "is_standardized",
+        "dataset", "dataset_type", "hostname",
+        "shape", "shape_checked_at", "shape_detail",
         "owner", "active", "updated_at",
     ]))
     result = hub.scan_and_match_datasets()

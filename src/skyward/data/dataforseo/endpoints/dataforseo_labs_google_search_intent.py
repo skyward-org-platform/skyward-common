@@ -112,35 +112,13 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
         max_retries = kwargs.pop("max_retries", cfg.max_retries)
         retry_delay = kwargs.pop("retry_delay", cfg.retry_delay)
         debug = kwargs.pop("debug", cfg.debug)
-
         keywords = target if isinstance(target, list) else [target]
-
-        url = f"{self._client.BASE_URL}/{self.LIVE_URL}"
-        payload = self._build_payload(keywords, **kwargs)
-
-        for attempt in range(1, max_retries + 1):
-            if attempt > 1:
-                time.sleep(retry_delay)
-
-            resp = self._client._post(url, payload, max_retries=1, retry_delay=0)
-
-            if not resp:
-                if debug:
-                    print(f"[search_intent] Invalid response. Attempt {attempt}/{max_retries}")
-                continue
-
-            try:
-                df = self._parse_response(resp, keywords)
-                if not df.empty:
-                    return df
-                if debug:
-                    print(f"[search_intent] Empty result. Attempt {attempt}/{max_retries}")
-            except Exception as e:
-                if debug:
-                    print(f"[search_intent] Parse error: {e}. Attempt {attempt}/{max_retries}")
-                continue
-
-        return pd.DataFrame(columns=self._get_schema() + ["task_id"])
+        return self._fetch_keyword_batch(
+            keywords, label="search_intent",
+            build_payload=lambda kws: self._build_payload(kws, **kwargs),
+            parse=self._parse_response,
+            empty=lambda: pd.DataFrame(columns=self._get_schema() + ["task_id"]),
+            max_retries=max_retries, retry_delay=retry_delay, debug=debug)
 
     async def live_all(self, *args, **kwargs) -> pd.DataFrame:
         """Async wrapper — delegates to _live_all_sync in a thread executor
@@ -173,6 +151,7 @@ class DataforseoLabsGoogleSearchIntent(BaseEndpoint):
         Every request is cost-logged; rows are saved in windows and the combined
         DataFrame is returned."""
         _validate_job_id(job_id)
+        self.rejected_keywords = []
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
         batch_size = min(batch_size, 1000)
