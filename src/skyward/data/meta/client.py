@@ -919,6 +919,66 @@ class MetaClient:
 
         return self.sb.query(query, params)
 
+    def record_dataset_shapes(self, rows: list) -> int:
+        """Store what a shape survey read, for many datasets in ONE statement.
+
+        A dataset's shape is an OBSERVATION, not a property: a base-only
+        export gets expanded later and an expanded one can lose tables, so
+        this is re-runnable on purpose and is expected to move a value in
+        both directions.
+
+        Each row carries `dataset`, `shape`, `shape_checked_at` and
+        `shape_detail`. `shape_detail` is JSON-encoded here because the
+        column is jsonb and psycopg will not adapt a bare dict.
+
+        Batched deliberately. The catalogue holds ~105 rows and a survey
+        touches every readable one, so a per-row UPDATE would be 105
+        statements for one logical write.
+
+        Returns the number of rows sent.
+        """
+        import json as _json
+
+        if not rows:
+            return 0
+
+        values, params = [], {}
+        for i, row in enumerate(rows):
+            dataset = (row.get("dataset") or "").strip()
+            if not dataset:
+                raise ValueError(
+                    f"record_dataset_shapes: row {i} has no dataset. The "
+                    "dataset name is the key, and a blank one would match "
+                    "every row in the catalogue."
+                )
+            if not row.get("shape"):
+                raise ValueError(
+                    f"record_dataset_shapes: {dataset} has no shape. A read "
+                    "that failed is OUR outage and must not be stored as a "
+                    "shape at all."
+                )
+            values.append(
+                f"(%(dataset_{i})s, %(shape_{i})s, "
+                f"%(shape_checked_at_{i})s, %(shape_detail_{i})s)"
+            )
+            params[f"dataset_{i}"] = dataset
+            params[f"shape_{i}"] = row["shape"]
+            params[f"shape_checked_at_{i}"] = row.get("shape_checked_at")
+            params[f"shape_detail_{i}"] = _json.dumps(row.get("shape_detail") or {})
+
+        query = f"""
+            UPDATE meta.dataset_catalog AS dc
+               SET shape = v.shape,
+                   shape_checked_at = v.shape_checked_at::timestamptz,
+                   shape_detail = v.shape_detail::jsonb,
+                   updated_at = now()
+              FROM (VALUES {', '.join(values)})
+                   AS v(dataset, shape, shape_checked_at, shape_detail)
+             WHERE dc.dataset = v.dataset
+        """
+        self.sb.execute(query, params)
+        return len(rows)
+
     # ══════════════════════════════════════════════════════════════════════════
     # ─────────────────────────────────────────────────────────────────
     # meta.site and meta.data_access

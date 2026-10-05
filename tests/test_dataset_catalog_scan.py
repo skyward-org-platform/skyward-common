@@ -176,3 +176,81 @@ def test_a_client_export_is_still_catalogued():
     out = hub.scan_datasets()
 
     assert [d["dataset"] for d in out["ga4"]] == ["analytics_387603466"]
+
+
+# ── recording a surveyed shape ───────────────────────────────────────
+#
+# The shape survey lives in the seo-pipeline repo but the write does not
+# get to live there: meta.* is modified through these helpers so the
+# allowed-column list, validation and the updated_at stamp all still
+# apply. A raw `update meta.dataset_catalog ... set shape` in the lane
+# is caught by that repo's own guard test, which is how this helper came
+# to be asked for.
+
+
+def test_a_surveyed_shape_is_recorded():
+    sb = FakeSb()
+    meta = MetaClient(sb)
+
+    meta.record_dataset_shapes([
+        {"dataset": "analytics_387603466", "shape": "ga4_full",
+         "shape_checked_at": "2026-10-05T12:00:00+00:00",
+         "shape_detail": {"missing": [], "extra": ["pseudonymous_users_"]}},
+    ])
+
+    assert len(sb.calls) == 1, f"expected one statement, got {len(sb.calls)}"
+    sql = sb.calls[0]["sql"].lower()
+    assert "update meta.dataset_catalog" in sql
+    assert "updated_at = now()" in sql
+    params = sb.calls[0]["params"]
+    assert params["dataset_0"] == "analytics_387603466"
+    assert params["shape_0"] == "ga4_full"
+    # JSON text, not a dict: the column is jsonb and psycopg will not
+    # adapt a bare dict.
+    assert isinstance(params["shape_detail_0"], str)
+    assert '"pseudonymous_users_"' in params["shape_detail_0"]
+
+
+def test_many_shapes_are_one_statement():
+    """105 catalogued datasets must not become 105 UPDATEs."""
+    sb = FakeSb()
+    meta = MetaClient(sb)
+
+    meta.record_dataset_shapes([
+        {"dataset": f"ds_{i}", "shape": "base_only",
+         "shape_checked_at": "2026-10-05T12:00:00+00:00",
+         "shape_detail": {}}
+        for i in range(40)
+    ])
+
+    assert len(sb.calls) == 1, (
+        f"one batched statement expected, got {len(sb.calls)}")
+    params = sb.calls[0]["params"]
+    assert params["dataset_39"] == "ds_39"
+
+
+def test_recording_nothing_touches_the_database():
+    """An --apply run that matched no shapes must not emit a statement."""
+    sb = FakeSb()
+    meta = MetaClient(sb)
+
+    meta.record_dataset_shapes([])
+
+    assert sb.calls == []
+
+
+def test_a_row_without_a_dataset_is_refused():
+    """The dataset name is the key. A blank one would update every row."""
+    sb = FakeSb()
+    meta = MetaClient(sb)
+
+    import pytest
+    with pytest.raises(ValueError) as exc:
+        meta.record_dataset_shapes([
+            {"dataset": "", "shape": "ga4_full",
+             "shape_checked_at": "2026-10-05T12:00:00+00:00",
+             "shape_detail": {}},
+        ])
+
+    assert "dataset" in str(exc.value).lower()
+    assert sb.calls == [], "nothing may be written when a row is refused"
