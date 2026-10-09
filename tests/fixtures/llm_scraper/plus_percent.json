@@ -1,0 +1,70 @@
+{
+ "version": "0.1.20260917",
+ "status_code": 20000,
+ "status_message": "Ok.",
+ "time": "0.0137 sec.",
+ "cost": 0,
+ "tasks_count": 1,
+ "tasks_error": 0,
+ "tasks": [
+  {
+   "id": "10091917-6590-0626-0000-b7fa17d26f23",
+   "status_code": 20000,
+   "status_message": "Ok.",
+   "time": "0.0101 sec.",
+   "cost": 0,
+   "result_count": 1,
+   "path": [
+    "v3",
+    "ai_optimization",
+    "chat_gpt",
+    "llm_scraper",
+    "task_get",
+    "advanced",
+    "10091917-6590-0626-0000-b7fa17d26f23"
+   ],
+   "data": {
+    "api": "ai_optimization",
+    "function": "llm_scraper",
+    "se": "chat_gpt",
+    "keyword": "What is 100% of 50 + 25?",
+    "location_code": 2840,
+    "language_code": "en",
+    "force_web_search": false,
+    "tag": "probe-8",
+    "device": "desktop",
+    "os": "windows"
+   },
+   "result": [
+    {
+     "keyword": "What is 100% of 50   25?",
+     "location_code": 2840,
+     "language_code": "en",
+     "model": "gpt-6",
+     "check_url": "https://chatgpt.com/?prompt=What%20is%20100%25%20of%2050%20%20%2025%3F",
+     "datetime": "2026-10-09 19:18:17 +00:00",
+     "markdown": "100% of 50 = **50**\n\n100% of 25 = **25**\n\n100% means the whole amount\\! \ud83d\ude0a",
+     "search_results": null,
+     "sources": null,
+     "fan_out_queries": null,
+     "brand_entities": null,
+     "se_results_count": 0,
+     "item_types": [
+      "chat_gpt_text"
+     ],
+     "items_count": 1,
+     "items": [
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 1,
+       "rank_absolute": 1,
+       "markdown": "100% of 50 = **50**\n\n100% of 25 = **25**\n\n100% means the whole amount\\! \ud83d\ude0a",
+       "sources": null,
+       "brand_entities": null
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

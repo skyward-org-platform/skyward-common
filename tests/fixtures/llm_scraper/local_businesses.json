@@ -1,0 +1,489 @@
+{
+ "version": "0.1.20260917",
+ "status_code": 20000,
+ "status_message": "Ok.",
+ "time": "0.0161 sec.",
+ "cost": 0,
+ "tasks_count": 1,
+ "tasks_error": 0,
+ "tasks": [
+  {
+   "id": "10091929-6590-0626-0000-dc2981ecace1",
+   "status_code": 20000,
+   "status_message": "Ok.",
+   "time": "0.0125 sec.",
+   "cost": 0,
+   "result_count": 1,
+   "path": [
+    "v3",
+    "ai_optimization",
+    "chat_gpt",
+    "llm_scraper",
+    "task_get",
+    "advanced",
+    "10091929-6590-0626-0000-dc2981ecace1"
+   ],
+   "data": {
+    "api": "ai_optimization",
+    "function": "llm_scraper",
+    "se": "chat_gpt",
+    "keyword": "charter bus rental",
+    "location_code": 2840,
+    "language_code": "en",
+    "force_web_search": true,
+    "tag": "rt-f-0-0",
+    "device": "desktop",
+    "os": "windows"
+   },
+   "result": [
+    {
+     "keyword": "charter bus rental",
+     "location_code": 2840,
+     "language_code": "en",
+     "model": "gpt-6",
+     "check_url": "https://chatgpt.com/?prompt=charter%20bus%20rental&hints=search",
+     "datetime": "2026-10-09 19:30:44 +00:00",
+     "markdown": "Here are some charter bus rental options in the Dallas\u2013Fort Worth area, with contact information and estimated prices to help you compare.\n\n## Charter bus rental companies near Dallas\n\n![Transportation Services | Dallas By Chocolate](https://images.openai.com/static-rsc-4/Z5emBX1SCouoFJrCY3kDWJpyOO3OXivzKAC_K78oDvGHUaRkS2oxhiHsUPh7KSTso3CKnZN6iPQhe76CC9n4pr1cV82CCORm8S6Upq3B-Kqn8Mc4jnK8ebFS89S25bwjd8fjh69x2fiRWmx3jDfKJPeObxl6G3CvMal5wcCI8IHaNEzqExYVHmGactkhuvZd?purpose=fullsize)\n\n**Bus USA Dallas Fort Worth**\n\nDallas, TX \u00b7 4.5/5 (40 reviews)\n\nCharter buses and motorcoaches for group travel, sp",
+     "search_results": [
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.dallascharterbusrentals.com/charter-bus-rates?utm_source=chatgpt.com",
+       "domain": "www.dallascharterbusrentals.com",
+       "title": "Charter Bus Rates | Dallas Charter Bus Rentals",
+       "description": "RATES  (469) 567-9401    TRANSPARENT\u00a0PRICING  When you work with Dallas Charter Bus Rentals, you can count on up-front communication about charter bus costs and pricing. We offer free, no-obligation...",
+       "breadcrumb": "dallascharterbusrentals.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.dallascharterbuscompany.com/charter-bus-prices?utm_source=chatgpt.com",
+       "domain": "www.dallascharterbuscompany.com",
+       "title": "Charter Bus Rates | Dallas Charter Bus Company",
+       "description": "CALCULATING THE COST OF A DALLAS CHARTER BUS RENTAL  We do things differently at Dallas Charter Bus Company. We make it fast and easy to get a fully transparent price quote on a charter bus rental in...",
+       "breadcrumb": "dallascharterbuscompany.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://dallascoachbuscompany.com/?utm_source=chatgpt.com",
+       "domain": "dallascoachbuscompany.com",
+       "title": "Dallas Charter Bus Rentals | Quote in 30 Seconds",
+       "description": "RELAX WITH MODERN DALLAS CHARTER BUS AMENITIES  * ### Reclining Seats  * ### Onboard Restroom  * ### Individual Climate Control  * ### Onboard Wi-Fi  * ### Power Outlets  * ### Overhead Storage  * ###...",
+       "breadcrumb": "dallascoachbuscompany.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://dallascoachbuscompany.com/dallas-charter-bus-prices/?utm_source=chatgpt.com",
+       "domain": "dallascoachbuscompany.com",
+       "title": "Dallas Charter Bus Pricing & Rates | Instant Online Pricing",
+       "description": "DALLAS CHARTER BUS PRICING & RATES  For easy, instant pricing on a charter bus rental in Dallas, Texas, you are in the right place! The cost of renting a bus is not one-size-fits-all \u2014 your group siz...",
+       "breadcrumb": "dallascoachbuscompany.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.metropolitanshuttle.com/dallas-charter-bus-cost/?utm_source=chatgpt.com",
+       "domain": "www.metropolitanshuttle.com",
+       "title": "Dallas charter bus cost: 2026 pricing, real quotes - Metropolitan Shuttle",
+       "description": "CHARTER BUS PRICES IN DALLAS (2026): 4 REAL TRIPS COMPARED  A single charter bus by Metropolitan Shuttle in the Dallas metro typically runs $650 to $2,000 depending on vehicle size and how long you h...",
+       "breadcrumb": "metropolitanshuttle.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.dallascharterbusservices.com/charter-bus-prices/?utm_source=chatgpt.com",
+       "domain": "www.dallascharterbusservices.com",
+       "title": "Charter Bus Prices - Dallas Charter Bus Services",
+       "description": "UNDERSTAND YOUR DALLAS BUS Rental Costs  (972) 885-6230  One of the most important parts of planning your group trip in Dallas will be knowing the costs of your bus rental service and setting your bu...",
+       "breadcrumb": "dallascharterbusservices.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.dallastexaspartybus.com/?utm_source=chatgpt.com",
+       "domain": "www.dallastexaspartybus.com",
+       "title": "Party Bus & Charter Bus Rentals in Dallas | Dallastexaspartybus.com",
+       "description": "TVs and Entertainment Systems  Amenities listed above are just common types of features available on party buses. Because we are a lead referral website and do not directly own or operate buses, exac...",
+       "breadcrumb": "dallastexaspartybus.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.partybusindallas.net/?utm_source=chatgpt.com",
+       "domain": "www.partybusindallas.net",
+       "title": "Dallas Party Bus & Charter Bus Rentals | Partybusindallas.net",
+       "description": "TVs and Entertainment Systems  Amenities listed above are common features that MAY be available on party buses. Because we are a referral website and do NOT own or operate buses, exact features vary...",
+       "breadcrumb": "partybusindallas.net"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://busrentaldallastx.com/?utm_source=chatgpt.com",
+       "domain": "busrentaldallastx.com",
+       "title": "Bus Rental Dallas TX - Charter, Party & Shuttle Buses",
+       "description": "Dallas-Fort Worth Bus Rentals  ONE CALL. ONE BUS COMPANY. The Right Price.  You need a bus. Maybe it's a charter for a corporate retreat to Austin. Maybe it's a party bus for a bachelor party on Deep...",
+       "breadcrumb": "busrentaldallastx.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://busrentaldallastx.com/bus-rental-cost-dallas/?utm_source=chatgpt.com",
+       "domain": "busrentaldallastx.com",
+       "title": "Bus Rental Cost Dallas - 2026 Pricing Guide",
+       "description": "Serving Dallas-Fort Worth \u00b7 All Occasions (615) 619-6182  (615) 619-6182  Pricing Guide  BUS RENTAL COST IN DALLAS \u2014 2026 RATES  Every rate below includes the bus, a professional CDL driver, fuel and...",
+       "breadcrumb": "busrentaldallastx.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.dallaspartybuses.co/40-56-passenger-charter-bus/?utm_source=chatgpt.com",
+       "domain": "www.dallaspartybuses.co",
+       "title": "Dallas Charter Bus Rental | Get Online Quotes",
+       "description": "DALLAS CHARTER BUS RENTAL  Moving a large group across Dallas \u2014 whether that's 400 employees shuttling between the Kay Bailey Hutchison Convention Center and hotel blocks along Commerce Street, or 50...",
+       "breadcrumb": "dallaspartybuses.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://longviewcharterbuscompany.com/dallas-charter-bus/?utm_source=chatgpt.com",
+       "domain": "longviewcharterbuscompany.com",
+       "title": "Dallas Charter Bus Rentals | Quote in 30 Seconds",
+       "description": "RELAX WITH MODERN DALLAS CHARTER BUS AMENITIES  * ### Reclining Seats  * ### Onboard Restroom  * ### Individual Climate Control  * ### Onboard Wi-Fi  * ### Power Outlets  * ### Overhead Storage  * ###...",
+       "breadcrumb": "longviewcharterbuscompany.com"
+      }
+     ],
+     "sources": [
+      {
+       "type": "chat_gpt_source",
+       "title": "Charter Bus Rates",
+       "snippet": null,
+       "domain": "www.dallascharterbusrentals.com",
+       "url": "https://www.dallascharterbusrentals.com/charter-bus-rates",
+       "thumbnail": null,
+       "source_name": "Dallas Charter Bus Rentals",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Charter Bus Rates",
+       "snippet": null,
+       "domain": "www.dallascharterbuscompany.com",
+       "url": "https://www.dallascharterbuscompany.com/charter-bus-prices",
+       "thumbnail": null,
+       "source_name": "Dallas Charter Bus Company",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Dallas Charter Bus Pricing & Rates",
+       "snippet": null,
+       "domain": "dallascoachbuscompany.com",
+       "url": "https://dallascoachbuscompany.com/dallas-charter-bus-prices/",
+       "thumbnail": null,
+       "source_name": "Instant Online Pricing",
+       "publication_date": null,
+       "markdown": null
+      }
+     ],
+     "fan_out_queries": [
+      "charter bus rental Dallas Texas companies pricing"
+     ],
+     "brand_entities": [
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Bus USA Dallas Fort Worth",
+       "category": "local_business",
+       "markdown": "Bus USA Dallas Fort Worth",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Premier Transportation Services",
+       "category": "local_business",
+       "markdown": "Premier Transportation Services",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Roadrunner Charters",
+       "category": "local_business",
+       "markdown": "Roadrunner Charters",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Overland Charters",
+       "category": "local_business",
+       "markdown": "Overland Charters",
+       "urls": null
+      }
+     ],
+     "se_results_count": 0,
+     "item_types": [
+      "chat_gpt_text",
+      "chat_gpt_images",
+      "chat_gpt_table",
+      "chat_gpt_local_businesses"
+     ],
+     "items_count": 13,
+     "items": [
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 1,
+       "rank_absolute": 1,
+       "markdown": "Here are some charter bus rental options in the Dallas\u2013Fort Worth area, with contact information and estimated prices to",
+       "sources": null,
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 1,
+       "rank_absolute": 2,
+       "markdown": "![Transportation Services | Dallas By Chocolate](https://images.openai.com/static-rsc-4/Z5emBX1SCouoFJrCY3kDWJpyOO3OXivz",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://dallasbychocolate.com/services/transportation",
+         "alt": "Transportation Services | Dallas By Chocolate",
+         "image_url": "https://images.openai.com/static-rsc-4/Z5emBX1SCouoFJrCY3kDWJpyOO3OXivzKAC_K78oDvGHUaRkS2oxhiHsUPh7KSTso3CKnZN6iPQhe76CC9n4pr1cV82CCORm8S6Upq3B-Kqn8Mc4jnK8ebFS89S25bwjd8fjh69x2fiRWmx3jDfKJPeObxl6G3CvMal5wcCI8IHaNEzqExYVHmGactkhuvZd?purpose=fullsize",
+         "markdown": "![Transportation Services | Dallas By Chocolate](https://images.openai.com/static-rsc-4/Z5emBX1SCouoFJrCY3kDWJpyOO3OXivzKAC_K78oDvGHUaRkS2oxhiHsUPh7KSTso3CKnZN6iPQhe76CC9n4pr1cV82CCORm8S6Upq3B-Kqn8Mc4jnK8ebFS89S25bwjd8fjh69x2fiRWmx3jDfKJPeObxl6G3CvMal5wcCI8IHaNEzqExYVHmGactkhuvZd?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 2,
+       "rank_absolute": 3,
+       "markdown": "\n\n**Bus USA Dallas Fort Worth**\n\nDallas, TX \u00b7 4.5/5 (40 reviews)\n\nCharter buses and motorcoaches for group travel, sport",
+       "sources": null,
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Bus USA Dallas Fort Worth",
+         "category": "local_business",
+         "markdown": "Bus USA Dallas Fort Worth",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 2,
+       "rank_absolute": 4,
+       "markdown": "![Premier Transportation | FIFA World Cup Dallas](https://images.openai.com/static-rsc-4/kkXom1jLenVle-dmilX-m_nZ8upRQ0i",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.premierofdallas.com/fifa-world-cup-2026",
+         "alt": "Premier Transportation | FIFA World Cup Dallas",
+         "image_url": "https://images.openai.com/static-rsc-4/kkXom1jLenVle-dmilX-m_nZ8upRQ0iY_AW3ovf4IR7LabHomcMU-F0gW5h77X4zUAC3L5tOM1HYR6N-Ee8TnhFFnpWE_dzckWdrQ8eRL6k5RELXpoL6bz3T1VtGMBVXzscmU1nTQENo9RXMHdAjCVeOpZBvCeCDBStIwuRQHyUfzHU2Az0j5y49TRRsYXC9?purpose=fullsize",
+         "markdown": "![Premier Transportation | FIFA World Cup Dallas](https://images.openai.com/static-rsc-4/kkXom1jLenVle-dmilX-m_nZ8upRQ0iY_AW3ovf4IR7LabHomcMU-F0gW5h77X4zUAC3L5tOM1HYR6N-Ee8TnhFFnpWE_dzckWdrQ8eRL6k5RELXpoL6bz3T1VtGMBVXzscmU1nTQENo9RXMHdAjCVeOpZBvCeCDBStIwuRQHyUfzHU2Az0j5y49TRRsYXC9?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 3,
+       "rank_absolute": 5,
+       "markdown": "\n\n**Premier Transportation Services**\n\nDallas, TX \u00b7 4.5/5 (67 reviews)\n\nGroup transportation and motorcoach services for",
+       "sources": null,
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Premier Transportation Services",
+         "category": "local_business",
+         "markdown": "Premier Transportation Services",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 3,
+       "rank_absolute": 6,
+       "markdown": "![Roadrunner Charters, 8972 Trinity Blvd, Hurst, TX 76053, US - MapQuest](https://images.openai.com/static-rsc-4/myf6SvU",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.mapquest.com/us/texas/roadrunner-charters-355764700",
+         "alt": "Roadrunner Charters, 8972 Trinity Blvd, Hurst, TX 76053, US - MapQuest",
+         "image_url": "https://images.openai.com/static-rsc-4/myf6SvUJ3tZb07jSvVwxb00sBMwBSMrmwuzSk0f_jU2LYUPPrMIsaTmAntf1hpEmIjBP3H7T_PEal7qiDzEa0HG7Em7EDDa2pfvjWANthUN0q4cYc_ktHtpO7KX6Y1HM0Q-f56LfYSFlTAszObjfc6A0zBcOvP3BCfJ5X4BQpz1UVtsCoT9YjgP00_req-9V?purpose=fullsize",
+         "markdown": "![Roadrunner Charters, 8972 Trinity Blvd, Hurst, TX 76053, US - MapQuest](https://images.openai.com/static-rsc-4/myf6SvUJ3tZb07jSvVwxb00sBMwBSMrmwuzSk0f_jU2LYUPPrMIsaTmAntf1hpEmIjBP3H7T_PEal7qiDzEa0HG7Em7EDDa2pfvjWANthUN0q4cYc_ktHtpO7KX6Y1HM0Q-f56LfYSFlTAszObjfc6A0zBcOvP3BCfJ5X4BQpz1UVtsCoT9YjgP00_req-9V?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 4,
+       "rank_absolute": 7,
+       "markdown": "\n\n**Roadrunner Charters**\n\nHurst, TX \u00b7 DFW area\n\nPrivate group transportation for trips around Texas and beyond.\n\n817-51",
+       "sources": null,
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Roadrunner Charters",
+         "category": "local_business",
+         "markdown": "Roadrunner Charters",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 4,
+       "rank_absolute": 8,
+       "markdown": "![Explore Our Luxury Fleet | SUVs, Sprinters, Mini Buses | Onyx Black Car](https://images.openai.com/static-rsc-4/Li-1WC",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.onyxblackcar.com/fleet",
+         "alt": "Explore Our Luxury Fleet | SUVs, Sprinters, Mini Buses | Onyx Black Car",
+         "image_url": "https://images.openai.com/static-rsc-4/Li-1WCYmm71pBrxU_fvnHe5UkFoq3FBp78OSrYImv-8klFK7tQe0x5-daLe2kui7yf_LWqP7RdgX-2q9AtY-3BmkWkyRwyB5izDmjayiiZNrYz24reAkf8cni3wdY5vHPo-IERh8CnMIKMAntokLZBXZRcL3VCsnhhKluGVP-xfPtkaAVPzu8RD6Yc55WuLw?purpose=fullsize",
+         "markdown": "![Explore Our Luxury Fleet | SUVs, Sprinters, Mini Buses | Onyx Black Car](https://images.openai.com/static-rsc-4/Li-1WCYmm71pBrxU_fvnHe5UkFoq3FBp78OSrYImv-8klFK7tQe0x5-daLe2kui7yf_LWqP7RdgX-2q9AtY-3BmkWkyRwyB5izDmjayiiZNrYz24reAkf8cni3wdY5vHPo-IERh8CnMIKMAntokLZBXZRcL3VCsnhhKluGVP-xfPtkaAVPzu8RD6Yc55WuLw?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 5,
+       "rank_absolute": 9,
+       "markdown": "\n\n**Overland Charters**\n\nIrving, TX \u00b7 5.0/5 (11 reviews)\n\nA local option for multi-day tours, school groups, corporate t",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Charter Bus Rates",
+         "snippet": null,
+         "domain": "www.dallascharterbusrentals.com",
+         "url": "https://www.dallascharterbusrentals.com/charter-bus-rates",
+         "thumbnail": null,
+         "source_name": "Dallas Charter Bus Rentals",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Charter Bus Rates",
+         "snippet": null,
+         "domain": "www.dallascharterbuscompany.com",
+         "url": "https://www.dallascharterbuscompany.com/charter-bus-prices",
+         "thumbnail": null,
+         "source_name": "Dallas Charter Bus Company",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Dallas Charter Bus Pricing & Rates",
+         "snippet": null,
+         "domain": "dallascoachbuscompany.com",
+         "url": "https://dallascoachbuscompany.com/dallas-charter-bus-prices/",
+         "thumbnail": null,
+         "source_name": "Instant Online Pricing",
+         "publication_date": null,
+         "markdown": null
+        }
+       ],
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Overland Charters",
+         "category": "local_business",
+         "markdown": "Overland Charters",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_table",
+       "rank_group": 1,
+       "rank_absolute": 10,
+       "text": null,
+       "markdown": "| Vehicle | Estimated hourly cost |\n|--------|--------|\n| Minibus, roughly 15\u201335 passengers | \\$125\u2013\\$250+ |\n| Full-size",
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 6,
+       "rank_absolute": 11,
+       "markdown": "\nThese are planning estimates, not confirmed quotes. Minimum rental hours, mileage, driver costs, tolls, and parking may",
+       "sources": null,
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_local_businesses",
+       "rank_group": 1,
+       "rank_absolute": 12,
+       "markdown": null,
+       "items": [
+        {
+         "type": "chat_gpt_local_businesses_element",
+         "title": "Bus USA Dallas Fortworth",
+         "description": "Transportation service",
+         "address": "1075 Griffin St W Ste 204, Dallas, TX 75215, United States",
+         "phone": "+1 214-748-5466",
+         "reviews_count": 40,
+         "url": "https://www.bususa.net/",
+         "domain": "www.bususa.net",
+         "rating": {
+          "rating_type": "Max5",
+          "value": 4.5,
+          "votes_count": 40,
+          "rating_max": 5
+         }
+        },
+        {
+         "type": "chat_gpt_local_businesses_element",
+         "title": "Premier Transportation Services",
+         "description": "Limousine service",
+         "address": "4525 Production Dr, Dallas, TX 75235, United States",
+         "phone": "+1 214-351-7000",
+         "reviews_count": 67,
+         "url": "https://www.premierofdallas.com/",
+         "domain": "www.premierofdallas.com",
+         "rating": {
+          "rating_type": "Max5",
+          "value": 4.5,
+          "votes_count": 67,
+          "rating_max": 5
+         }
+        },
+        {
+         "type": "chat_gpt_local_businesses_element",
+         "title": "Roadrunner Charters",
+         "description": "Bus charter",
+         "address": "8972 Trinity Blvd, Hurst, TX 76053, United States",
+         "phone": "+1 817-510-6700",
+         "reviews_count": 5,
+         "url": "http://www.roadrunnercharters.com/",
+         "domain": "www.roadrunnercharters.com",
+         "rating": {
+          "rating_type": "Max5",
+          "value": 3.4,
+          "votes_count": 5,
+          "rating_max": 5
+         }
+        },
+        {
+         "type": "chat_gpt_local_businesses_element",
+         "title": "OVERLAND CHARTERS",
+         "description": "Bus charter",
+         "address": "301 N Belt Line Rd, Irving, TX 75061, United States",
+         "phone": "+1 214-790-1987",
+         "reviews_count": 11,
+         "url": "http://www.overlandcharters.com/",
+         "domain": "www.overlandcharters.com",
+         "rating": {
+          "rating_type": "Max5",
+          "value": 5,
+          "votes_count": 11,
+          "rating_max": 5
+         }
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 7,
+       "rank_absolute": 13,
+       "markdown": "\n\n## Let me narrow down the best options\n\nWhere will your group be traveling from, and approximately how many passengers",
+       "sources": null,
+       "brand_entities": null
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

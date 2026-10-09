@@ -1,0 +1,116 @@
+{
+ "version": "0.1.20260917",
+ "status_code": 20000,
+ "status_message": "Ok.",
+ "time": "0.0134 sec.",
+ "cost": 0,
+ "tasks_count": 1,
+ "tasks_error": 0,
+ "tasks": [
+  {
+   "id": "10091917-6590-0626-0000-f8e6b368bc86",
+   "status_code": 20000,
+   "status_message": "Ok.",
+   "time": "0.0089 sec.",
+   "cost": 0,
+   "result_count": 1,
+   "path": [
+    "v3",
+    "ai_optimization",
+    "chat_gpt",
+    "llm_scraper",
+    "task_get",
+    "advanced",
+    "10091917-6590-0626-0000-f8e6b368bc86"
+   ],
+   "data": {
+    "api": "ai_optimization",
+    "function": "llm_scraper",
+    "se": "chat_gpt",
+    "keyword": "Who wrote Pride and Prejudice?",
+    "location_code": 2840,
+    "language_code": "en",
+    "force_web_search": false,
+    "tag": "probe-9",
+    "device": "desktop",
+    "os": "windows"
+   },
+   "result": [
+    {
+     "keyword": "Who wrote Pride and Prejudice?",
+     "location_code": 2840,
+     "language_code": "en",
+     "model": "gpt-6",
+     "check_url": "https://chatgpt.com/?prompt=Who%20wrote%20Pride%20and%20Prejudice%3F",
+     "datetime": "2026-10-09 19:18:08 +00:00",
+     "markdown": "**Jane Austen** wrote *Pride and Prejudice*, first published in 1813.\n\n\n\nIt is a classic English novel that follows Elizabeth Bennet and Mr. Darcy as they navigate love, social class, and misunderstandings in early 19th-century England. \ud83d\udcda",
+     "search_results": null,
+     "sources": null,
+     "fan_out_queries": null,
+     "brand_entities": [
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "English novelist",
+       "category": "people",
+       "markdown": "Jane Austen",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "1813 novel by Jane Austen",
+       "category": "book",
+       "markdown": "Pride and Prejudice",
+       "urls": null
+      }
+     ],
+     "se_results_count": 0,
+     "item_types": [
+      "chat_gpt_text",
+      "chat_gpt_images"
+     ],
+     "items_count": 3,
+     "items": [
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 1,
+       "rank_absolute": 1,
+       "markdown": "**Jane Austen** wrote *Pride and Prejudice*, first published in 1813.\n\n",
+       "sources": null,
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "English novelist",
+         "category": "people",
+         "markdown": "Jane Austen",
+         "urls": null
+        },
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "1813 novel by Jane Austen",
+         "category": "book",
+         "markdown": "Pride and Prejudice",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 1,
+       "rank_absolute": 2,
+       "markdown": null,
+       "items": []
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 2,
+       "rank_absolute": 3,
+       "markdown": "\n\nIt is a classic English novel that follows Elizabeth Bennet and Mr. Darcy as they navigate love, social class, and mis",
+       "sources": null,
+       "brand_entities": null
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
