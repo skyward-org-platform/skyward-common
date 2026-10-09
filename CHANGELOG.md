@@ -8,6 +8,32 @@ A version only reaches consumers when a **GitHub Release** is published. Tagging
 not publish anything (see `.github/workflows/publish.yml`, which triggers on
 `release: [published]`).
 
+## [1.6.2] - 2026-10-09
+
+Full notes: [docs/releases/v1.6.2.md](docs/releases/v1.6.2.md)
+
+A new DataForSEO endpoint: ChatGPT fan-out queries. Additive; no existing call changes.
+
+### Added
+- **`client.ai_optimization_chat_gpt_llm_scraper`.** Prompts in, the search queries ChatGPT
+  ran while answering ("fan-out") out, plus the answer, cited sources, retrieved results,
+  brand entities and local businesses. Queue mode (`post_all`, $0.0012 a prompt, 100 per
+  request), collector mode, and live mode (`live_all`, $0.004 a prompt).
+- **Table `DataForSEO.ai_optimization-chat_gpt-llm_scraper`** and two views,
+  `..._queries` (one row per distinct fan-out query) and `..._sources` (one row per cited
+  page). One row per task, including failed, refused and empty ones.
+- **`fanout_prompt_id(text)`**, the join key for a prompt.
+- **`in_llm_scraper`** location flag. The scraper is country level only.
+- `_post(..., timeout=)` for slow live endpoints; default unchanged.
+
+### Changed
+- A run for an endpoint with no entry in the rate card now prints a warning that the
+  balance guard is off, instead of skipping it silently.
+
+### Not tied to a client
+- This endpoint takes no `domain` or `domain_id`. The same prompt can serve several
+  clients, so rows are keyed by `prompt_id` and the two domain columns are always NULL.
+
 ## [1.6.1] - 2026-09-16
 
 Full notes: [docs/releases/v1.6.1.md](docs/releases/v1.6.1.md)

@@ -2,7 +2,7 @@
 
 When you submit a standard-mode pull with the collector enabled (`use_collector=True`), the call **returns immediately** — it posts the tasks to DataForSEO, records them in BigQuery, and exits. An always-on **collector service** then drains the results from DataForSEO into the canonical BigQuery tables in the background. This guide shows how to track a run's progress and know when it's done.
 
-> Applies to the collector-mode endpoints: `serp_google_organic` and `keywords_data_google_ads_search_volume`. (Legacy in-process `post_all` — `use_collector=False`, the default — blocks and returns a DataFrame instead; this guide is for collector mode.)
+> Applies to the collector-mode endpoints: `serp_google_organic`, `keywords_data_google_ads_search_volume` and (from v1.6.2, once the collector VM runs that version) `ai_optimization_chat_gpt_llm_scraper`. (Legacy in-process `post_all` — `use_collector=False`, the default — blocks and returns a DataFrame instead; this guide is for collector mode.)
 
 ## TL;DR
 
