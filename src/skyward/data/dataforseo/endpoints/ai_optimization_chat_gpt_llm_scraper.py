@@ -449,8 +449,7 @@ class AiOptimizationChatGptLlmScraper(BaseEndpoint):
             raise RuntimeError(
                 f"[{self.ENDPOINT_KEY}] Destination table {table} is missing or unreadable "
                 f"({e!r}). Nothing was sent. Create it with: python "
-                f"scripts/migrate_dataforseo_tables.py --phase setup --only "
-                f"{self.TABLE_NAME} --yes") from e
+                f"scripts/create_dfs_fanout_table.py --yes") from e
 
     def _check_language(self, language_code: str) -> None:
         if self._languages is None:

@@ -404,6 +404,105 @@ KEYWORDS_DATA_SEARCH_VOLUME_COLS = """\
   monthly_searches STRING OPTIONS(description="Stringified JSON array of the last 12 months of search history, each element {year, month, search_volume}.")
 """
 
+# The ChatGPT fan-out table is the one table not tied to a client: the same prompt can
+# serve several clients, so the two domain columns exist (the standard block is kept) but
+# are always NULL. Rows are keyed by prompt_id instead.
+AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_METADATA_SQL = METADATA_BLOCK_SQL.replace(
+    'domain_id INT64 OPTIONS(description="Foreign key to Meta.domains. Set by the caller\'s domain= or domain_id= argument; nullable if caller opted out (domain=None). Cluster field."),',
+    'domain_id INT64 OPTIONS(description="Always NULL in this table. A prompt is not tied to one client; link prompts to clients on prompt_id."),',
+).replace(
+    'domain STRING OPTIONS(description="Canonical domain string (from Meta.domains lookup). Represents caller context, not per-row API data."),',
+    'domain STRING OPTIONS(description="Always NULL in this table. See domain_id."),',
+).replace(
+    'task_id STRING OPTIONS(description="DataForSEO task ID (tasks[0].id) from the API response that produced this row. Nullable for legacy rows."),',
+    'task_id STRING OPTIONS(description="DataForSEO task ID. One row per task, so this is the row key. NULL only for a prompt that was never sent (see status_message)."),',
+)
+
+AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_COLS = """\
+  prompt_id STRING OPTIONS(description="Join key for the prompt: first 16 hex characters of SHA-256 over the NFC-normalised, stripped prompt text (skyward.data.dataforseo.fanout_prompt_id). Independent of location and language. Cluster field."),
+  prompt STRING OPTIONS(description="The prompt as supplied by the caller, NFC-normalised and stripped. Sent to ChatGPT verbatim."),
+  location_code INT64 OPTIONS(description="DataForSEO location code sent. This endpoint is country level only; a prompt with no place name gets a random city of the country in its fan-out."),
+  language_code STRING OPTIONS(description="Language code sent (e.g. en, es-419)."),
+  force_web_search BOOL OPTIONS(description="Whether ChatGPT was forced to search the web for this task. Unforced runs return no fan-out for questions the model answers from memory."),
+  attempt INT64 OPTIONS(description="Which run of this prompt within the job: 1..samples are the requested samples, higher numbers are retries of a run that returned no fan-out."),
+  status_code INT64 OPTIONS(description="DataForSEO task status (20000 = ok). NULL when the prompt was never sent or the request got no usable response; status_message says why."),
+  status_message STRING OPTIONS(description="DataForSEO task status message, or the local reason a prompt was not sent or not answered (too long, timeout possibly billed, ...)."),
+  model STRING OPTIONS(description="Model the ChatGPT web UI served the answer with. It cannot be chosen."),
+  answered_at TIMESTAMP OPTIONS(description="When ChatGPT produced the answer (result.datetime)."),
+  fan_out_count INT64 OPTIONS(description="Number of fan-out queries. NULL when ChatGPT returned none (it did not search) or the task failed."),
+  source_count INT64 OPTIONS(description="Number of distinct pages the answer cited."),
+  search_result_count INT64 OPTIONS(description="Number of distinct pages ChatGPT retrieved while answering, cited or not."),
+  brand_entity_count INT64 OPTIONS(description="Number of brands, people or organisations named in the answer."),
+  local_business_count INT64 OPTIONS(description="Number of businesses in the answer's local business block (ChatGPT's version of the local pack)."),
+  answer_chars INT64 OPTIONS(description="Length of the answer in characters, kept even when answer_markdown is not stored."),
+  answer_markdown STRING OPTIONS(description="The full answer as markdown. NULL when the caller passed store_answer=False."),
+  item_types STRING OPTIONS(description="Stringified JSON array of the block types in the answer (chat_gpt_text, chat_gpt_table, chat_gpt_images, chat_gpt_local_businesses, chat_gpt_products, ...)."),
+  fan_out_queries STRING OPTIONS(description="Stringified JSON array of the search queries ChatGPT ran while answering. A sample, not a fixed set: repeat runs reword it. NULL when none. Use the _queries view for one row per query."),
+  sources STRING OPTIONS(description="Stringified JSON array of cited pages: {position, url, domain, title, source_name, publication_date, citation_count}. citation_count is how many answer blocks cite the page. Use the _sources view for one row per source."),
+  search_results STRING OPTIONS(description="Stringified JSON array of retrieved pages, de-duplicated by url: {position, url, domain, title}."),
+  brand_entities STRING OPTIONS(description="Stringified JSON array of named entities: {name, description, category}."),
+  local_businesses STRING OPTIONS(description="Stringified JSON array of local business listings: {title, domain, url, address, phone, rating, reviews_count}.")
+"""
+
+AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_TABLE = "ai_optimization-chat_gpt-llm_scraper"
+
+
+def fanout_view_statements(project: str, dataset: str = "DataForSEO") -> list[tuple[str, str]]:
+    """(name, CREATE OR REPLACE VIEW ...) for the two views over the fan-out table."""
+    table = f"`{project}.{dataset}.{AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_TABLE}`"
+    queries = f"{AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_TABLE}_queries"
+    sources = f"{AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_TABLE}_sources"
+    return [
+        (queries, f"""\
+CREATE OR REPLACE VIEW `{project}.{dataset}.{queries}`
+OPTIONS(description="One row per distinct fan-out query per prompt, location and language, across every run of that prompt. runs_with_query / runs_total says how often a query showed up.")
+AS
+WITH runs AS (
+  SELECT prompt_id, location_code, language_code, COUNT(DISTINCT task_id) AS runs_total
+  FROM {table}
+  WHERE status_code = 20000
+  GROUP BY prompt_id, location_code, language_code
+)
+SELECT
+  t.prompt_id,
+  ANY_VALUE(t.prompt) AS prompt,
+  t.location_code,
+  t.language_code,
+  query,
+  COUNT(DISTINCT t.task_id) AS runs_with_query,
+  ANY_VALUE(r.runs_total) AS runs_total,
+  MIN(t.answered_at) AS first_seen_at,
+  MAX(t.answered_at) AS last_seen_at
+FROM {table} AS t
+CROSS JOIN UNNEST(JSON_VALUE_ARRAY(t.fan_out_queries)) AS query
+JOIN runs AS r USING (prompt_id, location_code, language_code)
+WHERE t.fan_out_queries IS NOT NULL
+GROUP BY t.prompt_id, t.location_code, t.language_code, query"""),
+        (sources, f"""\
+CREATE OR REPLACE VIEW `{project}.{dataset}.{sources}`
+OPTIONS(description="One row per page cited in a ChatGPT answer, per task.")
+AS
+SELECT
+  t.job_id,
+  t.task_id,
+  t.prompt_id,
+  t.prompt,
+  t.location_code,
+  t.language_code,
+  t.attempt,
+  t.answered_at,
+  CAST(JSON_VALUE(s, '$.position') AS INT64) AS position,
+  JSON_VALUE(s, '$.url') AS url,
+  JSON_VALUE(s, '$.domain') AS source_domain,
+  JSON_VALUE(s, '$.title') AS title,
+  JSON_VALUE(s, '$.source_name') AS source_name,
+  SAFE.PARSE_TIMESTAMP('%Y-%m-%d %H:%M:%S %Ez', JSON_VALUE(s, '$.publication_date')) AS publication_date,
+  CAST(JSON_VALUE(s, '$.citation_count') AS INT64) AS citation_count
+FROM {table} AS t
+CROSS JOIN UNNEST(JSON_QUERY_ARRAY(t.sources)) AS s
+WHERE t.sources IS NOT NULL"""),
+    ]
+
 
 MIGRATIONS: list[Migration] = [
     Migration(
@@ -476,5 +575,14 @@ MIGRATIONS: list[Migration] = [
         old_name="keyword_data-google_ads-search_volume",
         new_name="keywords_data-google_ads-search_volume",
         new_schema=METADATA_BLOCK_SQL + KEYWORDS_DATA_SEARCH_VOLUME_COLS,
+    ),
+    Migration(
+        # New table, never tied to a domain: cluster on the prompt instead.
+        # Create it with scripts/create_dfs_fanout_table.py.
+        old_name=None,
+        new_name=AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_TABLE,
+        new_schema=(AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_METADATA_SQL
+                    + AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_COLS),
+        clustering_fields=("prompt_id", "job_id"),
     ),
 ]
