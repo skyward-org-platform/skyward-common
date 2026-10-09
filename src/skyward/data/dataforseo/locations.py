@@ -24,11 +24,17 @@ SOURCES: tuple[tuple[str, str], ...] = (
     ("in_serp", "serp/google/locations"),
     ("in_google_ads", "keywords_data/google_ads/locations"),
     ("in_labs", "dataforseo_labs/locations_and_languages"),
+    ("in_llm_scraper", "ai_optimization/chat_gpt/llm_scraper/locations"),
 )
 FLAGS = tuple(flag for flag, _ in SOURCES)
+# Flags added after the catalog table was first created. Until the table has the column
+# and a refresh has filled it, such a flag is "unknown" (never blocks a run) and the
+# older flags must keep working exactly as before.
+OPTIONAL_FLAGS = ("in_llm_scraper",)
+CORE_FLAGS = tuple(f for f in FLAGS if f not in OPTIONAL_FLAGS)
 LOCATION_COLUMNS = [
     "location_code", "location_name", "location_code_parent", "country_iso_code",
-    "location_type", "in_serp", "in_google_ads", "in_labs", "available_languages",
+    "location_type", *FLAGS, "available_languages",
     "refreshed_at",
 ]
 _TEXT_FIELDS = ("location_name", "location_code_parent", "country_iso_code", "location_type")
@@ -44,8 +50,8 @@ def merge_location_lists(lists: dict[str, list[dict]], refreshed_at) -> pd.DataF
             row = merged.setdefault(int(code), {
                 "location_code": int(code), "location_name": None,
                 "location_code_parent": None, "country_iso_code": None,
-                "location_type": None, "in_serp": False, "in_google_ads": False,
-                "in_labs": False, "available_languages": None, "refreshed_at": refreshed_at,
+                "location_type": None, **{f: False for f in FLAGS},
+                "available_languages": None, "refreshed_at": refreshed_at,
             })
             row[flag] = True
             for key in _TEXT_FIELDS:
@@ -132,21 +138,42 @@ class LocationCatalog:
             return None
         from google.cloud import bigquery
 
-        sql = (f"SELECT (SELECT COUNT(*) FROM `{self._table()}`) AS total_rows, "
-               f"LOGICAL_OR(in_serp) AS in_serp, LOGICAL_OR(in_google_ads) AS in_google_ads, "
-               f"LOGICAL_OR(in_labs) AS in_labs "
-               f"FROM `{self._table()}` WHERE location_code = @code")
         cfg = bigquery.QueryJobConfig(query_parameters=[
             bigquery.ScalarQueryParameter("code", "INT64", code)])
-        try:
-            df = bq.client.query(sql, job_config=cfg).result().to_dataframe()
-        except Exception as e:  # noqa: BLE001 - never block a run on the catalog
-            logger.warning("Location catalog read failed: %r", e)
+        df = None
+        last_error: Exception | None = None
+        # Try with the optional flag columns first; a table created before they existed
+        # fails that read, so fall back to the core flags alone.
+        for flags in (FLAGS, CORE_FLAGS):
+            try:
+                df = bq.client.query(self._support_sql(flags), job_config=cfg).result().to_dataframe()
+                break
+            except Exception as e:  # noqa: BLE001 - never block a run on the catalog
+                last_error = e
+        if df is None:
+            logger.warning("Location catalog read failed: %r", last_error)
             return None
         if df.empty or not int(df.iloc[0]["total_rows"] or 0):
             return None
-        row = df.iloc[0]
-        return {f: (False if pd.isna(row[f]) else bool(row[f])) for f in FLAGS}
+        row = df.iloc[0].to_dict()
+
+        def _flag(f: str) -> bool | None:
+            value = row.get(f)
+            if f in OPTIONAL_FLAGS:
+                known = row.get(f"{f}_known")
+                if known is None or pd.isna(known) or not int(known):
+                    return None  # column missing or never filled: unknown, do not block
+            return False if value is None or pd.isna(value) else bool(value)
+
+        return {f: _flag(f) for f in FLAGS}
+
+    def _support_sql(self, flags: tuple[str, ...]) -> str:
+        table = self._table()
+        cols = [f"(SELECT COUNT(*) FROM `{table}`) AS total_rows"]
+        cols += [f"LOGICAL_OR({f}) AS {f}" for f in flags]
+        cols += [f"(SELECT COUNTIF({f} IS NOT NULL) FROM `{table}`) AS {f}_known"
+                 for f in flags if f in OPTIONAL_FLAGS]
+        return f"SELECT {', '.join(cols)} FROM `{table}` WHERE location_code = @code"
 
     def get(self, *, location_type: str | None = None, country_iso_code: str | None = None,
             supported_by: str | None = None, location_code: int | None = None) -> list[dict]:

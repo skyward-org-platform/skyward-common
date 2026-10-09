@@ -84,6 +84,7 @@ class CostEstimator:
         self._rates: dict | None = None
         self._observed: dict | None = None
         self._lock = threading.Lock()
+        self._warned_no_rate: set[tuple[str, str]] = set()
 
     def rates(self) -> dict[tuple[str, str], Rate]:
         with self._lock:
@@ -100,6 +101,16 @@ class CostEstimator:
     def estimate(self, plan: RunPlan) -> CostEstimate:
         rate = self.rates().get((plan.endpoint, plan.endpoint_mode))
         if rate is None:
+            # A zero estimate makes check_balance return early, so a missing rate switches
+            # the balance guard off for the run. Say so, once per endpoint and mode.
+            key = (plan.endpoint, plan.endpoint_mode)
+            if key not in self._warned_no_rate:
+                self._warned_no_rate.add(key)
+                msg = (f"[{plan.endpoint}] No DataForSEO rate for endpoint_mode="
+                       f"{plan.endpoint_mode!r}: the cost estimate is $0 and the balance "
+                       f"guard is OFF for this run. Add it to cost_rates.DEFAULT_RATES.")
+                print(f"WARNING: {msg}")
+                logger.warning(msg)
             return CostEstimate(0.0, 0.0, 0.0, "no_rate", plan)
         return price_plan(plan, rate, self.observed().get((plan.endpoint, plan.endpoint_mode)))
 

@@ -24,9 +24,14 @@ def _client(bq=None):
 
 
 def test_merge_sets_flags_and_languages():
-    df = merge_location_lists({"in_serp": SERP, "in_google_ads": ADS, "in_labs": LABS},
+    df = merge_location_lists({"in_serp": SERP, "in_google_ads": ADS, "in_labs": LABS,
+                               "in_llm_scraper": [{"location_code": 2840,
+                                                   "location_name": "United States"}]},
                               pd.Timestamp("2026-09-15", tz="UTC"))
     assert list(df.columns) == LOCATION_COLUMNS
+    assert "in_llm_scraper" in LOCATION_COLUMNS
+    flags = dict(zip(df["location_code"], df["in_llm_scraper"]))
+    assert bool(flags[2840]) is True and bool(flags[200528]) is False
     us = df[df["location_code"] == 2840].iloc[0]
     assert (bool(us["in_serp"]), bool(us["in_google_ads"]), bool(us["in_labs"])) == (True, True, True)
     assert json.loads(us["available_languages"]) == [{"language_code": "en"}]
@@ -37,7 +42,10 @@ def test_merge_sets_flags_and_languages():
 
 def _stub_lists(client, lists):
     urls = {"serp/google/locations": lists[0], "keywords_data/google_ads/locations": lists[1],
-            "dataforseo_labs/locations_and_languages": lists[2]}
+            "dataforseo_labs/locations_and_languages": lists[2],
+            "ai_optimization/chat_gpt/llm_scraper/locations": (
+                lists[3] if len(lists) > 3 else [{"location_code": 2840,
+                                                  "location_name": "United States"}])}
 
     def _get(url, *a, **k):
         for path, rows in urls.items():
@@ -145,3 +153,62 @@ def test_find_location_name_uses_cache():
     bq = FakeBigQueryClient()
     bq.client.queue_result(pd.DataFrame([SERP[0]]))
     assert _client(bq).find_location_name(2840) == "United States"
+
+
+# ----- in_llm_scraper: a flag added after the table existed -----
+
+class _FailsOnNewColumn:
+    """A catalog table created before in_llm_scraper existed: selecting it errors."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.project = inner.project
+        self.attempts: list[str] = []
+
+    def query(self, sql, job_config=None):
+        self.attempts.append(sql)
+        if "in_llm_scraper" in sql:
+            raise RuntimeError("Unrecognized name: in_llm_scraper")
+        return self._inner.query(sql, job_config=job_config)
+
+
+def test_old_table_without_the_new_column_keeps_core_flags_working():
+    bq = FakeBigQueryClient()
+    bq.client.queue_result(pd.DataFrame([{"total_rows": 10, "in_serp": True,
+                                          "in_google_ads": False, "in_labs": False}]))
+    bq.client = _FailsOnNewColumn(bq.client)
+    cat = _client(bq).locations
+    assert cat.is_supported(2840, "in_serp") is True
+    assert cat.is_supported(2840, "in_google_ads") is False       # still blocks
+    assert cat.is_supported(2840, "in_llm_scraper") is None       # unknown: never blocks
+    assert len(bq.client.attempts) == 2
+
+
+def test_new_column_present_but_never_refreshed_is_unknown():
+    bq = FakeBigQueryClient()
+    bq.client.queue_result(pd.DataFrame([{
+        "total_rows": 10, "in_serp": True, "in_google_ads": True, "in_labs": True,
+        "in_llm_scraper": None, "in_llm_scraper_known": 0}]))
+    cat = _client(bq).locations
+    assert cat.is_supported(2840, "in_llm_scraper") is None
+    assert cat.is_supported(2840, "in_serp") is True
+
+
+def test_new_column_filled_blocks_codes_the_scraper_does_not_list():
+    bq = FakeBigQueryClient()
+    bq.client.queue_result(pd.DataFrame([{
+        "total_rows": 10, "in_serp": True, "in_google_ads": True, "in_labs": True,
+        "in_llm_scraper": False, "in_llm_scraper_known": 192}]))
+    bq.client.queue_result(pd.DataFrame([{
+        "total_rows": 10, "in_serp": True, "in_google_ads": True, "in_labs": True,
+        "in_llm_scraper": True, "in_llm_scraper_known": 192}]))
+    cat = _client(bq).locations
+    assert cat.is_supported(1014221, "in_llm_scraper") is False   # a city
+    assert cat.is_supported(2840, "in_llm_scraper") is True
+
+
+def test_support_sql_asks_whether_the_optional_flag_was_ever_filled():
+    bq = FakeBigQueryClient()
+    _client(bq).locations.is_supported(2840, "in_serp")
+    sql = bq.client.queries[0]["sql"]
+    assert "COUNTIF(in_llm_scraper IS NOT NULL)" in sql and "LOGICAL_OR(in_labs)" in sql
