@@ -98,12 +98,18 @@ class LocationCatalog:
             raise RuntimeError("refresh_locations requires a BigQuery client.")
         lists = self.fetch_lists()
         empty = [flag for flag, rows in lists.items() if not rows]
-        if empty:
+        blocking = [flag for flag in empty if flag in CORE_FLAGS]
+        if blocking:
             raise RuntimeError(
-                f"DataForSEO returned no locations for {empty}; refusing to overwrite "
+                f"DataForSEO returned no locations for {blocking}; refusing to overwrite "
                 f"{DATASET}.{LOCATIONS_TABLE}.")
         ts = pd.Timestamp.now("UTC")
         df = merge_location_lists(lists, ts)
+        for flag in empty:
+            # An optional list that could not be read must not stop the refresh for the
+            # core lists, and must not read as "supported nowhere": NULL means unknown.
+            logger.warning("DataForSEO returned no locations for %s; leaving it unknown.", flag)
+            df[flag] = pd.array([pd.NA] * len(df), dtype="boolean")
         cfg = bigquery.LoadJobConfig(write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE)
         bq.client.load_table_from_dataframe(df, self._table(), job_config=cfg).result()
         try:

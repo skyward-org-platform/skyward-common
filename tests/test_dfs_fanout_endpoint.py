@@ -53,6 +53,10 @@ class FakeScraper:
         self.never_ready: set[str] = set()
         self.release_per_poll: int | None = None
         self.live_hook = None                  # (task, call_number) -> None | response dict
+        self.post_hook = None                  # (payload, call_number) -> None | response
+        self.get_hook = None                   # (task_id, task, call_number) -> None | response
+        self.unlisted: set[str] = set()        # prompts that never show up in tasks_ready
+        self._get_counts: dict[str, int] = {}
         self.live_delay = 0.0
         self.active = 0
         self.max_active = 0
@@ -87,6 +91,10 @@ class FakeScraper:
         with self._lock:
             self.posts.append((url, json, timeout))
         if url.endswith("/task_post"):
+            if self.post_hook is not None:
+                custom = self.post_hook(json, len(self.task_posts()))
+                if custom is not None:
+                    return custom
             tasks = []
             for task in json:
                 tid = self._task_id()
@@ -135,7 +143,8 @@ class FakeScraper:
                                                 {"language_code": "es-419"}]}]})
         if url.endswith("/tasks_ready"):
             waiting = [tid for tid, t in self.tasks.items()
-                       if tid not in self.collected and self.prompt_of(t) not in self.never_ready]
+                       if tid not in self.collected and self.prompt_of(t) not in self.never_ready
+                       and self.prompt_of(t) not in self.unlisted]
             if self.release_per_poll is not None:
                 waiting = waiting[:self.release_per_poll]
             return _Resp({"tasks": [{"result": [{"id": tid} for tid in waiting] or None}]})
@@ -144,6 +153,12 @@ class FakeScraper:
         if task is None:
             return _Resp({"tasks": [{"id": tid, "status_code": 40401,
                                      "status_message": "Task Not Found."}]})
+        with self._lock:
+            self._get_counts[tid] = n = self._get_counts.get(tid, 0) + 1
+        if self.get_hook is not None:
+            custom = self.get_hook(tid, task, n)
+            if custom is not None:
+                return custom
         if self.prompt_of(task) in self.never_ready:
             return _Resp({"tasks": [{"id": tid, "status_code": 40602,
                                      "status_message": "Task In Queue.", "data": dict(task)}]})
@@ -208,7 +223,9 @@ def test_endpoint_identity(ep):
     (dict(endpoint_mode="standard"), 3, 250, 250),
     (dict(endpoint_mode="standard", samples=3), 8, 750, 750),
     (dict(endpoint_mode="standard", priority=2), 3, 500, 250),
-    (dict(endpoint_mode="standard", retry_empty=1), 3, 250, 500),
+    (dict(endpoint_mode="standard", retry_empty=1), 3, 275, 275),
+    (dict(endpoint_mode="standard", retry_empty=3), 3, 275, 275),
+    (dict(endpoint_mode="standard", retry_empty=1, priority=2), 3, 550, 275),
     (dict(endpoint_mode="standard", retry_empty=1, force_web_search=False), 5, 500, 500),
     (dict(endpoint_mode="live"), 250, 250, 250),
     (dict(endpoint_mode="live", priority=2), 250, 250, 250),
@@ -374,7 +391,7 @@ def test_empty_fan_out_is_resubmitted_with_search_forced(ep, client, bq):
 
 def test_still_empty_after_retries_stops_and_keeps_every_attempt(ep, client):
     client._session.always_empty = {"p"}
-    df = ep.post(["p"], job_id=generate_job_id(), retry_empty=2)
+    df = ep.post(["p"], job_id=generate_job_id(), retry_empty=2, force_web_search=False)
     assert sorted(df["attempt"]) == [1, 2, 3] and df["fan_out_count"].isna().all()
     assert len(client._session.task_posts()) == 3
 
@@ -386,7 +403,8 @@ def test_default_does_not_retry_when_fan_out_is_present(ep, client):
 
 def test_samples_and_retry_attempt_numbers_do_not_collide(ep, client):
     client._session.always_empty = {"p"}
-    df = ep.post(["p", "q"], job_id=generate_job_id(), samples=3, retry_empty=1)
+    df = ep.post(["p", "q"], job_id=generate_job_id(), samples=3, retry_empty=1,
+                 force_web_search=False)
     assert sorted(df[df["prompt"] == "q"]["attempt"]) == [1, 2, 3]
     assert sorted(df[df["prompt"] == "p"]["attempt"]) == [1, 2, 3, 4, 5, 6]
     assert df["task_id"].is_unique
@@ -401,6 +419,7 @@ def test_timeout_keeps_collected_rows_and_names_what_is_left(client, bq):
         ep.post(prompts(10), job_id=generate_job_id(), poll_interval=0)
     assert len(info.value.task_ids) == 1
     assert info.value.prompts == ["prompt number 7"]
+    assert len(info.value.rows) == 9
     saved = pd.concat([l["df"] for l in data_loads(bq)])
     assert len(saved) == 9 and "prompt number 7" not in set(saved["prompt"])
     end = [r for r in job_runs(bq) if r["event"] == "end"][0]
@@ -446,19 +465,213 @@ def test_city_level_location_is_refused_by_the_catalog(ep, client):
     assert client._session.posts == []
 
 
-def test_transport_failure_at_submit_gives_rows_not_an_exception(ep, client):
-    client.config.max_retries = 1
-    client.config.retry_delay = 0
-    original = client._session.post
-
-    def flaky(url, json=None, timeout=None):
-        if url.endswith("/task_post"):
-            raise requests.ConnectionError("down")
-        return original(url, json=json, timeout=timeout)
-    client._session.post = flaky
+def test_submit_with_no_response_is_never_sent_again(ep, client, bq):
+    """A timeout may mean DataForSEO took the batch. Sending it again could pay twice."""
+    def hook(payload, n):
+        raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=60)")
+    client._session.post_hook = hook
     df = ep.post(prompts(2), job_id=generate_job_id())
+    assert len(client._session.task_posts()) == 1
     assert len(df) == 2 and df["status_code"].isna().all()
-    assert df["status_message"].str.contains("task_post failed").all()
+    assert df["status_message"].str.contains("may have been accepted and billed").all()
+    markers = [r for r in cost_rows(bq) if "unattributed_billed_retry" in r["price_inputs"]]
+    assert len(markers) == 1
+
+
+@pytest.mark.parametrize("status,sends", [(503, 2), (429, 2), (502, 2)])
+def test_submit_refused_before_any_work_is_sent_again(ep, client, status, sends):
+    slept = []
+    ep._sleep = slept.append
+
+    def hook(payload, n):
+        if n == 1:
+            return _Resp({}, status_code=status)
+    client._session.post_hook = hook
+    df = ep.post(prompts(3), job_id=generate_job_id())
+    assert len(client._session.task_posts()) == sends and len(slept) >= 1
+    assert (df["status_code"] == 20000).all() and len(df) == 3
+
+
+def test_submit_server_error_is_not_sent_again(ep, client):
+    client._session.post_hook = lambda payload, n: _Resp({}, status_code=500)
+    df = ep.post(prompts(2), job_id=generate_job_id())
+    assert len(client._session.task_posts()) == 1
+    assert df["status_message"].str.contains("may have been accepted").all()
+
+
+def test_submit_bad_request_is_reported_as_not_billed(ep, client, bq):
+    client._session.post_hook = lambda payload, n: _Resp({}, status_code=401)
+    df = ep.post(prompts(2), job_id=generate_job_id())
+    assert len(client._session.task_posts()) == 1
+    assert df["status_message"].str.contains("nothing was billed").all()
+    assert not [r for r in cost_rows(bq) if "unattributed_billed_retry" in r["price_inputs"]]
+
+
+def test_two_runs_at_once_do_not_disturb_each_other(ep, client):
+    client._session.release_per_poll = 7
+
+    async def both():
+        return await asyncio.gather(
+            ep.post_all([f"alpha {i}" for i in range(40)], job_id=generate_job_id()),
+            ep.post_all([f"beta {i}" for i in range(40)], job_id=generate_job_id()))
+    a, b = asyncio.run(both())
+    assert set(a["prompt"]) == {f"alpha {i}" for i in range(40)}
+    assert set(b["prompt"]) == {f"beta {i}" for i in range(40)}
+    assert (a["status_code"] == 20000).all() and (b["status_code"] == 20000).all()
+
+
+def test_unparseable_result_becomes_a_row_and_the_run_goes_on(ep, client, monkeypatch):
+    real = mod.parse_task
+
+    def picky(task, prompt=None):
+        if prompt == "prompt number 2":
+            raise AttributeError("'NoneType' object has no attribute 'get'")
+        return real(task, prompt=prompt)
+    monkeypatch.setattr(mod, "parse_task", picky)
+    df = ep.post(prompts(5), job_id=generate_job_id())
+    assert len(df) == 5
+    bad = df[df["prompt"] == "prompt number 2"].iloc[0]
+    assert "could not be parsed" in bad["status_message"] and bad["task_id"]
+    assert (df[df["prompt"] != "prompt number 2"]["fan_out_count"] == 2).all()
+
+
+def test_low_balance_during_collection_still_collects_everything_paid_for(ep, client, bq):
+    """All spend happens at submit. Stopping collection would strand paid tasks."""
+    from skyward.data.dataforseo import InsufficientBalanceError
+
+    calls = {"n": 0}
+
+    def balance(max_age_s=60.0):
+        calls["n"] += 1
+        return {"balance": 1000.0 if calls["n"] == 1 else 0.0001, "raw": {"ok": True}}
+    client.get_balance_cached = balance
+    client._session.always_empty = {"prompt number 449"}      # would normally be retried
+    with pytest.raises(InsufficientBalanceError) as info:
+        ep.post(prompts(450), job_id=generate_job_id())
+    assert len(info.value.rows) == 450
+    saved = pd.concat([l["df"] for l in data_loads(bq)])
+    assert len(saved) == 450 and saved["task_id"].is_unique
+    assert sum(len(p) for _, p in client._session.task_posts()) == 450    # no retry after the stop
+    end = [r for r in job_runs(bq) if r["event"] == "end"][0]
+    assert end["status"] == "stopped_low_balance"
+
+
+def test_error_after_submit_names_the_tasks_still_to_fetch(ep, client):
+    def hook(tid, task, n):
+        raise KeyboardInterrupt()
+    client._session.get_hook = hook
+    with pytest.raises(KeyboardInterrupt) as info:
+        ep.post(prompts(4), job_id=generate_job_id())
+    assert len(info.value.task_ids) == 4 and len(info.value.prompts) == 4
+
+
+def test_timeout_with_upload_off_hands_back_what_was_collected(client):
+    client.config.task_total_timeout = 0.4
+    ep = client.ai_optimization_chat_gpt_llm_scraper
+    ep._sleep = lambda s: time.sleep(0.05)
+    client._session.never_ready = {"prompt number 7"}
+    with pytest.raises(IncompleteTaskError) as info:
+        ep.post(prompts(10), job_id=generate_job_id(), poll_interval=0, upload=False)
+    assert len(info.value.rows) == 9 and len(info.value.task_ids) == 1
+
+
+def test_task_missing_from_tasks_ready_is_fetched_directly(ep, client):
+    """Something else (the collector, a lost response) can take a task off the list."""
+    ep.DIRECT_AFTER_S = 0
+    client._session.unlisted = {"prompt number 1"}
+    df = ep.post(prompts(3), job_id=generate_job_id())
+    assert len(df) == 3 and (df["fan_out_count"] == 2).all()
+
+
+def test_unlisted_task_is_not_asked_for_before_it_is_overdue(client):
+    client.config.task_total_timeout = 0.3
+    ep = client.ai_optimization_chat_gpt_llm_scraper
+    ep._sleep = lambda s: time.sleep(0.05)
+    client._session.unlisted = {"prompt number 1"}
+    with pytest.raises(IncompleteTaskError):
+        ep.post(prompts(3), job_id=generate_job_id(), poll_interval=0)
+    task_gets = [u for u in client._session.gets if "task_get" in u]
+    assert len(task_gets) == 2
+
+
+def test_direct_fetch_of_a_task_still_running_is_not_taken_as_an_empty_answer(ep, client):
+    """An OK status with no result yet must not trigger a paid retry."""
+    ep.DIRECT_AFTER_S = 0
+    client._session.unlisted = {"p"}
+
+    def hook(tid, task, n):
+        if n <= 2:
+            return _Resp({"tasks": [{"id": tid, "status_code": 20000, "status_message": "Ok.",
+                                     "data": dict(task), "result": None}]})
+    client._session.get_hook = hook
+    df = ep.post(["p"], job_id=generate_job_id(), retry_empty=1)
+    assert len(df) == 1 and df["fan_out_count"].tolist() == [2]
+    assert len(client._session.task_posts()) == 1
+
+
+def test_rate_limited_task_get_is_not_a_final_answer(ep, client):
+    def hook(tid, task, n):
+        if n == 1:
+            return _Resp({"tasks": [{"id": tid, "status_code": 40202,
+                                     "status_message": "Rate limit.", "data": dict(task)}]})
+    client._session.get_hook = hook
+    df = ep.post(prompts(3), job_id=generate_job_id())
+    assert len(df) == 3 and (df["status_code"] == 20000).all()
+
+
+def test_task_get_failing_three_times_gives_a_row(ep, client):
+    client.config.max_retries = 1
+
+    def hook(tid, task, n):
+        if FakeScraper.prompt_of(task) == "prompt number 0":
+            raise requests.ConnectionError("down")
+    client._session.get_hook = hook
+    df = ep.post(prompts(2), job_id=generate_job_id())
+    bad = df[df["prompt"] == "prompt number 0"].iloc[0]
+    assert "task_get failed three times" in bad["status_message"] and bad["task_id"]
+    assert df[df["prompt"] == "prompt number 1"]["fan_out_count"].tolist() == [2]
+
+
+def test_someone_elses_ready_tasks_are_ignored(ep, client):
+    original = client._session.get
+
+    def get(url, timeout=None):
+        resp = original(url, timeout=timeout)
+        if url.endswith("/tasks_ready"):
+            data = resp.json()
+            data["tasks"][0]["result"] = [{"id": "not-ours"}] + (data["tasks"][0]["result"] or [])
+        return resp
+    client._session.get = get
+    df = ep.post(prompts(3), job_id=generate_job_id())
+    assert len(df) == 3 and not any("not-ours" in u for u in client._session.gets)
+
+
+def test_forced_runs_retry_no_more_than_was_priced(ep, client, bq, capsys):
+    """Spend must not pass the estimate: 30 forced prompts price 3 retries, so 3 happen."""
+    client._session.always_empty = set(prompts(30))
+    df = ep.post(prompts(30), job_id=generate_job_id(), retry_empty=1)
+    assert len(df) == 33 and (df["attempt"] == 2).sum() == 3
+    spent = sum(r["cost_usd"] for r in cost_rows(bq))
+    start = [r for r in job_runs(bq) if r["event"] == "start"][0]
+    assert spent <= start["estimate_max_usd"]
+    assert "were not retried" in capsys.readouterr().out
+
+
+def test_unforced_runs_price_and_allow_every_retry(ep, client, bq):
+    client._session.always_empty = set(prompts(30))
+    df = ep.post(prompts(30), job_id=generate_job_id(), retry_empty=1, force_web_search=False)
+    assert len(df) == 60
+    start = [r for r in job_runs(bq) if r["event"] == "start"][0]
+    assert sum(r["cost_usd"] for r in cost_rows(bq)) <= start["estimate_max_usd"]
+
+
+def test_collect_reports_tasks_that_are_not_ready(ep, client):
+    client._session.never_ready = {"prompt number 0"}
+    client.config.task_total_timeout = 0
+    with pytest.raises(IncompleteTaskError) as info:
+        ep.post(prompts(1), job_id=generate_job_id())
+    out = ep.collect(info.value.task_ids, job_id=generate_job_id())
+    assert out.empty and out.attrs["not_ready"] == info.value.task_ids
 
 
 # ----- live mode -----
@@ -467,7 +680,7 @@ def test_live_one_request_per_prompt_with_the_long_timeout(ep, client, bq):
     df = asyncio.run(ep.live_all(prompts(5), job_id=generate_job_id()))
     live = client._session.live_posts()
     assert len(live) == 5 and all(len(j) == 1 for _, j, _ in live)
-    assert {t for _, _, t in live} == {180}
+    assert {t for _, _, t in live} == {(15, 180)}
     assert len(df) == 5 and (df["endpoint_mode"] == "live").all()
     assert (df["fan_out_count"] == 2).all() and df["domain_id"].isna().all()
     rows = cost_rows(bq)
@@ -503,19 +716,34 @@ def test_live_timeout_is_not_resent(ep, client, bq):
     sent = [FakeScraper.prompt_of(j[0]) for _, j, _ in client._session.live_posts()]
     assert sent.count("slow one") == 1
     slow = df[df["prompt"] == "slow one"].iloc[0]
-    assert "possibly billed" in slow["status_message"] and pd.isna(slow["status_code"])
+    assert "may have been accepted and billed" in slow["status_message"]
+    assert pd.isna(slow["status_code"])
     assert df[df["prompt"] == "fine"]["fan_out_count"].tolist() == [2]
     markers = [r for r in cost_rows(bq) if "unattributed_billed_retry" in r["price_inputs"]]
     assert len(markers) == 1 and markers[0]["cost_usd"] == 0.0
 
 
-def test_live_connection_failure_is_reported_not_called_a_timeout(ep, client):
+def test_live_dropped_connection_is_not_resent_either(ep, client, bq):
     def hook(task, n):
-        raise requests.ConnectionError("connection refused")
+        raise requests.ConnectionError("connection reset by peer")
     client._session.live_hook = hook
     df = ep.live(["p"], job_id=generate_job_id())
-    assert "Live request failed" in df.iloc[0]["status_message"]
+    assert "may have been accepted and billed" in df.iloc[0]["status_message"]
     assert len(client._session.live_posts()) == 1
+    assert len([r for r in cost_rows(bq) if "unattributed_billed_retry" in r["price_inputs"]]) == 1
+
+
+def test_live_one_failure_does_not_stop_the_other_prompts(ep, client, monkeypatch):
+    real = mod.AiOptimizationChatGptLlmScraper._live_call
+
+    def flaky(self, prompt, spec, opts, session):
+        if prompt == "prompt number 0":
+            raise RuntimeError("boom")
+        return real(self, prompt, spec, opts, session)
+    monkeypatch.setattr(mod.AiOptimizationChatGptLlmScraper, "_live_call", flaky)
+    with pytest.raises(RuntimeError, match="boom") as info:
+        ep.live(prompts(6), job_id=generate_job_id(), max_workers=2)
+    assert len(info.value.rows) == 5
 
 
 def test_live_rate_limit_backs_off_then_succeeds(ep, client):
@@ -575,7 +803,26 @@ def test_collector_submits_in_hundreds_and_tracks_without_a_domain(ep, client, m
     tag = captured["posted_tasks"][0]["keyword"]          # the collector's only handle
     assert parse_tag(tag)[0] is not None
     assert summary["total_tasks"] == 250 and summary["rejected_prompts"] == [""]
+    assert summary["not_posted"] == 0
     assert [u for u in client._session.gets if "task_get" in u or "tasks_ready" in u] == []
+
+
+def test_collector_mode_reports_and_records_a_chunk_that_was_not_accepted(
+        ep, client, bq, monkeypatch, capsys):
+    monkeypatch.setattr(mod, "submit_and_wait", lambda **k: {"total_tasks": len(k["posted_tasks"])})
+    client._session.reject = {"prompt number 5"}
+
+    def hook(payload, n):
+        if len(payload) == 50:
+            raise requests.exceptions.ReadTimeout("Read timed out.")
+    client._session.post_hook = hook
+    summary = ep.post(prompts(250), job_id=generate_job_id(), use_collector=True)
+    assert summary["total_tasks"] == 199 and summary["not_posted"] == 51
+    assert "prompt number 5" in summary["rejected_prompts"]
+    assert "51 of 250 task(s) were not accepted" in capsys.readouterr().out
+    saved = pd.concat([l["df"] for l in data_loads(bq)])       # the run saves its own rows
+    assert len(saved) == 51 and saved["fan_out_count"].isna().all()
+    assert (saved["status_code"] == 40501).sum() == 1
 
 
 def test_collector_mode_refuses_retries(ep, client):

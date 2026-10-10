@@ -63,7 +63,9 @@ def test_tag_round_trip():
 
 
 @pytest.mark.parametrize("tag", [None, "", "probe-3", "abc.1", "0123456789abcdef.x",
-                                 "0123456789abcdef.1.y", "0123456789abcdef.1.x.z"])
+                                 "0123456789abcdef.1.y", "0123456789abcdef.1.x.z",
+                                 "0123456789abcdeg.1", "0123456789ABCDEF.1",
+                                 "0123456789abcdef.\u00b2", "0123456789abcdef.1\n"])
 def test_foreign_tags_are_not_ours(tag):
     assert parse_tag(tag) == (None, None, True)
 
@@ -208,7 +210,7 @@ def test_citation_count_counts_answer_blocks_citing_the_url():
     }))
     sources = json.loads(row["sources"])
     assert [(s["url"], s["citation_count"]) for s in sources] == [
-        ("https://a.com/x", 2), ("https://b.com/", 1)]
+        ("https://a.com/x", 2), ("https://b.com/", 0)]
 
 
 @pytest.mark.parametrize("task", [
@@ -240,3 +242,22 @@ def test_local_row():
     assert set(row) == set(SCHEMA) | {"task_id"}
     assert row["status_code"] is None and row["status_message"] == "too long"
     assert row["task_id"] is None
+
+
+def test_list_fields_with_junk_elements_do_not_raise():
+    row = parse_task(_synthetic({
+        "fan_out_queries": ["q"], "markdown": "a",
+        "sources": [None, {"url": "https://a.com/"}, "junk"],
+        "search_results": [None, {"url": "https://b.com/"}],
+        "brand_entities": [None, {"title": "T", "markdown": "N"}],
+        "items": [None, {"type": "chat_gpt_local_businesses", "items": [None, {"title": "B"}]},
+                  {"type": "chat_gpt_text", "sources": [None]}],
+    }))
+    assert (row["source_count"], row["search_result_count"], row["brand_entity_count"],
+            row["local_business_count"]) == (1, 1, 1, 1)
+
+
+def test_null_location_in_result_does_not_wipe_what_was_sent():
+    row = parse_task(_synthetic({"fan_out_queries": ["q"], "markdown": "a",
+                                 "location_code": None, "language_code": None}))
+    assert (row["location_code"], row["language_code"]) == (2840, "en")

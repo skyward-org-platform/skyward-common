@@ -438,7 +438,7 @@ AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_COLS = """\
   answer_markdown STRING OPTIONS(description="The full answer as markdown. NULL when the caller passed store_answer=False."),
   item_types STRING OPTIONS(description="Stringified JSON array of the block types in the answer (chat_gpt_text, chat_gpt_table, chat_gpt_images, chat_gpt_local_businesses, chat_gpt_products, ...)."),
   fan_out_queries STRING OPTIONS(description="Stringified JSON array of the search queries ChatGPT ran while answering. A sample, not a fixed set: repeat runs reword it. NULL when none. Use the _queries view for one row per query."),
-  sources STRING OPTIONS(description="Stringified JSON array of cited pages: {position, url, domain, title, source_name, publication_date, citation_count}. citation_count is how many answer blocks cite the page. Use the _sources view for one row per source."),
+  sources STRING OPTIONS(description="Stringified JSON array of cited pages: {position, url, domain, title, source_name, publication_date, citation_count}. citation_count is how many times the answer cites the page (0 = listed as a source but not cited inline). Use the _sources view for one row per source."),
   search_results STRING OPTIONS(description="Stringified JSON array of retrieved pages, de-duplicated by url: {position, url, domain, title}."),
   brand_entities STRING OPTIONS(description="Stringified JSON array of named entities: {name, description, category}."),
   local_businesses STRING OPTIONS(description="Stringified JSON array of local business listings: {title, domain, url, address, phone, rating, reviews_count}.")
@@ -498,9 +498,14 @@ SELECT
   JSON_VALUE(s, '$.source_name') AS source_name,
   SAFE.PARSE_TIMESTAMP('%Y-%m-%d %H:%M:%S %Ez', JSON_VALUE(s, '$.publication_date')) AS publication_date,
   CAST(JSON_VALUE(s, '$.citation_count') AS INT64) AS citation_count
-FROM {table} AS t
-CROSS JOIN UNNEST(JSON_QUERY_ARRAY(t.sources)) AS s
-WHERE t.sources IS NOT NULL"""),
+FROM (
+  -- One row per task: a task collected twice (by a run and by the collector, or by
+  -- collect() run twice) must not double its sources.
+  SELECT * FROM {table}
+  WHERE sources IS NOT NULL
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY ingest_timestamp DESC, upload_id DESC) = 1
+) AS t
+CROSS JOIN UNNEST(JSON_QUERY_ARRAY(t.sources)) AS s"""),
     ]
 
 

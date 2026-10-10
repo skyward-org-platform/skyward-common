@@ -30,6 +30,7 @@ SCHEMA = [
 ]
 
 _NO_ANSWER_SUFFIX = "x"
+_TAG = re.compile(r"([0-9a-f]{%d})\.([0-9]{1,9})(\.x)?" % PROMPT_ID_LENGTH)
 _ESCAPED = re.compile(r"%(25|2B)")
 _TRACKING = ("utm_source", "chatgpt.com")
 
@@ -67,12 +68,10 @@ def make_tag(prompt_id: str, attempt: int, store_answer: bool = True) -> str:
 
 def parse_tag(tag) -> tuple[str | None, int | None, bool]:
     """(prompt_id, attempt, store_answer) from a tag; (None, None, True) when it isn't ours."""
-    parts = str(tag or "").split(".")
-    if len(parts) not in (2, 3) or len(parts[0]) != PROMPT_ID_LENGTH or not parts[1].isdigit():
+    m = _TAG.fullmatch(str(tag or ""))
+    if m is None:
         return None, None, True
-    if len(parts) == 3 and parts[2] != _NO_ANSWER_SUFFIX:
-        return None, None, True
-    return parts[0], int(parts[1]), len(parts) == 2
+    return m.group(1), int(m.group(2)), m.group(3) is None
 
 
 def clean_url(url) -> str | None:
@@ -97,16 +96,21 @@ def _title(value) -> str | None:
     return None if value is None else str(value)[:MAX_TITLE_CHARS]
 
 
+def _dicts(value) -> list[dict]:
+    """The dict elements of a list field; anything else in there is skipped."""
+    return [v for v in value or [] if isinstance(v, dict)] if isinstance(value, list) else []
+
+
 def _sources(result: dict) -> list[dict] | None:
     top = result.get("sources")
     if top is None:
         return None
     cited: Counter = Counter()
-    for item in result.get("items") or []:
-        for src in (item or {}).get("sources") or []:
+    for item in _dicts(result.get("items")):
+        for src in _dicts(item.get("sources")):
             cited[clean_url(src.get("url"))] += 1
     out, seen = [], set()
-    for src in top:
+    for src in _dicts(top):
         url = clean_url(src.get("url"))
         if url in seen:
             continue
@@ -115,7 +119,7 @@ def _sources(result: dict) -> list[dict] | None:
             "position": len(out) + 1, "url": url, "domain": src.get("domain"),
             "title": _title(src.get("title")), "source_name": src.get("source_name"),
             "publication_date": src.get("publication_date"),
-            "citation_count": cited.get(url) or 1,
+            "citation_count": cited.get(url, 0),
         })
     return out
 
@@ -125,7 +129,7 @@ def _search_results(result: dict) -> list[dict] | None:
     if top is None:
         return None
     out, seen = [], set()
-    for sr in top:
+    for sr in _dicts(top):
         url = clean_url(sr.get("url"))
         if url in seen:
             continue
@@ -140,7 +144,7 @@ def _brand_entities(result: dict) -> list[dict] | None:
     if top is None:
         return None
     out = []
-    for be in top:
+    for be in _dicts(top):
         # The docs put the brand name in `title`; in practice `markdown` holds the name
         # and `title` is often a descriptor ("Charter bus booking marketplace").
         name = be.get("markdown") or be.get("title")
@@ -152,11 +156,11 @@ def _brand_entities(result: dict) -> list[dict] | None:
 
 def _local_businesses(result: dict) -> list[dict] | None:
     out, found = [], False
-    for item in result.get("items") or []:
-        if (item or {}).get("type") != "chat_gpt_local_businesses":
+    for item in _dicts(result.get("items")):
+        if item.get("type") != "chat_gpt_local_businesses":
             continue
         found = True
-        for b in item.get("items") or []:
+        for b in _dicts(item.get("items")):
             rating = b.get("rating")
             out.append({
                 "title": _title(b.get("title")), "domain": b.get("domain"),
@@ -217,8 +221,8 @@ def parse_task(task: dict, *, prompt: str | None = None) -> dict:
     businesses = _local_businesses(result)
     answer = result.get("markdown")
     row.update({
-        "location_code": result.get("location_code", row["location_code"]),
-        "language_code": result.get("language_code", row["language_code"]),
+        "location_code": result.get("location_code") or row["location_code"],
+        "language_code": result.get("language_code") or row["language_code"],
         "model": result.get("model"),
         "answered_at": result.get("datetime"),
         "fan_out_count": None if fan_out is None else len(fan_out),

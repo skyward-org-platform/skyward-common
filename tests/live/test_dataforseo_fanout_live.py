@@ -42,7 +42,7 @@ def job_cost(client, job_id: str, expected: float, tracker, label: str) -> float
     total = 0.0
     for _ in range(6):
         df = client.get_job_cost(job_id, by="total")
-        total = 0.0 if df is None or df.empty else float(df.iloc[0]["cost_usd"] or 0)
+        total = 0.0 if df is None or df.empty else float(df.iloc[0]["total_cost_usd"] or 0)
         if total >= expected * 0.99:
             break
         time.sleep(5)
