@@ -51,9 +51,11 @@ def list_price_usd(plan: RunPlan, rate: Rate) -> float:
 
 
 # Units billed at a fixed price per unit the plan already counts (a SERP page per 10
-# results of depth). The list price is exact for these, while an observed per-request
-# average carries whatever depth past requests happened to use.
-_FIXED_PRICE_UNITS = frozenset({"serp_page"})
+# results of depth, a prompt sent to the ChatGPT scraper). The list price is exact for
+# these, while an observed per-request average carries whatever depth past requests
+# happened to use -- or, for the scraper, is really a per-task average (cost_log has one
+# row per task, a request carries up to 100), which under-prices a run a hundredfold.
+_FIXED_PRICE_UNITS = frozenset({"serp_page", "prompt_sent"})
 
 
 def price_plan(plan: RunPlan, rate: Rate, observed: dict | None = None) -> CostEstimate:
