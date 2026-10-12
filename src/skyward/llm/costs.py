@@ -24,6 +24,18 @@ OPENAI_COSTS: Dict[str, Tuple[float, float]] = {
     "gpt-5.1": (1.25, 10.00),
     "gpt-5.2": (1.75, 14.00),
     "gpt-5.2-pro": (21.00, 168.00),  # Reasoning model, ~12x more expensive
+    # GPT-5.6 family: standard tier, short context, from
+    # developers.openai.com/api/docs/pricing (fetched 2026-09-29). Batch/Flex are half
+    # these rates and Fast mode double; this table holds standard only.
+    # Cache writes bill 1.25x input for this family (sol 5.00, terra 2.50, luna 0.25,
+    # cyber 15.625); CACHE_WRITE_MULTIPLIER is provider-wide, so they are not modelled.
+    # Long context is published for sol only: 8.00 in / 0.80 cached / 30.00 out.
+    # The page gives no long-context rate for luna or terra.
+    # Sol is on promotional pricing "at least through November 21, 2026".
+    "gpt-5.6-sol": (4.00, 20.00),
+    "gpt-5.6-terra": (2.00, 12.00),
+    "gpt-5.6-luna": (0.20, 1.20),
+    "gpt-5.6-cyber": (12.50, 75.00),  # Cyber models table; no long-context rate
 }
 
 # Google Gemini pricing (per 1M tokens)
@@ -72,6 +84,8 @@ CACHED_INPUT_COSTS: Dict[str, float] = {
     # OpenAI
     "gpt-5": 0.125, "gpt-5-mini": 0.025, "gpt-5-nano": 0.005,
     "gpt-4o": 1.25, "gpt-4o-mini": 0.075,
+    # gpt-5.6 family (pricing page, fetched 2026-09-29)
+    "gpt-5.6-sol": 0.40, "gpt-5.6-terra": 0.20, "gpt-5.6-luna": 0.02, "gpt-5.6-cyber": 1.25,
     # Anthropic (cache read = 0.1x input)
     "claude-opus-4-8": 0.50, "claude-sonnet-4-6": 0.30, "claude-sonnet-4-5": 0.30,
     "claude-haiku-4-5-20251001": 0.10,

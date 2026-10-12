@@ -341,3 +341,35 @@ class TestGpt5FamilyPricing:
             cache_read_tokens=1_000_000, cache_write_tokens=1_000_000,
         )
         assert cost == pytest.approx(3.0 + 0.30 + 3.75)
+
+
+# GPT-5.6 family, standard tier, short context (developers.openai.com/api/docs/pricing,
+# fetched 2026-09-29): (input, cached input, output) per 1M tokens.
+GPT_5_6 = {
+    "gpt-5.6-sol": (4.00, 0.40, 20.00),
+    "gpt-5.6-terra": (2.00, 0.20, 12.00),
+    "gpt-5.6-luna": (0.20, 0.02, 1.20),
+    "gpt-5.6-cyber": (12.50, 1.25, 75.00),
+}
+
+
+@pytest.mark.parametrize("model", sorted(GPT_5_6))
+def test_gpt_5_6_family_prices_from_table_not_default(model):
+    inp, cached, out = GPT_5_6[model]
+    assert model in OPENAI_COSTS
+    assert calculate_cost(1_000_000, 1_000_000, model, "openai") == pytest.approx(inp + out)
+    # the OpenAI fallback is (2.50, 10.00); none of these may land on it
+    assert calculate_cost(1_000_000, 1_000_000, model, "openai") != pytest.approx(12.50)
+
+
+@pytest.mark.parametrize("model", sorted(GPT_5_6))
+def test_gpt_5_6_family_cache_read_rate(model):
+    inp, cached, out = GPT_5_6[model]
+    # 1M input of which 1M were cache reads: billed entirely at the cached rate
+    cost = calculate_cost(1_000_000, 0, model, "openai", cache_read_tokens=1_000_000)
+    assert cost == pytest.approx(cached)
+
+
+def test_gpt_5_6_luna_dated_snapshot_matches_family():
+    assert calculate_cost(1_000_000, 1_000_000, "gpt-5.6-luna-2026-09-01", "openai") \
+        == pytest.approx(0.20 + 1.20)

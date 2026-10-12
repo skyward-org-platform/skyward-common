@@ -1,3 +1,4 @@
+import pytest
 import pandas as pd
 
 from skyward.data.dataforseo import DataForSEOClient
@@ -40,6 +41,51 @@ def test_observed_ignored_below_minimum_samples():
     rate = rates_by_key()[("dataforseo_labs_google_ranked_keywords", "live")]
     est = price_plan(_plan(), rate, {"sample_requests": 3, "avg_cost_per_request": 0.05})
     assert est.basis == "list_price"
+
+
+def _serp_plan(keywords: int, depth: int, mode: str = "standard") -> RunPlan:
+    pages = -(-depth // 10)
+    return RunPlan(endpoint="serp_google_organic", endpoint_mode=mode,
+                   planned_requests=keywords, planned_items=keywords * pages,
+                   planned_max_rows=keywords * depth)
+
+
+# Observed standard-mode SERP spend at one (unknown) depth, as endpoint_cost_actuals
+# reports it: one average per request, with no record of how many pages each one billed.
+_SERP_OBSERVED = {"sample_requests": 1337, "avg_cost_per_request": 0.001887061}
+
+
+def test_serp_avg_rises_with_depth_even_with_observations():
+    rate = rates_by_key()[("serp_google_organic", "standard")]
+    avgs = [price_plan(_serp_plan(1527, d), rate, _SERP_OBSERVED).avg_usd
+            for d in (10, 30, 50)]
+    assert avgs[0] < avgs[1] < avgs[2]
+
+
+def test_serp_avg_never_exceeds_max():
+    for mode in ("standard", "live"):
+        rate = rates_by_key()[("serp_google_organic", mode)]
+        for depth in (10, 30, 50, 100):
+            est = price_plan(_serp_plan(1527, depth, mode), rate, _SERP_OBSERVED)
+            assert est.avg_usd <= est.max_usd, (mode, depth, est)
+
+
+def test_serp_avg_is_the_page_list_price():
+    """SERP bills a fixed price per page of depth, so the list price already scales with
+    the plan; a per-request average measured at some other depth does not."""
+    rate = rates_by_key()[("serp_google_organic", "standard")]
+    est = price_plan(_serp_plan(1527, 30), rate, _SERP_OBSERVED)
+    assert est.basis == "list_price"
+    assert est.avg_usd == round(1527 * 3 * 0.0006, 6)
+
+
+def test_observed_avg_above_list_buffer_lifts_max_to_match():
+    """An observed average above the buffered list price means the rate card is low; the
+    upper bound follows the evidence rather than sitting under the expected figure."""
+    rate = rates_by_key()[("dataforseo_labs_google_ranked_keywords", "live")]
+    est = price_plan(_plan(), rate, {"sample_requests": 50, "avg_cost_per_request": 1.0})
+    assert est.avg_usd == 3.0
+    assert est.max_usd >= est.avg_usd
 
 
 def test_estimator_falls_back_to_packaged_rates_when_table_empty():
@@ -117,3 +163,36 @@ def test_null_max_items_per_request_is_allowed_not_flagged():
     assert est.basis == "list_price"
     rate = estimator.rates()[("dataforseo_labs_google_ranked_keywords", "live")]
     assert rate.max_items_per_request is None   # row was accepted, not skipped
+
+
+def test_missing_rate_warns_once_that_the_balance_guard_is_off(capsys, caplog):
+    client = DataForSEOClient(username="u", password="p", bq_client=None)
+    est = CostEstimator(client)
+    with caplog.at_level("WARNING"):
+        est.estimate(_plan(endpoint="fake_endpoint"))
+        est.estimate(_plan(endpoint="fake_endpoint"))
+    out = capsys.readouterr().out
+    assert out.count("balance guard is OFF") == 1
+    assert sum("balance guard is OFF" in r.message for r in caplog.records) == 1
+
+
+def test_known_rate_does_not_warn(capsys):
+    client = DataForSEOClient(username="u", password="p", bq_client=None)
+    est = CostEstimator(client).estimate(_plan(endpoint="ai_optimization_chat_gpt_llm_scraper",
+                                               endpoint_mode="standard", planned_requests=1,
+                                               planned_items=100))
+    assert est.basis == "list_price" and est.list_price_usd == 0.12
+    assert "balance guard" not in capsys.readouterr().out
+
+
+def test_flat_per_prompt_price_ignores_observed_per_request_average():
+    """cost_log has one row per task, so the observed "per request" average for the
+    ChatGPT scraper is really per task; multiplying it by requests under-prices a run."""
+    from skyward.data.dataforseo.cost_rates import rates_by_key
+
+    rate = rates_by_key()[("ai_optimization_chat_gpt_llm_scraper", "standard")]
+    plan = _plan(endpoint="ai_optimization_chat_gpt_llm_scraper", endpoint_mode="standard",
+                 planned_requests=7, planned_items=620)
+    est = price_plan(plan, rate, {"sample_requests": 5000, "avg_cost_per_request": 0.0012})
+    assert est.basis == "list_price"
+    assert est.avg_usd == pytest.approx(0.744) and est.max_usd == pytest.approx(0.8184)

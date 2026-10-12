@@ -22,7 +22,7 @@ import pandas as pd
 
 from skyward.data.dataforseo.batch_uploader import BatchUploader, choose_upload_batch_rows
 from skyward.data.dataforseo.cost_log import (
-    COST_LOG_TABLE, CostLogWriter, cost_flush_every, extract_cost_records,
+    COST_LOG_TABLE, OK_STATUS_CODES, CostLogWriter, cost_flush_every, extract_cost_records,
     extract_unattributed_billed_retry_record,
 )
 from skyward.data.dataforseo.estimates import CostEstimate, RunPlan
@@ -72,6 +72,9 @@ class RunUnit:
         self.target = target
         self.records: list[dict] = []
         self._attempts: Counter = Counter()
+        # Keywords DataForSEO refused outright (40501 'keywords'), isolated by bisecting
+        # the batch; the rest of the batch was still fetched. Read by RunContext.close().
+        self.rejected_keywords: list[str] = []
 
     def record_http(self, url: str, payload, resp, http_status) -> None:
         records = extract_cost_records(url, payload, resp, http_status)
@@ -221,6 +224,10 @@ class RunContext:
         self._frames: list[pd.DataFrame] = []
         self._completed: list[str] = []
         self.save_failures: list[str] = []
+        # Tasks DataForSEO answered with a non-OK status, by status code, and keywords it
+        # rejected. Either one makes the job_runs end row "partial", not "completed".
+        self.failed_tasks: Counter = Counter()
+        self.rejected_keywords: list[str] = []
         self._stop_error: InsufficientBalanceError | None = None
         self._closing = False
         self._closed = False
@@ -406,6 +413,12 @@ class RunContext:
                                f"NOT saved to BigQuery.")
                     print(warning)
                     logger.error(warning)
+                elif self.failed_tasks or self.rejected_keywords:
+                    # Every target was attempted and nothing raised, but DataForSEO
+                    # refused some tasks: what came back is less than what was asked for.
+                    status = "partial"
+                    error_str = self._failure_summary()
+                    logger.warning("[%s] job %s: %s", self.endpoint, self.job_id, error_str)
                 else:
                     status = "completed"
                     error_str = None
@@ -429,6 +442,20 @@ class RunContext:
         return self._result
 
     # ----- internals -----
+
+    def _failure_summary(self) -> str:
+        with self._lock:
+            failed = dict(self.failed_tasks)
+            rejected = list(self.rejected_keywords)
+        codes = ", ".join(f"{c} x{n}" for c, n in sorted(failed.items()))
+        parts = []
+        if rejected:
+            shown = "; ".join(repr(k[:80]) for k in rejected[:5])
+            more = f" (+{len(rejected) - 5} more)" if len(rejected) > 5 else ""
+            parts.append(f"{len(rejected)} keyword(s) rejected by DataForSEO: {shown}{more}")
+        if failed:
+            parts.append(f"{sum(failed.values())} failed task(s), status codes {codes}")
+        return "; ".join(parts)[:1000]
 
     def _raise_if_stopped(self) -> None:
         if self._stop_error is not None:
@@ -454,6 +481,11 @@ class RunContext:
         spent = sum(r["cost_usd"] for r in unit.records)
         with self._lock:
             self.spent_usd += spent
+            for r in unit.records:
+                code = r.get("dfs_status_code")
+                if code is not None and code not in OK_STATUS_CODES:
+                    self.failed_tasks[code] += 1
+            self.rejected_keywords.extend(unit.rejected_keywords)
             if ok and mark_complete:
                 self._completed.extend(target_list(unit.target))
 

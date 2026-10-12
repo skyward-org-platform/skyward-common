@@ -366,7 +366,8 @@ class DataHub(MetaClient):
             "total_active": len(bq_table_names),
         }
 
-    def scan_datasets(self, prefixes: dict = None, full: bool = False) -> dict:
+    def scan_datasets(self, prefixes: dict = None, full: bool = False,
+                      prune: bool = False) -> dict:
         """Scan BQ datasets and update meta.dataset_catalog with type and hostname.
 
         Hybrid: dataset discovery + GA4 hostname resolution come from BigQuery
@@ -376,7 +377,20 @@ class DataHub(MetaClient):
             prefixes: Dict mapping type names to list of prefixes.
                       Defaults to MetaClient.DEFAULT_DATASET_PREFIXES.
             full: If True, scan ALL datasets (slow). If False, only scan
-                  datasets matching the prefix patterns (fast).
+                  datasets matching the prefix patterns (fast). `full` says
+                  how WIDE to look; it does not imply deletion.
+            prune: If True, also DELETE catalogue rows whose dataset is no
+                   longer in BigQuery. Off by default, and deliberately so:
+                   discovery and pruning are different intentions, and only
+                   one of them can break a foreign key.
+                   meta.data_access.dataset_id references
+                   dataset_catalog.dataset with no ON DELETE clause, so
+                   removing a row something points at RAISES rather than
+                   cascading. That is the safe direction -- a client's tools
+                   are never silently unlinked -- but it means a scan run
+                   simply to pick up a new dataset could fail part way on an
+                   unrelated stale row, having already upserted some of its
+                   work. Scoped to the scanned prefixes unless `full`.
 
         Returns:
             Dict mapping type names to lists of dataset info dicts.
@@ -396,6 +410,10 @@ class DataHub(MetaClient):
         unrecognized = []
         for ds in all_datasets:
             dataset_id = ds.dataset_id
+            # Ours, despite matching a client prefix. Skipped before the
+            # prefix test so it cannot be catalogued as somebody's data.
+            if dataset_id in self.DATASETS_THAT_ARE_OURS:
+                continue
             dataset_lower = dataset_id.lower()
             matched_type = None
             for prefix, ds_type in prefix_map:
@@ -450,9 +468,13 @@ class DataHub(MetaClient):
                 ds_info,
             )
 
-        # Remove catalog entries that no longer exist in BQ.
+        # Remove catalog entries that no longer exist in BQ -- ONLY when
+        # asked. See `prune` in the docstring for why this is not the
+        # default any more.
         all_bq_dataset_names = list({ds.dataset_id for ds in all_datasets})
-        if full:
+        if not prune:
+            pass
+        elif full:
             self.sb.execute(
                 "DELETE FROM meta.dataset_catalog WHERE dataset != ALL(%(datasets)s)",
                 {"datasets": all_bq_dataset_names},

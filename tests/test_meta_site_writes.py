@@ -165,3 +165,32 @@ def test_which_sites_use_a_dataset():
 
     assert len(df) == 2
     assert "meta.data_access" in sb.calls[0]["sql"]
+
+
+# ---- white label -------------------------------------------------------
+#
+# Adam, 2026-10-01. meta.site.white_label (migration meta_023) says whether
+# our work for a site ships under a partner's brand rather than Skyward's.
+# Phase 0 asks every time and Phases 1 and 2 read it.
+#
+# The column exists in the database; _SITE_FIELDS is an allow-list in front
+# of it, so a column the list does not name is refused even though it is
+# real. That is what these two cover.
+
+
+def test_upsert_site_accepts_white_label():
+    sb = FakeSb()
+    MetaClient(sb).upsert_site(domain_id=840, client_id=22,
+                               engagement_status="client", source="test",
+                               white_label=True)
+
+    assert "white_label" in sb.sql.lower()
+
+
+def test_update_site_accepts_white_label():
+    """Setting it on an existing site is the common path: every client
+    onboarded before the column existed holds null until somebody answers."""
+    sb = FakeSb()
+    MetaClient(sb).update_site(840, white_label=True)
+
+    assert "white_label" in sb.calls[0]["sql"].lower()

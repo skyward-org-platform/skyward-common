@@ -15,7 +15,35 @@ class MetaClient:
         "gsc": ["jepto_gsc_", "searchconsole_"],
         "gmb": ["jepto_gmb_"],
         "facebook": ["jepto_facebook_"],
+        # `gads_backfill` was already a dataset_type in the catalogue --
+        # twelve rows carried it -- so Ads datasets had been catalogued
+        # before by some route other than this vocabulary. The PREFIX was
+        # what was missing, so every scan left every client's Ads backfill
+        # out, and meta.data_access could not link one: dataset_id is a
+        # foreign key into the catalogue, so an uncatalogued dataset is
+        # refused by the constraint (insofast, 2026-09-24).
+        "gads_backfill": ["gads_backfill_"],
     }
+
+    # OUR OWN DATASETS THAT MATCH A CLIENT PREFIX. The bare `analytics_`
+    # prefix sweeps in our own modelled data: analytics_staging,
+    # analytics_mart and analytics_intermediate are dbt layers holding
+    # stg_*, mart_* and int_* tables, and the two portfolio datasets are
+    # our own rollups holding analytics_combined_data. None carries
+    # events_*, so none is a GA4 export, yet all five sat in the catalogue
+    # typed `ga4` where something could link one to a client as their
+    # analytics (found by the shape survey, 2026-10-02).
+    #
+    # EXACT NAMES, not a pattern. A client whose GA4 property id happened
+    # to contain "mart" must not be dropped, and a prefix rule here would
+    # be the same over-matching that caused this.
+    DATASETS_THAT_ARE_OURS = frozenset({
+        "analytics_staging",
+        "analytics_mart",
+        "analytics_intermediate",
+        "analytics_gcs_portfolio",
+        "analytics_tna_portfolio",
+    })
 
     def __init__(self, sb_client):
         self.sb = sb_client
@@ -882,13 +910,74 @@ class MetaClient:
 
         query = f"""
             SELECT dc.dataset, dc.dataset_type, dc.hostname,
-                   dc.is_standardized, dc.owner, dc.active, dc.updated_at
+                   dc.shape, dc.shape_checked_at, dc.shape_detail,
+                   dc.owner, dc.active, dc.updated_at
             FROM meta.dataset_catalog dc
             {where_clause}
             ORDER BY dc.dataset_type, dc.dataset
         """
 
         return self.sb.query(query, params)
+
+    def record_dataset_shapes(self, rows: list) -> int:
+        """Store what a shape survey read, for many datasets in ONE statement.
+
+        A dataset's shape is an OBSERVATION, not a property: a base-only
+        export gets expanded later and an expanded one can lose tables, so
+        this is re-runnable on purpose and is expected to move a value in
+        both directions.
+
+        Each row carries `dataset`, `shape`, `shape_checked_at` and
+        `shape_detail`. `shape_detail` is JSON-encoded here because the
+        column is jsonb and psycopg will not adapt a bare dict.
+
+        Batched deliberately. The catalogue holds ~105 rows and a survey
+        touches every readable one, so a per-row UPDATE would be 105
+        statements for one logical write.
+
+        Returns the number of rows sent.
+        """
+        import json as _json
+
+        if not rows:
+            return 0
+
+        values, params = [], {}
+        for i, row in enumerate(rows):
+            dataset = (row.get("dataset") or "").strip()
+            if not dataset:
+                raise ValueError(
+                    f"record_dataset_shapes: row {i} has no dataset. The "
+                    "dataset name is the key, and a blank one would match "
+                    "every row in the catalogue."
+                )
+            if not row.get("shape"):
+                raise ValueError(
+                    f"record_dataset_shapes: {dataset} has no shape. A read "
+                    "that failed is OUR outage and must not be stored as a "
+                    "shape at all."
+                )
+            values.append(
+                f"(%(dataset_{i})s, %(shape_{i})s, "
+                f"%(shape_checked_at_{i})s, %(shape_detail_{i})s)"
+            )
+            params[f"dataset_{i}"] = dataset
+            params[f"shape_{i}"] = row["shape"]
+            params[f"shape_checked_at_{i}"] = row.get("shape_checked_at")
+            params[f"shape_detail_{i}"] = _json.dumps(row.get("shape_detail") or {})
+
+        query = f"""
+            UPDATE meta.dataset_catalog AS dc
+               SET shape = v.shape,
+                   shape_checked_at = v.shape_checked_at::timestamptz,
+                   shape_detail = v.shape_detail::jsonb,
+                   updated_at = now()
+              FROM (VALUES {', '.join(values)})
+                   AS v(dataset, shape, shape_checked_at, shape_detail)
+             WHERE dc.dataset = v.dataset
+        """
+        self.sb.execute(query, params)
+        return len(rows)
 
     # ══════════════════════════════════════════════════════════════════════════
     # ─────────────────────────────────────────────────────────────────
@@ -1056,7 +1145,7 @@ class MetaClient:
         "title_brand_abbrev", "drive_client_folder_id",
         "drive_site_folder_id", "clickup_space_id", "clickup_folder_id",
         "clickup_list_id", "clickup_task_id", "account_manager",
-        "priority", "source", "notes",
+        "priority", "source", "notes", "white_label",
     )
 
     def upsert_site(self, domain_id: int, client_id: int,

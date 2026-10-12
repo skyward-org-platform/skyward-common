@@ -21,6 +21,53 @@ logger = logging.getLogger(__name__)
 DATASET = "DataForSEO"
 COST_LOG_TABLE = "cost_log"
 _TARGET_KEYS = ("keyword", "keywords", "target", "targets", "tag", "filters", "order_by")
+# 20000 = Ok (live), 20100 = Task Created (task_post). Anything else is a failed task.
+OK_STATUS_CODES = (20000, 20100)
+# The job_id cost rows carry when `_post` ran outside any run (no RunContext / RunUnit).
+UNATTRIBUTED_JOB_ID = "unattributed"
+
+
+def endpoint_key(url: str) -> str:
+    """'…/v3/dataforseo_labs/google/keyword_overview/live' -> 'dataforseo_labs_google_keyword_overview'.
+
+    The path up to the call verb (live / task_post / task_get), joined with '_' -- the same
+    key the endpoint classes write to cost_log.endpoint.
+    """
+    path = url.split("/v3/", 1)[-1].strip("/")
+    parts = []
+    for part in path.split("/"):
+        if part in ("live", "task_post", "task_get", "tasks_ready", "tasks_fixed"):
+            break
+        parts.append(part)
+    return "_".join(parts)
+
+
+def unattributed_cost_rows(url: str, payload, resp, http_status) -> list[dict]:
+    """Complete cost_log rows for a billed call made outside any run.
+
+    A direct `DataForSEOClient._post` (a probe, a script, another tool on the same
+    credentials) has no RunUnit to collect its cost, and so used to leave no trace in
+    cost_log while the account balance still dropped. These rows make that spend
+    visible: job_id 'unattributed', and `unattributed: true` in price_inputs.
+    """
+    records = extract_cost_records(url, payload, resp, http_status)
+    now = datetime.now(timezone.utc).isoformat()
+    rows = []
+    for r in records:
+        inputs = json.loads(r["price_inputs"])
+        inputs["unattributed"] = True
+        rows.append({
+            **r,
+            "price_inputs": json.dumps(inputs, default=str, sort_keys=True),
+            "attempt": 1,
+            "job_id": UNATTRIBUTED_JOB_ID,
+            "upload_id": None,
+            "endpoint": endpoint_key(url),
+            "endpoint_mode": "standard" if r["call_type"] == "task_post" else "live",
+            "client_id": None,
+            "ingest_timestamp": now,
+        })
+    return rows
 
 
 def classify_call(url: str, payload) -> str | None:
@@ -87,6 +134,12 @@ def extract_cost_records(url: str, payload, resp, http_status) -> list[dict]:
                 except (ValueError, TypeError):
                     logger.warning("DFS task cost is non-numeric: %r, using 0.0", cost_value)
                     cost_usd = 0.0
+            price_inputs = _price_inputs(task_payload)
+            if task.get("status_code") not in OK_STATUS_CODES:
+                # Why DataForSEO refused the task ("Invalid Field: 'keywords'.") -- without
+                # it a failed row says only that something failed. Kept in price_inputs
+                # (JSON) rather than a new column so cost_log needs no migration.
+                price_inputs["dfs_status_message"] = task.get("status_message")
             records.append({
                 "task_id": task.get("id"),
                 "call_type": call_type,
@@ -94,7 +147,7 @@ def extract_cost_records(url: str, payload, resp, http_status) -> list[dict]:
                 "dfs_status_code": task.get("status_code"),
                 "items_sent": _items_sent(task_payload),
                 "result_rows": _result_rows(task),
-                "price_inputs": json.dumps(_price_inputs(task_payload), default=str, sort_keys=True),
+                "price_inputs": json.dumps(price_inputs, default=str, sort_keys=True),
                 "cost_usd": cost_usd,
                 "requested_at": requested_at,
             })
