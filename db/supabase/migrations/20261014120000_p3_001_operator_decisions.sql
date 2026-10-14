@@ -73,6 +73,7 @@ create table p3.cluster_override (
     domain_id     bigint not null references meta.site(domain_id) on delete cascade,
     build_id      uuid not null,
     lane_key      text not null default 'national',
+    cluster_job_id text not null,
     kind          text not null check (kind in ('rename','move')),
     cluster_id    integer not null,
     keyword       text,
@@ -86,7 +87,7 @@ create table p3.cluster_override (
 );
 create unique index cluster_override_uniq on p3.cluster_override
     (domain_id, build_id, lane_key, kind, coalesce(keyword, ''), cluster_id);
-comment on table p3.cluster_override is 'A cluster label rename (kind=rename, cluster_id + label) or a keyword moved into a cluster (kind=move, keyword -> cluster_id), for ONE build only: cluster numbers change every clustering run.';
+comment on table p3.cluster_override is 'A cluster label rename (kind=rename, cluster_id + label) or a keyword moved into a cluster (kind=move, keyword -> cluster_id). Made on one build (build_id) and applied to every build of the same clustering run (cluster_job_id, per lane): cluster numbers change every clustering run, and a workbook re-run makes a new build of the same clusters.';
 create trigger log_change after insert or update or delete on p3.cluster_override
     for each row execute function pipeline.log_change();
 grant select on p3.cluster_override to dashboard_ro;
