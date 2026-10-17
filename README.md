@@ -93,7 +93,24 @@ Key per-endpoint knobs:
 - `limit_per_domain` / `page_size` (ranked_keywords) — how many keywords to pull and how many per paginated call
 - `upload=True/False` — toggle BigQuery write-through
 
-Standard (async) mode via `post_all()` is supported on `serp-google-organic` and `keywords_data-google_ads-search_volume`. All other endpoints are live-only.
+Standard (async) mode via `post_all()` is supported on `serp-google-organic`, `keywords_data-google_ads-search_volume` and `ai_optimization-chat_gpt-llm_scraper`. All other endpoints are live-only.
+
+### ChatGPT fan-out queries
+
+`client.ai_optimization_chat_gpt_llm_scraper` takes prompts and returns the search queries ChatGPT ran while answering each one, plus the answer, cited sources, retrieved results, brand entities and local businesses.
+
+```python
+ep = client.ai_optimization_chat_gpt_llm_scraper
+df = await ep.post_all(prompts, job_id=job_id)      # queue: $0.0012 a prompt
+df = await ep.live_all(prompts[:5], job_id=job_id)  # live: $0.004 a prompt
+```
+
+- No `domain` argument: rows are keyed by `prompt_id` (`fanout_prompt_id(text)`), since one prompt can serve several clients.
+- Web search is forced by default; without it, questions the model answers from memory return no fan-out.
+- Fan-out is a sample. `samples=N` runs each prompt N times, and the `..._queries` view unions the runs.
+- Location is country level only; put the place in the prompt to get local fan-out.
+
+Full notes: [docs/releases/v1.6.2.md](docs/releases/v1.6.2.md).
 
 ### Per-attempt debug logging (`include_debug_logs`)
 

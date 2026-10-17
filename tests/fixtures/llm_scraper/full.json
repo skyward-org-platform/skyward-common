@@ -1,0 +1,1300 @@
+{
+ "version": "0.1.20260917",
+ "status_code": 20000,
+ "status_message": "Ok.",
+ "time": "0.0572 sec.",
+ "cost": 0,
+ "tasks_count": 1,
+ "tasks_error": 0,
+ "tasks": [
+  {
+   "id": "10091917-6590-0626-0000-e7f5f56581da",
+   "status_code": 20000,
+   "status_message": "Ok.",
+   "time": "0.0478 sec.",
+   "cost": 0,
+   "result_count": 1,
+   "path": [
+    "v3",
+    "ai_optimization",
+    "chat_gpt",
+    "llm_scraper",
+    "task_get",
+    "advanced",
+    "10091917-6590-0626-0000-e7f5f56581da"
+   ],
+   "data": {
+    "api": "ai_optimization",
+    "function": "llm_scraper",
+    "se": "chat_gpt",
+    "keyword": "Compare the top corporate shuttle providers in the US for a 500-person company and explain what pricing model each one uses",
+    "location_code": 2840,
+    "language_code": "en",
+    "force_web_search": true,
+    "tag": "probe-5",
+    "device": "desktop",
+    "os": "windows"
+   },
+   "result": [
+    {
+     "keyword": "Compare the top corporate shuttle providers in the US for a 500-person company and explain what pricing model each one uses",
+     "location_code": 2840,
+     "language_code": "en",
+     "model": "gpt-6",
+     "check_url": "https://chatgpt.com/?prompt=Compare%20the%20top%20corporate%20shuttle%20providers%20in%20the%20US%20for%20a%20500-person%20company%20and%20explain%20what%20pricing%20model%20each%20one%20uses&hints=search",
+     "datetime": "2026-10-09 19:18:29 +00:00",
+     "markdown": "# Corporate shuttle providers in the US: comparison for a 500-person company\n\nFor a company with 500 employees, the best shuttle provider depends on whether you need daily commuter transportation, a first-/last-mile connection to public transit, an interoffice shuttle, or employee transportation across multiple sites.\n\n**The key distinction is the pricing model\\:** some providers manage a dedicated transportation program with recurring contract costs, while others focus on coordinating third-party operators, booking rides, or providing transportation technology. For a 500-person company, I wou",
+     "search_results": [
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://zeelo.co/blog/top-5-best-corporate-employee-shuttle-services-of-2026",
+       "domain": "zeelo.co",
+       "title": "Top 5 Best Corporate & Employee Shuttle Services in the US (2026) | Zeelo",
+       "description": null,
+       "breadcrumb": "zeelo.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://zeelo.co/corporate-shuttles",
+       "domain": "zeelo.co",
+       "title": "Corporate Shuttle Services | Trusted Corporate Shuttles",
+       "description": null,
+       "breadcrumb": "zeelo.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://zeelo.co/shuttle-transportation",
+       "domain": "zeelo.co",
+       "title": "Shuttle Transportation Services | Zeelo",
+       "description": null,
+       "breadcrumb": "zeelo.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://zeelo.co/?r=0",
+       "domain": "zeelo.co",
+       "title": "All-in-one provider for group transportation | Zeelo",
+       "description": null,
+       "breadcrumb": "zeelo.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://zeelo.co/ie",
+       "domain": "zeelo.co",
+       "title": "All-in-one provider for group transportation | Zeelo",
+       "description": null,
+       "breadcrumb": "zeelo.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://wedriveu.com/corporate-shuttles/",
+       "domain": "wedriveu.com",
+       "title": "Corporate Shuttle Solutions - WeDriveU",
+       "description": null,
+       "breadcrumb": "wedriveu.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://wedriveu.com/about/",
+       "domain": "wedriveu.com",
+       "title": "About - WeDriveU",
+       "description": null,
+       "breadcrumb": "wedriveu.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://wedriveu.com/sharing-economy-sparks-new-models-for-corporate-commute-alternatives/",
+       "domain": "wedriveu.com",
+       "title": "Sharing Economy Sparks New Models for Corporate Commute Programs",
+       "description": null,
+       "breadcrumb": "wedriveu.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.metropolitanshuttle.com/employee-shuttle/",
+       "domain": "www.metropolitanshuttle.com",
+       "title": "Employee Shuttle and Corporate Transportation Services | Metropolitan Shuttle",
+       "description": null,
+       "breadcrumb": "www.metropolitanshuttle.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.metropolitanshuttle.com/employee-shuttle/commuter-shuttle-services-for-businesses/",
+       "domain": "www.metropolitanshuttle.com",
+       "title": "Commuter Shuttle Services for Businesses: Routes and Costs - Metropolitan Shuttle",
+       "description": null,
+       "breadcrumb": "www.metropolitanshuttle.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.metropolitanshuttle.com/employee-shuttle/employee-shuttle-cost/",
+       "domain": "www.metropolitanshuttle.com",
+       "title": "Employee Shuttle Cost: What Companies Actually Pay in 2026 - Metropolitan Shuttle",
+       "description": null,
+       "breadcrumb": "www.metropolitanshuttle.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://busbrother.com/cost/corporate-shuttle/",
+       "domain": "busbrother.com",
+       "title": "Corporate Shuttle Cost (2026) | BusBrother",
+       "description": null,
+       "breadcrumb": "busbrother.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://buslane.com/pricing/employee-shuttles",
+       "domain": "buslane.com",
+       "title": "Employee & Corporate Shuttle Service Prices | Buslane",
+       "description": null,
+       "breadcrumb": "buslane.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://royalchibuses.com/corporate-shuttle-service/",
+       "domain": "royalchibuses.com",
+       "title": "Corporate Shuttle Service Chicago | Employee & Event",
+       "description": null,
+       "breadcrumb": "royalchibuses.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.kangoapp.com/terms.html",
+       "domain": "www.kangoapp.com",
+       "title": null,
+       "description": null,
+       "breadcrumb": "www.kangoapp.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://time.com/3596696/facebook-shuttle-drivers-union-teamsters/",
+       "domain": "time.com",
+       "title": "Facebook Shuttle Drivers Vote to Join a Union",
+       "description": "On Wednesday, Facebook's shuttle-bus drivers voted to unionize in an effort to achieve higher wages and improved working conditions. The vote, reported by The Wall Street Journal, ended with 43 in favor and 28 opposed. Represented by Teamsters Local 853 in Northern California, the drivers are seeking changes to their current scheduling system, which requires them to work split shifts\u2014two three-hour sessions in the morning and evening with a long six-hour break in between. The shuttle service is operated by Loop Transportation, which transports Facebook employees to and from the company\u2019s Menlo Park headquarters. While Loop expressed reservations about the effectiveness of union representation, the company stated it would honor the drivers' decision and begin the negotiation process. Facebook declined to comment on the matter.",
+       "breadcrumb": "time.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://zeelo.tech/corporate-shuttles",
+       "domain": "zeelo.tech",
+       "title": "Corporate Shuttle Services | Trusted Corporate Shuttles",
+       "description": null,
+       "breadcrumb": "zeelo.tech"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://zeelo.tech/operators",
+       "domain": "zeelo.tech",
+       "title": "Operator Partnerships | Boost Your Fleet's Profitability | Zeelo",
+       "description": null,
+       "breadcrumb": "zeelo.tech"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://zeelo.tech/",
+       "domain": "zeelo.tech",
+       "title": "All-in-one provider for group transportation | Zeelo",
+       "description": null,
+       "breadcrumb": "zeelo.tech"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.charterup.com/about-us/",
+       "domain": "www.charterup.com",
+       "title": "CharterUP: Accessible, Accountable and Transparent Group Travel",
+       "description": null,
+       "breadcrumb": "www.charterup.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.charterup.com/",
+       "domain": "www.charterup.com",
+       "title": "CharterUP | From On-Demand Charter Buses to Long-term Transportation Programs",
+       "description": null,
+       "breadcrumb": "www.charterup.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.charterup.com/shuttles",
+       "domain": "www.charterup.com",
+       "title": "CharterUP Shuttle Solutions For Groups Of Any Size",
+       "description": null,
+       "breadcrumb": "www.charterup.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.charterup.com/terms-and-conditions-for-providers.pdf",
+       "domain": "www.charterup.com",
+       "title": "a. If the reservation is canceled 24 hours or less before scheduled departure, the fee is $750 per vehicle per day, or the full value of the trip, whichever is greater (this fee is requested and processed by an internal team).",
+       "description": null,
+       "breadcrumb": "www.charterup.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.charterup.com/shuttles/",
+       "domain": "www.charterup.com",
+       "title": "CharterUP Shuttle Solutions For Groups Of Any Size",
+       "description": null,
+       "breadcrumb": "www.charterup.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.charterup.com/group-transportation-services/private-event-transportation-services/",
+       "domain": "www.charterup.com",
+       "title": "Family & Friends Vacation Bus Rentals | CharterUP",
+       "description": null,
+       "breadcrumb": "www.charterup.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://info.zeelo.co/employee-shuttle-service",
+       "domain": "info.zeelo.co",
+       "title": "Employee Shuttle Service | Attract & Retain Talent | Zeelo",
+       "description": null,
+       "breadcrumb": "info.zeelo.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://info.zeelo.co/employee-shuttle-service-hospitality-us",
+       "domain": "info.zeelo.co",
+       "title": "Smart Employee Shuttle Programs for Hospitality Workers | Zeelo",
+       "description": null,
+       "breadcrumb": "info.zeelo.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.dpvtransportation.com/",
+       "domain": "www.dpvtransportation.com",
+       "title": "DPV Transportation \u2013 Ground Transportation Services",
+       "description": null,
+       "breadcrumb": "www.dpvtransportation.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.dpvtransportation.com/services/employee-shuttle-services/",
+       "domain": "www.dpvtransportation.com",
+       "title": "Employee Shuttle Services - Corporate Shuttles | DPV",
+       "description": null,
+       "breadcrumb": "www.dpvtransportation.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.dpvtransportation.com/about/faq/",
+       "domain": "www.dpvtransportation.com",
+       "title": "DPV Transportation FAQs - Your Travel Queries Answered",
+       "description": null,
+       "breadcrumb": "www.dpvtransportation.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://help.zeelo.co/en/ticket/pass-options",
+       "domain": "help.zeelo.co",
+       "title": "What's the best ticket/pass option for me?",
+       "description": null,
+       "breadcrumb": "help.zeelo.co"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://financeonline.austintexas.gov/afo/contract_catalog/OCCViewMA.cfm?cd=MA&dd=8100&id=NR160000005",
+       "domain": "financeonline.austintexas.gov",
+       "title": "Austin Finance Online",
+       "description": null,
+       "breadcrumb": "financeonline.austintexas.gov"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://wf.zeelo.co/operators",
+       "domain": "wf.zeelo.co",
+       "title": "Operator Partnerships | Boost Your Fleet's Profitability | Zeelo",
+       "description": null,
+       "breadcrumb": "wf.zeelo.co"
+      }
+     ],
+     "sources": [
+      {
+       "type": "chat_gpt_source",
+       "title": "Corporate Shuttle Solutions",
+       "snippet": null,
+       "domain": "wedriveu.com",
+       "url": "https://wedriveu.com/corporate-shuttles/",
+       "thumbnail": null,
+       "source_name": "WeDriveU",
+       "publication_date": "2025-10-20 00:00:00 +00:00",
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Corporate Shuttle Services",
+       "snippet": null,
+       "domain": "zeelo.co",
+       "url": "https://zeelo.co/corporate-shuttles",
+       "thumbnail": null,
+       "source_name": "Trusted Corporate Shuttles",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "CharterUP | From On-Demand Charter Buses to Long-term Transportation Programs",
+       "snippet": null,
+       "domain": "www.charterup.com",
+       "url": "https://www.charterup.com/",
+       "thumbnail": null,
+       "source_name": "CharterUP",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Employee Shuttle and Corporate Transportation Services",
+       "snippet": null,
+       "domain": "www.metropolitanshuttle.com",
+       "url": "https://www.metropolitanshuttle.com/employee-shuttle/",
+       "thumbnail": null,
+       "source_name": "Metropolitan Shuttle",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Employee Shuttle Services - Corporate Shuttles",
+       "snippet": null,
+       "domain": "www.dpvtransportation.com",
+       "url": "https://www.dpvtransportation.com/services/employee-shuttle-services/",
+       "thumbnail": null,
+       "source_name": "DPV",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "About",
+       "snippet": null,
+       "domain": "wedriveu.com",
+       "url": "https://wedriveu.com/about/",
+       "thumbnail": null,
+       "source_name": "WeDriveU",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Austin Finance Online",
+       "snippet": null,
+       "domain": "financeonline.austintexas.gov",
+       "url": "https://financeonline.austintexas.gov/afo/contract_catalog/OCCViewMA.cfm?cd=MA&dd=8100&id=NR160000005",
+       "thumbnail": null,
+       "source_name": "Austin Finance Online",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Shuttle Transportation Services",
+       "snippet": null,
+       "domain": "zeelo.co",
+       "url": "https://zeelo.co/shuttle-transportation",
+       "thumbnail": null,
+       "source_name": "Zeelo",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "CharterUP: Accessible, Accountable and Transparent Group Travel",
+       "snippet": null,
+       "domain": "www.charterup.com",
+       "url": "https://www.charterup.com/about-us/",
+       "thumbnail": null,
+       "source_name": "CharterUP",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Provider website and quote",
+       "snippet": null,
+       "domain": "www.charterup.com",
+       "url": "https://www.charterup.com/shuttles",
+       "thumbnail": null,
+       "source_name": null,
+       "publication_date": null,
+       "markdown": "[Provider website and quote](https://www.charterup.com/shuttles)"
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Employee Shuttle Cost: What Companies Actually Pay in 2026",
+       "snippet": null,
+       "domain": "www.metropolitanshuttle.com",
+       "url": "https://www.metropolitanshuttle.com/employee-shuttle/employee-shuttle-cost/",
+       "thumbnail": null,
+       "source_name": "Metropolitan Shuttle",
+       "publication_date": "2026-09-01 00:00:00 +00:00",
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "DPV Transportation",
+       "snippet": null,
+       "domain": "www.dpvtransportation.com",
+       "url": "https://www.dpvtransportation.com/",
+       "thumbnail": null,
+       "source_name": "Ground Transportation Services",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Top 5 Best Corporate & Employee Shuttle Services in the US (2026)",
+       "snippet": null,
+       "domain": "zeelo.co",
+       "url": "https://zeelo.co/blog/top-5-best-corporate-employee-shuttle-services-of-2026",
+       "thumbnail": null,
+       "source_name": "Zeelo",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Provider website",
+       "snippet": null,
+       "domain": "www.spplus.com",
+       "url": "https://www.spplus.com/",
+       "thumbnail": null,
+       "source_name": null,
+       "publication_date": null,
+       "markdown": "[Provider website](https://www.spplus.com/)"
+      }
+     ],
+     "fan_out_queries": [
+      "top corporate shuttle providers US pricing model employee commuter shuttle 2026",
+      "corporate shuttle bus service pricing dedicated shuttle contract hourly daily monthly pricing US",
+      "WeDriveU corporate shuttle pricing model employee transportation",
+      "Loop Transportation corporate shuttle pricing model",
+      "Kango Commute corporate shuttle pricing model"
+     ],
+     "brand_entities": [
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "WeDriveU",
+       "category": "company",
+       "markdown": "WeDriveU",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Zeelo",
+       "category": "company",
+       "markdown": "Zeelo",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "CharterUP",
+       "category": "company",
+       "markdown": "CharterUP",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Metropolitan Shuttle",
+       "category": "company",
+       "markdown": "Metropolitan Shuttle",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "DPV Transportation",
+       "category": "company",
+       "markdown": "DPV Transportation",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Parking management and transportation services",
+       "category": "company",
+       "markdown": "SP+",
+       "urls": null
+      }
+     ],
+     "se_results_count": 0,
+     "item_types": [
+      "chat_gpt_text",
+      "chat_gpt_table",
+      "chat_gpt_images"
+     ],
+     "items_count": 17,
+     "items": [
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 1,
+       "rank_absolute": 1,
+       "markdown": "# Corporate shuttle providers in the US: comparison for a 500-person company\n\nFor a company with 500 employees, the best",
+       "sources": null,
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_table",
+       "rank_group": 1,
+       "rank_absolute": 2,
+       "text": null,
+       "markdown": "| Provider | Best fit for 500 employees | Pricing model |\n|--------|--------|--------|\n| WeDriveU | Complex, recurring, ",
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "WeDriveU",
+         "category": "company",
+         "markdown": "WeDriveU",
+         "urls": null
+        },
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Zeelo",
+         "category": "company",
+         "markdown": "Zeelo",
+         "urls": null
+        },
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "CharterUP",
+         "category": "company",
+         "markdown": "CharterUP",
+         "urls": null
+        },
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Metropolitan Shuttle",
+         "category": "company",
+         "markdown": "Metropolitan Shuttle",
+         "urls": null
+        },
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "DPV Transportation",
+         "category": "company",
+         "markdown": "DPV Transportation",
+         "urls": null
+        },
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Parking management and transportation services",
+         "category": "company",
+         "markdown": "SP+",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 2,
+       "rank_absolute": 3,
+       "markdown": "\nSources: [wedriveu.com](https://wedriveu.com/corporate-shuttles/)[zeelo.co](https://zeelo.co/corporate-shuttles)[www.ch",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Solutions",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/corporate-shuttles/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": "2025-10-20 00:00:00 +00:00",
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Services",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/corporate-shuttles",
+         "thumbnail": null,
+         "source_name": "Trusted Corporate Shuttles",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "CharterUP | From On-Demand Charter Buses to Long-term Transportation Programs",
+         "snippet": null,
+         "domain": "www.charterup.com",
+         "url": "https://www.charterup.com/",
+         "thumbnail": null,
+         "source_name": "CharterUP",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle and Corporate Transportation Services",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle Services - Corporate Shuttles",
+         "snippet": null,
+         "domain": "www.dpvtransportation.com",
+         "url": "https://www.dpvtransportation.com/services/employee-shuttle-services/",
+         "thumbnail": null,
+         "source_name": "DPV",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "About",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/about/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Austin Finance Online",
+         "snippet": null,
+         "domain": "financeonline.austintexas.gov",
+         "url": "https://financeonline.austintexas.gov/afo/contract_catalog/OCCViewMA.cfm?cd=MA&dd=8100&id=NR160000005",
+         "thumbnail": null,
+         "source_name": "Austin Finance Online",
+         "publication_date": null,
+         "markdown": null
+        }
+       ],
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 1,
+       "rank_absolute": 4,
+       "markdown": "![Considering a Shared Employee Shuttle?](https://images.openai.com/static-rsc-4/qHQmFtTWolEgr2dapgcN3i_sa_tYWXv465yFrP5",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://wedriveu.com/considering-a-shared-employee-shuttle/",
+         "alt": "Considering a Shared Employee Shuttle?",
+         "image_url": "https://images.openai.com/static-rsc-4/qHQmFtTWolEgr2dapgcN3i_sa_tYWXv465yFrP5N9j3jobSoDHMXKP1PLZa0gPc5rujMu-lYsAW_l7QdpRYyOsSQwc367WcjqIuJftFfoakMPQxTraFsiIW0GUAiydfwtsGH0oIuawq7oUy1PyBG9mRKcvMeFhPRci7tzzsfo_tXCv8eHyOm0CqU8DptRpIf?purpose=fullsize",
+         "markdown": "![Considering a Shared Employee Shuttle?](https://images.openai.com/static-rsc-4/qHQmFtTWolEgr2dapgcN3i_sa_tYWXv465yFrP5N9j3jobSoDHMXKP1PLZa0gPc5rujMu-lYsAW_l7QdpRYyOsSQwc367WcjqIuJftFfoakMPQxTraFsiIW0GUAiydfwtsGH0oIuawq7oUy1PyBG9mRKcvMeFhPRci7tzzsfo_tXCv8eHyOm0CqU8DptRpIf?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 3,
+       "rank_absolute": 5,
+       "markdown": "\n\n### 1\\. WeDriveU \u2014 best for a complex, managed program\n\nNational scale \u00b7 Fixed routes, last-mile and intercampus\n\nWeDr",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Solutions",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/corporate-shuttles/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": "2025-10-20 00:00:00 +00:00",
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Services",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/corporate-shuttles",
+         "thumbnail": null,
+         "source_name": "Trusted Corporate Shuttles",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "CharterUP | From On-Demand Charter Buses to Long-term Transportation Programs",
+         "snippet": null,
+         "domain": "www.charterup.com",
+         "url": "https://www.charterup.com/",
+         "thumbnail": null,
+         "source_name": "CharterUP",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle and Corporate Transportation Services",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle Services - Corporate Shuttles",
+         "snippet": null,
+         "domain": "www.dpvtransportation.com",
+         "url": "https://www.dpvtransportation.com/services/employee-shuttle-services/",
+         "thumbnail": null,
+         "source_name": "DPV",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "About",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/about/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Austin Finance Online",
+         "snippet": null,
+         "domain": "financeonline.austintexas.gov",
+         "url": "https://financeonline.austintexas.gov/afo/contract_catalog/OCCViewMA.cfm?cd=MA&dd=8100&id=NR160000005",
+         "thumbnail": null,
+         "source_name": "Austin Finance Online",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Provider website and quote",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/corporate-shuttles/",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Provider website and quote](https://wedriveu.com/corporate-shuttles/)"
+        }
+       ],
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 2,
+       "rank_absolute": 6,
+       "markdown": "![Ride-Sharing to Work: The Pros and Cons | Zeelo](https://images.openai.com/static-rsc-4/l691GRhOxvCm7EQ4qYceOwAFwThcLN",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://zeelo.co/blog/ride-sharing-to-work-the-pros-and-cons",
+         "alt": "Ride-Sharing to Work: The Pros and Cons | Zeelo",
+         "image_url": "https://images.openai.com/static-rsc-4/l691GRhOxvCm7EQ4qYceOwAFwThcLNu-xeHrxFOCIs-FsYPekcy02tatbPC62Ucws290gI_9-UsIspuhEsNXugp26cgiNoIwlOPV8_oxLTj5G5woCJ8W5aZjUEyCI6amQ9XLoewoiEkVdgBrwsSU7K1p_XZK1mHWQ7B1ge_VZ8nw8-_OziP2LzIAjucSe3rv?purpose=fullsize",
+         "markdown": "![Ride-Sharing to Work: The Pros and Cons | Zeelo](https://images.openai.com/static-rsc-4/l691GRhOxvCm7EQ4qYceOwAFwThcLNu-xeHrxFOCIs-FsYPekcy02tatbPC62Ucws290gI_9-UsIspuhEsNXugp26cgiNoIwlOPV8_oxLTj5G5woCJ8W5aZjUEyCI6amQ9XLoewoiEkVdgBrwsSU7K1p_XZK1mHWQ7B1ge_VZ8nw8-_OziP2LzIAjucSe3rv?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 4,
+       "rank_absolute": 7,
+       "markdown": "\n\n### 2\\. Zeelo \u2014 best for route optimization\n\nTechnology-enabled \u00b7 Commuter and last-mile transportation\n\nZeelo designs",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Services",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/corporate-shuttles",
+         "thumbnail": null,
+         "source_name": "Trusted Corporate Shuttles",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Shuttle Transportation Services",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/shuttle-transportation",
+         "thumbnail": null,
+         "source_name": "Zeelo",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Provider website and quote",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/corporate-shuttles",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Provider website and quote](https://zeelo.co/corporate-shuttles)"
+        }
+       ],
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 3,
+       "rank_absolute": 8,
+       "markdown": "![Real-Time Bus Marketplace CharterUP Launches Corporate Shuttle Service](https://images.openai.com/static-rsc-4/3lCTkTT",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.businesswire.com/news/home/20221115005425/en/Real-Time-Bus-Marketplace-CharterUP-Launches-Corporate-Shuttle-Service",
+         "alt": "Real-Time Bus Marketplace CharterUP Launches Corporate Shuttle Service",
+         "image_url": "https://images.openai.com/static-rsc-4/3lCTkTTyHLNcP_Vacy-X_8qKrYZhbubTAurPL5U4rvqQRs413FYW72VQQIbxCSZ72bEKHd8qa3naCjb7LkAlNfYc74qkDwJiSeomi2hbzqH3XQbqMtDoKHCvEeISA-kN9HEAVfSow0K5NuzOvkpHd-hjUE4MVc5gYaYIaNggD0cmftGJBzRNUJq2j5to2nIR?purpose=fullsize",
+         "markdown": "![Real-Time Bus Marketplace CharterUP Launches Corporate Shuttle Service](https://images.openai.com/static-rsc-4/3lCTkTTyHLNcP_Vacy-X_8qKrYZhbubTAurPL5U4rvqQRs413FYW72VQQIbxCSZ72bEKHd8qa3naCjb7LkAlNfYc74qkDwJiSeomi2hbzqH3XQbqMtDoKHCvEeISA-kN9HEAVfSow0K5NuzOvkpHd-hjUE4MVc5gYaYIaNggD0cmftGJBzRNUJq2j5to2nIR?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 5,
+       "rank_absolute": 9,
+       "markdown": "\n\n### 3\\. CharterUP \u2014 best for flexible bus procurement\n\nNationwide network \u00b7 Recurring shuttles and charter trips\n\nChar",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Solutions",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/corporate-shuttles/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": "2025-10-20 00:00:00 +00:00",
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Services",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/corporate-shuttles",
+         "thumbnail": null,
+         "source_name": "Trusted Corporate Shuttles",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "CharterUP | From On-Demand Charter Buses to Long-term Transportation Programs",
+         "snippet": null,
+         "domain": "www.charterup.com",
+         "url": "https://www.charterup.com/",
+         "thumbnail": null,
+         "source_name": "CharterUP",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle and Corporate Transportation Services",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle Services - Corporate Shuttles",
+         "snippet": null,
+         "domain": "www.dpvtransportation.com",
+         "url": "https://www.dpvtransportation.com/services/employee-shuttle-services/",
+         "thumbnail": null,
+         "source_name": "DPV",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "About",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/about/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Austin Finance Online",
+         "snippet": null,
+         "domain": "financeonline.austintexas.gov",
+         "url": "https://financeonline.austintexas.gov/afo/contract_catalog/OCCViewMA.cfm?cd=MA&dd=8100&id=NR160000005",
+         "thumbnail": null,
+         "source_name": "Austin Finance Online",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "CharterUP: Accessible, Accountable and Transparent Group Travel",
+         "snippet": null,
+         "domain": "www.charterup.com",
+         "url": "https://www.charterup.com/about-us/",
+         "thumbnail": null,
+         "source_name": "CharterUP",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Provider website and quote",
+         "snippet": null,
+         "domain": "www.charterup.com",
+         "url": "https://www.charterup.com/shuttles",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Provider website and quote](https://www.charterup.com/shuttles)"
+        }
+       ],
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 4,
+       "rank_absolute": 10,
+       "markdown": "![Bay Area Corporate Shuttle Bus Services](https://images.openai.com/static-rsc-4/GJ0UDgDqoUR84oNvFleEGGWCGLLe7UmOY_LCcK",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.baycharterbustours.com/corporate-shuttles",
+         "alt": "Bay Area Corporate Shuttle Bus Services",
+         "image_url": "https://images.openai.com/static-rsc-4/GJ0UDgDqoUR84oNvFleEGGWCGLLe7UmOY_LCcK0TW3WIFvqcXOiThGm6kxRdEgho8r3Dih-8rxdUwiBPm1yZzWLBjP5aqNt4lNpX3dSQbY62Hxzia4swcM_PEoPI7-CD8aIInDuZC8cVzcPs8Vam3ShMB3AjroCeENty8VwwnDBb19_RyvloLTP1JyEnijV-?purpose=fullsize",
+         "markdown": "![Bay Area Corporate Shuttle Bus Services](https://images.openai.com/static-rsc-4/GJ0UDgDqoUR84oNvFleEGGWCGLLe7UmOY_LCcK0TW3WIFvqcXOiThGm6kxRdEgho8r3Dih-8rxdUwiBPm1yZzWLBjP5aqNt4lNpX3dSQbY62Hxzia4swcM_PEoPI7-CD8aIInDuZC8cVzcPs8Vam3ShMB3AjroCeENty8VwwnDBb19_RyvloLTP1JyEnijV-?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 6,
+       "rank_absolute": 11,
+       "markdown": "\n\n### 4\\. Metropolitan Shuttle \u2014 clearest published recurring pricing\n\nDaily commuter routes \u00b7 Dedicated vehicles\n\nMetro",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle and Corporate Transportation Services",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle Cost: What Companies Actually Pay in 2026",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/employee-shuttle-cost/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": "2026-09-01 00:00:00 +00:00",
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Published pricing details",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/employee-shuttle-cost/",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Published pricing details](https://www.metropolitanshuttle.com/employee-shuttle/employee-shuttle-cost/)"
+        }
+       ],
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 5,
+       "rank_absolute": 12,
+       "markdown": "![55-Passenger Motor Coach Rentals in Boston & NYC | DPV Transportation](https://images.openai.com/static-rsc-4/LoV1Z3An",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.dpvtransportation.com/fleet/deluxe-motor-coaches/",
+         "alt": "55-Passenger Motor Coach Rentals in Boston & NYC | DPV Transportation",
+         "image_url": "https://images.openai.com/static-rsc-4/LoV1Z3AnMJOoqg7GU59jWHL873x2DspYBZmqMKzLC1T-pPRQyNBrQU7f4i8SRbblNwfjsuLSFdYmGbj48Ee8FyC_LhkMERIKF23qCUNvn7v4cIZjnSFv8zfu5Uw-zGA8IS-SbJFScGHQOhT5mel0EEdHtCXLoSr7BoSCBs409kMDu2VvK0sgWIu6qpb6iPXY?purpose=fullsize",
+         "markdown": "![55-Passenger Motor Coach Rentals in Boston & NYC | DPV Transportation](https://images.openai.com/static-rsc-4/LoV1Z3AnMJOoqg7GU59jWHL873x2DspYBZmqMKzLC1T-pPRQyNBrQU7f4i8SRbblNwfjsuLSFdYmGbj48Ee8FyC_LhkMERIKF23qCUNvn7v4cIZjnSFv8zfu5Uw-zGA8IS-SbJFScGHQOhT5mel0EEdHtCXLoSr7BoSCBs409kMDu2VvK0sgWIu6qpb6iPXY?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 7,
+       "rank_absolute": 13,
+       "markdown": "\n\n### 5\\. DPV Transportation \u2014 best regional full-service option\n\nNortheast US \u00b7 Employee shuttles, charters, and manage",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Solutions",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/corporate-shuttles/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": "2025-10-20 00:00:00 +00:00",
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Services",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/corporate-shuttles",
+         "thumbnail": null,
+         "source_name": "Trusted Corporate Shuttles",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "CharterUP | From On-Demand Charter Buses to Long-term Transportation Programs",
+         "snippet": null,
+         "domain": "www.charterup.com",
+         "url": "https://www.charterup.com/",
+         "thumbnail": null,
+         "source_name": "CharterUP",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle and Corporate Transportation Services",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle Services - Corporate Shuttles",
+         "snippet": null,
+         "domain": "www.dpvtransportation.com",
+         "url": "https://www.dpvtransportation.com/services/employee-shuttle-services/",
+         "thumbnail": null,
+         "source_name": "DPV",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "About",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/about/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Austin Finance Online",
+         "snippet": null,
+         "domain": "financeonline.austintexas.gov",
+         "url": "https://financeonline.austintexas.gov/afo/contract_catalog/OCCViewMA.cfm?cd=MA&dd=8100&id=NR160000005",
+         "thumbnail": null,
+         "source_name": "Austin Finance Online",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "DPV Transportation",
+         "snippet": null,
+         "domain": "www.dpvtransportation.com",
+         "url": "https://www.dpvtransportation.com/",
+         "thumbnail": null,
+         "source_name": "Ground Transportation Services",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Provider website and quote",
+         "snippet": null,
+         "domain": "www.dpvtransportation.com",
+         "url": "https://www.dpvtransportation.com/services/employee-shuttle-services/",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Provider website and quote](https://www.dpvtransportation.com/services/employee-shuttle-services/)"
+        }
+       ],
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 6,
+       "rank_absolute": 14,
+       "markdown": "![Very proud of my SP+/ Metropolis team for working together to start up our Alaska Airlines Corporate Shuttle program! ",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.linkedin.com/posts/jacobbauter_very-proud-of-my-sp-metropolis-team-for-activity-7255654388755488769-fhRj",
+         "alt": "Very proud of my SP+/ Metropolis team for working together to start up our Alaska Airlines Corporate Shuttle program! We all worked together to ensure ontime contract start, vehicle acquisition and\u2026 | Jacob Bauter",
+         "image_url": "https://images.openai.com/static-rsc-4/eP4YF7vDQzKV-ZvsVb2vpzUtKFqUAcG4NURRPkWSSyhBVssrgRepRIjG5KqTWtxIMdPfCjinlGLD8j5QjePz7Od_LT_e2TwA3kHHnYOiQ7GJfeF14RC0kRZd0Jqd1AUx2Hkb8WY8U_5ZJ3-P005O7BGx3wq0h_ODrh2UzALVAKA6sRL6yTE5H5NusJfY4OcS?purpose=fullsize",
+         "markdown": "![Very proud of my SP+/ Metropolis team for working together to start up our Alaska Airlines Corporate Shuttle program! We all worked together to ensure ontime contract start, vehicle acquisition and\u2026 | Jacob Bauter](https://images.openai.com/static-rsc-4/eP4YF7vDQzKV-ZvsVb2vpzUtKFqUAcG4NURRPkWSSyhBVssrgRepRIjG5KqTWtxIMdPfCjinlGLD8j5QjePz7Od_LT_e2TwA3kHHnYOiQ7GJfeF14RC0kRZd0Jqd1AUx2Hkb8WY8U_5ZJ3-P005O7BGx3wq0h_ODrh2UzALVAKA6sRL6yTE5H5NusJfY4OcS?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 8,
+       "rank_absolute": 15,
+       "markdown": "\n\n### 6\\. SP+ \u2014 best when shuttles are part of broader site operations\n\nParking and transportation operations \u00b7 Campuses",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Austin Finance Online",
+         "snippet": null,
+         "domain": "financeonline.austintexas.gov",
+         "url": "https://financeonline.austintexas.gov/afo/contract_catalog/OCCViewMA.cfm?cd=MA&dd=8100&id=NR160000005",
+         "thumbnail": null,
+         "source_name": "Austin Finance Online",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Top 5 Best Corporate & Employee Shuttle Services in the US (2026)",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/blog/top-5-best-corporate-employee-shuttle-services-of-2026",
+         "thumbnail": null,
+         "source_name": "Zeelo",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Provider website",
+         "snippet": null,
+         "domain": "www.spplus.com",
+         "url": "https://www.spplus.com/",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Provider website](https://www.spplus.com/)"
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Solutions",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/corporate-shuttles/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": "2025-10-20 00:00:00 +00:00",
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Corporate Shuttle Services",
+         "snippet": null,
+         "domain": "zeelo.co",
+         "url": "https://zeelo.co/corporate-shuttles",
+         "thumbnail": null,
+         "source_name": "Trusted Corporate Shuttles",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "CharterUP | From On-Demand Charter Buses to Long-term Transportation Programs",
+         "snippet": null,
+         "domain": "www.charterup.com",
+         "url": "https://www.charterup.com/",
+         "thumbnail": null,
+         "source_name": "CharterUP",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle and Corporate Transportation Services",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle Services - Corporate Shuttles",
+         "snippet": null,
+         "domain": "www.dpvtransportation.com",
+         "url": "https://www.dpvtransportation.com/services/employee-shuttle-services/",
+         "thumbnail": null,
+         "source_name": "DPV",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "About",
+         "snippet": null,
+         "domain": "wedriveu.com",
+         "url": "https://wedriveu.com/about/",
+         "thumbnail": null,
+         "source_name": "WeDriveU",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Employee Shuttle Cost: What Companies Actually Pay in 2026",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/employee-shuttle/employee-shuttle-cost/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": "2026-09-01 00:00:00 +00:00",
+         "markdown": null
+        }
+       ],
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_table",
+       "rank_group": 2,
+       "rank_absolute": 16,
+       "text": null,
+       "markdown": "| Quote item | What to request |\n|--------|--------|\n| Base service | Monthly fee by route and vehicle |\n| Capacity | Se",
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 9,
+       "rank_absolute": 17,
+       "markdown": "\nAsk for both a **fixed-price baseline** and a **variable-capacity alternative**\\. That will reveal whether paying for g",
+       "sources": null,
+       "brand_entities": null
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

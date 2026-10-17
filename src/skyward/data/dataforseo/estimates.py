@@ -50,10 +50,19 @@ def list_price_usd(plan: RunPlan, rate: Rate) -> float:
             + plan.planned_items * rate.price_per_item_usd)
 
 
+# Units billed at a fixed price per unit the plan already counts (a SERP page per 10
+# results of depth, a prompt sent to the ChatGPT scraper). The list price is exact for
+# these, while an observed per-request average carries whatever depth past requests
+# happened to use -- or, for the scraper, is really a per-task average (cost_log has one
+# row per task, a request carries up to 100), which under-prices a run a hundredfold.
+_FIXED_PRICE_UNITS = frozenset({"serp_page", "prompt_sent"})
+
+
 def price_plan(plan: RunPlan, rate: Rate, observed: dict | None = None) -> CostEstimate:
     lp = list_price_usd(plan, rate)
     max_usd = round(lp * (1 + rate.max_buffer), 6)
     if (observed
+            and rate.item_unit not in _FIXED_PRICE_UNITS
             and (observed.get("sample_requests") or 0) >= MIN_OBSERVED_SAMPLES
             and observed.get("avg_cost_per_request") is not None):
         avg = round(plan.planned_requests * float(observed["avg_cost_per_request"]), 6)
@@ -61,6 +70,10 @@ def price_plan(plan: RunPlan, rate: Rate, observed: dict | None = None) -> CostE
     else:
         avg = round(lp, 6)
         basis = "list_price"
+    # Observed spend above the buffered list price means the rate card is low. Lift the
+    # upper bound rather than clamp the expected figure: gates read max_usd, so this
+    # errs towards refusing a run, never towards under-pricing one.
+    max_usd = max(max_usd, avg)
     return CostEstimate(max_usd=max_usd, avg_usd=avg, list_price_usd=round(lp, 6),
                         basis=basis, plan=plan)
 
@@ -73,6 +86,7 @@ class CostEstimator:
         self._rates: dict | None = None
         self._observed: dict | None = None
         self._lock = threading.Lock()
+        self._warned_no_rate: set[tuple[str, str]] = set()
 
     def rates(self) -> dict[tuple[str, str], Rate]:
         with self._lock:
@@ -89,6 +103,16 @@ class CostEstimator:
     def estimate(self, plan: RunPlan) -> CostEstimate:
         rate = self.rates().get((plan.endpoint, plan.endpoint_mode))
         if rate is None:
+            # A zero estimate makes check_balance return early, so a missing rate switches
+            # the balance guard off for the run. Say so, once per endpoint and mode.
+            key = (plan.endpoint, plan.endpoint_mode)
+            if key not in self._warned_no_rate:
+                self._warned_no_rate.add(key)
+                msg = (f"[{plan.endpoint}] No DataForSEO rate for endpoint_mode="
+                       f"{plan.endpoint_mode!r}: the cost estimate is $0 and the balance "
+                       f"guard is OFF for this run. Add it to cost_rates.DEFAULT_RATES.")
+                print(f"WARNING: {msg}")
+                logger.warning(msg)
             return CostEstimate(0.0, 0.0, 0.0, "no_rate", plan)
         return price_plan(plan, rate, self.observed().get((plan.endpoint, plan.endpoint_mode)))
 

@@ -211,3 +211,24 @@ _(pending review)_
 _(pending review)_
 
 ### Endpoint signed off: ☐
+
+---
+
+## ai_optimization_chat_gpt_llm_scraper
+
+**BQ table:** `data-hub-468216.DataForSEO.ai_optimization-chat_gpt-llm_scraper`
+
+### Tests to review
+- [ ] `test_ai_optimization_chat_gpt_llm_scraper_standard_small`
+- [ ] `test_ai_optimization_chat_gpt_llm_scraper_live_small`
+- [ ] `test_ai_optimization_chat_gpt_llm_scraper_standard_250`
+- [ ] `test_ai_optimization_chat_gpt_llm_scraper_samples_and_retry`
+- [ ] `test_ai_optimization_chat_gpt_llm_scraper_bad_inputs`
+
+### Review notes
+
+Parser was built against 310 real responses (2026-10-09); fixtures in
+`tests/fixtures/llm_scraper/`. Known gaps: product, ad and navigation-list answer blocks
+were never seen, so they surface only through `item_types`.
+
+### Endpoint signed off: ☐

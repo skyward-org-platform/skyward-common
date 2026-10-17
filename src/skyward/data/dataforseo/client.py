@@ -130,6 +130,7 @@ class DataForSEOClient:
         self._dataforseo_labs_google_search_intent = None
         self._dataforseo_labs_google_domain_rank_overview = None
         self._keywords_data_google_ads_search_volume = None
+        self._ai_optimization_chat_gpt_llm_scraper = None
 
     @property
     def meta_client(self):
@@ -170,6 +171,24 @@ class DataForSEOClient:
         session.mount("https://", HTTPAdapter(max_retries=retry))
         return session
 
+    def _record_unattributed(self, url: str, payload, resp, http_status) -> None:
+        """Cost-log a billed call made outside any run (no RunUnit is active).
+
+        Probes, scripts and other callers of `_post` used to spend without writing a
+        cost_log row, so the balance fell with nothing to account for it. Written
+        straight away, one call at a time, under job_id 'unattributed'. A client without
+        a bq_client cannot log; the call itself is unaffected either way.
+        """
+        if self.bq_client is None:
+            return
+        from skyward.data.dataforseo.cost_log import CostLogWriter, unattributed_cost_rows
+        rows = unattributed_cost_rows(url, payload, resp, http_status)
+        if not rows:
+            return
+        writer = CostLogWriter(self.bq_client, flush_every=len(rows))
+        writer.add(rows)
+        writer.close()
+
     def _post(
         self,
         endpoint: str,
@@ -178,8 +197,12 @@ class DataForSEOClient:
         max_retries: int | None = None,
         retry_delay: int | None = None,
         status_sink: dict | None = None,
+        timeout: float = 30,
     ) -> dict | None:
         """Send a POST request to a DataForSEO endpoint with retry logic.
+
+        `timeout` is the per-attempt transport timeout in seconds. Slow live endpoints
+        (the ChatGPT scraper answers in up to two minutes) pass a longer one.
 
         If `status_sink` is provided, it is populated with the transport-level
         `http_status` (the HTTP status code, or None on a network failure where no
@@ -197,18 +220,20 @@ class DataForSEOClient:
                 status_sink["error"] = ""
             resp = None
             try:
-                resp = sess.post(endpoint, json=payload, timeout=30)
+                resp = sess.post(endpoint, json=payload, timeout=timeout)
                 if status_sink is not None:
                     status_sink["http_status"] = resp.status_code
                 resp.raise_for_status()
                 data = resp.json()
                 # Cost recording must never fail a successful data pull
                 unit = active_unit()
-                if unit is not None:
-                    try:
+                try:
+                    if unit is not None:
                         unit.record_http(endpoint, payload, data, resp.status_code)
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to record cost for successful HTTP response: %r", e)
+                    else:
+                        self._record_unattributed(endpoint, payload, data, resp.status_code)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Failed to record cost for successful HTTP response: %r", e)
                 return data
             except Exception as e:
                 if status_sink is not None:
@@ -492,6 +517,14 @@ class DataForSEOClient:
             from skyward.data.dataforseo.endpoints.keywords_data_google_ads_search_volume import KeywordsDataGoogleAdsSearchVolume
             self._keywords_data_google_ads_search_volume = KeywordsDataGoogleAdsSearchVolume(self)
         return self._keywords_data_google_ads_search_volume
+
+    @property
+    def ai_optimization_chat_gpt_llm_scraper(self):
+        """Access the ai_optimization/chat_gpt/llm_scraper endpoint (ChatGPT fan-out queries)."""
+        if self._ai_optimization_chat_gpt_llm_scraper is None:
+            from skyward.data.dataforseo.endpoints.ai_optimization_chat_gpt_llm_scraper import AiOptimizationChatGptLlmScraper
+            self._ai_optimization_chat_gpt_llm_scraper = AiOptimizationChatGptLlmScraper(self)
+        return self._ai_optimization_chat_gpt_llm_scraper
 
     # -------------------------------------------------------------------------
     # Legacy compatibility properties

@@ -1,0 +1,492 @@
+{
+ "version": "0.1.20260917",
+ "status_code": 20000,
+ "status_message": "Ok.",
+ "time": "0.0240 sec.",
+ "cost": 0,
+ "tasks_count": 1,
+ "tasks_error": 0,
+ "tasks": [
+  {
+   "id": "10091929-6590-0626-0000-ac073f1febac",
+   "status_code": 20000,
+   "status_message": "Ok.",
+   "time": "0.0188 sec.",
+   "cost": 0,
+   "result_count": 1,
+   "path": [
+    "v3",
+    "ai_optimization",
+    "chat_gpt",
+    "llm_scraper",
+    "task_get",
+    "advanced",
+    "10091929-6590-0626-0000-ac073f1febac"
+   ],
+   "data": {
+    "api": "ai_optimization",
+    "function": "llm_scraper",
+    "se": "chat_gpt",
+    "keyword": "charter bus rental",
+    "location_code": 2840,
+    "language_code": "en",
+    "force_web_search": true,
+    "tag": "rt-f-0-1",
+    "device": "desktop",
+    "os": "windows"
+   },
+   "result": [
+    {
+     "keyword": "charter bus rental",
+     "location_code": 2840,
+     "language_code": "en",
+     "model": "gpt-6",
+     "check_url": "https://chatgpt.com/?prompt=charter%20bus%20rental&hints=search",
+     "datetime": "2026-10-09 19:29:26 +00:00",
+     "markdown": "Here are some charter bus rental options in the Fort Worth and Dallas\u2013Fort Worth area. These companies offer group transportation for church trips, school outings, weddings, corporate events, sporting events, and out-of-town travel.\n\n## Charter bus rental companies near Fort Worth\n\n![Fort Worth Charter Bus Service | Charter Buses & Coaches Made Affordable](https://images.openai.com/static-rsc-4/FHn64Qx9KHTQ_bg_hE1mOKvVhJbjvxeUrIVHEEPwq8CSJjDSzZQ_uNCczF9k1gLAWsspTnitrj3ruCC4i4zlGunY4HR4K7_E0vxj0MOfIuPxr8hU4B4KBexChHUXYy1plkgcV6W_LNmyCaLoD38DXriBqrcbRgQYUnZlxytlBZSWYC1nTyRMGxAI23iEXt5V?purpose=f",
+     "search_results": [
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://fortworthcharterbuscompany.com/fort-worth-charter-bus-prices/?utm_source=chatgpt.com",
+       "domain": "fortworthcharterbuscompany.com",
+       "title": "Fort Worth Charter Bus Pricing & Rates | Instant Online Pricing",
+       "description": "fortworthcharterbuscompany.com is a comparison and referral website, not a local company. We do NOT own or operate vehicles. Use our online quote form to view pricing and vehicle choices from indepen...",
+       "breadcrumb": "fortworthcharterbuscompany.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://fortworthminibuscompany.com/fort-worth-charter-bus-rental/?utm_source=chatgpt.com",
+       "domain": "fortworthminibuscompany.com",
+       "title": "Fort Worth Charter Bus Rentals | Get Online Quotes",
+       "description": "COMMON AMENITIES AVAILABLE ON FORT WORTH CHARTER BUS RENTALS  [Button: Get Online Quote] Call\u00a0682-708-9360  Spacious cloth/leather reclining seats  Individual climate controls  Onboard restrooms  Over...",
+       "breadcrumb": "fortworthminibuscompany.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://fortworthminibuscompany.com/?utm_source=chatgpt.com",
+       "domain": "fortworthminibuscompany.com",
+       "title": "Fort Worth Minibus Rentals | Get Instant Online Pricing",
+       "description": "FEATURES YOU'LL FIND ON FORT WORTH BUSES  Show amenities for  [Input]All bus types [Input]Charter bus [Input]Minibus [Input]Sprinter van [Input]Party bus [Input]School bus  Comparing all five bus type...",
+       "breadcrumb": "fortworthminibuscompany.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://fortworthminibuscompany.com/fort-worth-field-trip-transportation/?utm_source=chatgpt.com",
+       "domain": "fortworthminibuscompany.com",
+       "title": "Fort Worth Field Trip Transportation & Bus Rental Service | Instant Online Quotes",
+       "description": "YOU CAN FIND AND BOOK FIELD TRIP TRANSPORTATION IN FORT WORTH AND ANY NEARBY CITY!  Fortworthminibuscompany.com doesn't stop at the Fort Worth city limits. Whether your school is based in Arlington, D...",
+       "breadcrumb": "fortworthminibuscompany.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.limocity.com/metro/fort-worth/charter-bus/?utm_source=chatgpt.com",
+       "domain": "www.limocity.com",
+       "title": "Charter Bus Rentals Fort Worth, TX | LimoCity",
+       "description": "OVER 25 COACH BUSES AVAILABLE!  PRIVATE CHARTERS  After serving more than 15,000 happy clients, Limo City in Fort Worth is the go to limo provider for give large groups. Limo City provides luxury cha...",
+       "breadcrumb": "limocity.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.fortworthcharterbusrentals.com/charter-bus-prices/?utm_source=chatgpt.com",
+       "domain": "www.fortworthcharterbusrentals.com",
+       "title": "Charter Bus Prices - Fort Worth Charter Bus Rentals",
+       "description": "UNDERSTAND YOUR FORT WORTH BUS Rental Costs  (817) 670-2945  One of the most important parts of planning your group trip in Fort Worth will be knowing the costs of your bus rental service and setting...",
+       "breadcrumb": "fortworthcharterbusrentals.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.partybusinfortworth.com/40-56-passenger-charter-bus/?utm_source=chatgpt.com",
+       "domain": "www.partybusinfortworth.com",
+       "title": "Fort Worth Charter Bus Rental | Get Online Quotes",
+       "description": "www.partybusinfortworth.com is a bus rental comparison and referral website, not a bus company. We do NOT own or operate vehicles. Use our online quote form to view pricing and vehicle choices from i...",
+       "breadcrumb": "partybusinfortworth.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://texasbusservices.com/en/fort-worth?utm_source=chatgpt.com",
+       "domain": "texasbusservices.com",
+       "title": "Fort Worth Charter Bus Rental - Family-Owned, All-In | TBS | Texas Bus Services",
+       "description": "FORT WORTH CHARTER BUS RENTAL - FAMILY-OWNED, ALL-IN PRICING, INSTANT QUOTE  From Stockyards rodeos to Sundance Square events\u2014trusted group transport in Cowtown  Get Instant Quote  Takes ~60 seconds...",
+       "breadcrumb": "texasbusservices.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.partybusfortworth.net/?utm_source=chatgpt.com",
+       "domain": "www.partybusfortworth.net",
+       "title": "Party Bus & Charter Bus Rentals in Fort Worth | Partybusfortworth.net",
+       "description": "TVs and Entertainment Systems  Amenities listed above are common features that MAY be available on party buses. Because we are a referral website and do NOT own or operate buses, exact features vary...",
+       "breadcrumb": "partybusfortworth.net"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.fortworthpartybus.net/?utm_source=chatgpt.com",
+       "domain": "www.fortworthpartybus.net",
+       "title": "Fort Worth Party Bus & Charter Bus Rentals | Fortworthpartybus.net",
+       "description": "TVs and Entertainment Systems  Amenities listed above are common features that MAY be available on party buses. Because we are a referral website and do NOT own or operate buses, exact features vary...",
+       "breadcrumb": "fortworthpartybus.net"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://gogocharters.com/ft-worth-charter-bus?utm_source=chatgpt.com",
+       "domain": "gogocharters.com",
+       "title": "FT WORTH CHARTER BUS RENTAL | GOGO CHARTERS FT WORTH",
+       "description": "* (817) 349-3757  FORT WORTH CHARTER BUS RENTALS FROM GOGO CHARTERS  Getting a\u00a0quote for your charter bus rental\u00a0is an easy process when you call GOGO Charters Ft Worth. Rent your charter bus today b...",
+       "breadcrumb": "gogocharters.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.busbank.com/service-by-location/texas/charter-bus-fort-worth/?utm_source=chatgpt.com",
+       "domain": "www.busbank.com",
+       "title": "Fort Worth Charter Bus Rentals | BusBank",
+       "description": "FORT WORTH CHARTER BUS RENTALS & TRANSPORTATION SERVICE YOU CAN TRUST.  BusBank is the most trusted nationwide charter bus provider serving Cowtown for companies, large groups and events, with the be...",
+       "breadcrumb": "busbank.com"
+      }
+     ],
+     "sources": [
+      {
+       "type": "chat_gpt_source",
+       "title": "Website and quote",
+       "snippet": null,
+       "domain": "texasbusservices.com",
+       "url": "https://texasbusservices.com/en/fort-worth",
+       "thumbnail": null,
+       "source_name": null,
+       "publication_date": null,
+       "markdown": "[Website and quote](https://texasbusservices.com/en/fort-worth)"
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "FT WORTH CHARTER BUS RENTAL",
+       "snippet": null,
+       "domain": "gogocharters.com",
+       "url": "https://gogocharters.com/ft-worth-charter-bus",
+       "thumbnail": null,
+       "source_name": "GOGO CHARTERS FT WORTH",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Fort Worth Charter Bus Rentals",
+       "snippet": null,
+       "domain": "www.busbank.com",
+       "url": "https://www.busbank.com/service-by-location/texas/charter-bus-fort-worth/",
+       "thumbnail": null,
+       "source_name": "BusBank",
+       "publication_date": null,
+       "markdown": null
+      }
+     ],
+     "fan_out_queries": [
+      "charter bus rental Fort Worth Texas companies pricing fleet"
+     ],
+     "brand_entities": [
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Texas Bus Services",
+       "category": "business",
+       "markdown": "Texas Bus Services",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "GOGO Charters Fort Worth",
+       "category": "local_business",
+       "markdown": "GOGO Charters Fort Worth",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Texas Eagle Transportation",
+       "category": "local_business",
+       "markdown": "Texas Eagle Transportation",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Roadrunner Charters",
+       "category": "local_business",
+       "markdown": "Roadrunner Charters",
+       "urls": null
+      },
+      {
+       "type": "chat_gpt_brand_entity",
+       "title": "Charter bus booking and group transportation",
+       "category": "business",
+       "markdown": "BusBank",
+       "urls": null
+      }
+     ],
+     "se_results_count": 0,
+     "item_types": [
+      "chat_gpt_text",
+      "chat_gpt_images",
+      "chat_gpt_table"
+     ],
+     "items_count": 13,
+     "items": [
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 1,
+       "rank_absolute": 1,
+       "markdown": "Here are some charter bus rental options in the Fort Worth and Dallas\u2013Fort Worth area. These companies offer group trans",
+       "sources": null,
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 1,
+       "rank_absolute": 2,
+       "markdown": "![Fort Worth Charter Bus Service | Charter Buses & Coaches Made Affordable](https://images.openai.com/static-rsc-4/FHn64",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.fortworthpartybus.com/charter-buses.html",
+         "alt": "Fort Worth Charter Bus Service | Charter Buses & Coaches Made Affordable",
+         "image_url": "https://images.openai.com/static-rsc-4/FHn64Qx9KHTQ_bg_hE1mOKvVhJbjvxeUrIVHEEPwq8CSJjDSzZQ_uNCczF9k1gLAWsspTnitrj3ruCC4i4zlGunY4HR4K7_E0vxj0MOfIuPxr8hU4B4KBexChHUXYy1plkgcV6W_LNmyCaLoD38DXriBqrcbRgQYUnZlxytlBZSWYC1nTyRMGxAI23iEXt5V?purpose=fullsize",
+         "markdown": "![Fort Worth Charter Bus Service | Charter Buses & Coaches Made Affordable](https://images.openai.com/static-rsc-4/FHn64Qx9KHTQ_bg_hE1mOKvVhJbjvxeUrIVHEEPwq8CSJjDSzZQ_uNCczF9k1gLAWsspTnitrj3ruCC4i4zlGunY4HR4K7_E0vxj0MOfIuPxr8hU4B4KBexChHUXYy1plkgcV6W_LNmyCaLoD38DXriBqrcbRgQYUnZlxytlBZSWYC1nTyRMGxAI23iEXt5V?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 2,
+       "rank_absolute": 3,
+       "markdown": "\n\n**Texas Bus Services**\n\nFort Worth \u00b7 Family-owned operator\n\nFull-size coaches for large groups, private transportation",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Website and quote",
+         "snippet": null,
+         "domain": "texasbusservices.com",
+         "url": "https://texasbusservices.com/en/fort-worth",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Website and quote](https://texasbusservices.com/en/fort-worth)"
+        }
+       ],
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Texas Bus Services",
+         "category": "business",
+         "markdown": "Texas Bus Services",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 2,
+       "rank_absolute": 4,
+       "markdown": "![GOGO Charters Toronto | Niagara Falls Tourism](https://images.openai.com/static-rsc-4/JOBIzZQguej0Y8dmXguMYs_YJxP6RJ9T",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.niagarafallstourism.com/services/transportation/gogo-charters-toronto/",
+         "alt": "GOGO Charters Toronto | Niagara Falls Tourism",
+         "image_url": "https://images.openai.com/static-rsc-4/JOBIzZQguej0Y8dmXguMYs_YJxP6RJ9TjYStTjyLmQquhS9k1P0CjB-VenT7j8C5auQ6n8g9DlJo3QH-vJpQCDK31F9gn5SnRceBzojYa3AaiObjSCkCMeyRnrEqHzjfNW4ydDtAHuhM_zxuX0hG4iMCb7M8GG0hM0WlucdqQyjCxfhwdZi64xW8yvRPOugG?purpose=fullsize",
+         "markdown": "![GOGO Charters Toronto | Niagara Falls Tourism](https://images.openai.com/static-rsc-4/JOBIzZQguej0Y8dmXguMYs_YJxP6RJ9TjYStTjyLmQquhS9k1P0CjB-VenT7j8C5auQ6n8g9DlJo3QH-vJpQCDK31F9gn5SnRceBzojYa3AaiObjSCkCMeyRnrEqHzjfNW4ydDtAHuhM_zxuX0hG4iMCb7M8GG0hM0WlucdqQyjCxfhwdZi64xW8yvRPOugG?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 3,
+       "rank_absolute": 5,
+       "markdown": "\n\n**GOGO Charters Fort Worth**\n\nFort Worth \u00b7 Multiple bus sizes\n\nOffers full-size charter coaches and minibuses, with pu",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "FT WORTH CHARTER BUS RENTAL",
+         "snippet": null,
+         "domain": "gogocharters.com",
+         "url": "https://gogocharters.com/ft-worth-charter-bus",
+         "thumbnail": null,
+         "source_name": "GOGO CHARTERS FT WORTH",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Fort Worth Charter Bus Rentals",
+         "snippet": null,
+         "domain": "www.busbank.com",
+         "url": "https://www.busbank.com/service-by-location/texas/charter-bus-fort-worth/",
+         "thumbnail": null,
+         "source_name": "BusBank",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Website and quote",
+         "snippet": null,
+         "domain": "gogocharters.com",
+         "url": "https://gogocharters.com/ft-worth-charter-bus",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Website and quote](https://gogocharters.com/ft-worth-charter-bus)"
+        }
+       ],
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "GOGO Charters Fort Worth",
+         "category": "local_business",
+         "markdown": "GOGO Charters Fort Worth",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 3,
+       "rank_absolute": 6,
+       "markdown": "![Executive Charter Bus Rental & Limo Service in Dallas - Texas Eagle Transportation](https://images.openai.com/static-r",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.texaseagletransportation.net/",
+         "alt": "Executive Charter Bus Rental & Limo Service in Dallas - Texas Eagle Transportation",
+         "image_url": "https://images.openai.com/static-rsc-4/el-rnqsQSnMgiWJj5POmfLeVoZcnOFcddkYdv5i3wAC5ET95PvL-ZPk_Edt0Vd1bASdn03lwWJcUJVLT5dOnog27zhX8z2q07iP6F4quGd3S0o17_Y8X21ASDwJJib-kfhl2wyUs9CHZBfPAujrsufWR91ZOOyEi2xbWUTYMELFV0Q2yTNfEIxyorQ4edrp2?purpose=fullsize",
+         "markdown": "![Executive Charter Bus Rental & Limo Service in Dallas - Texas Eagle Transportation](https://images.openai.com/static-rsc-4/el-rnqsQSnMgiWJj5POmfLeVoZcnOFcddkYdv5i3wAC5ET95PvL-ZPk_Edt0Vd1bASdn03lwWJcUJVLT5dOnog27zhX8z2q07iP6F4quGd3S0o17_Y8X21ASDwJJib-kfhl2wyUs9CHZBfPAujrsufWR91ZOOyEi2xbWUTYMELFV0Q2yTNfEIxyorQ4edrp2?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 4,
+       "rank_absolute": 7,
+       "markdown": "\n\n**Texas Eagle Transportation**\n\nKeller \u00b7 DFW area\n\nCharter buses, minibuses, and shuttle options for groups of differe",
+       "sources": null,
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Texas Eagle Transportation",
+         "category": "local_business",
+         "markdown": "Texas Eagle Transportation",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 4,
+       "rank_absolute": 8,
+       "markdown": "![Roadrunner Charters: Reliable Charter Bus Rentals in Central Texas](https://images.openai.com/static-rsc-4/M_2INhhwNMj",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.roadrunnercharters.com/about",
+         "alt": "Roadrunner Charters: Reliable Charter Bus Rentals in Central Texas",
+         "image_url": "https://images.openai.com/static-rsc-4/M_2INhhwNMjkRpuy7KSzCHxM7jUi_FO7rvRn0Wgkg0r7MlU3gWh87DiddIist3UbzWkGhC1bMXJYYsGuCr_-kzsBuLpr796qYw3iJm_yLIE1WfROUogTRuaeuw9m47XqBaRuZFc1zE5aDpgmTiTNQhwgItKKJQ4wIPXDIPI_geCOmuaHZFwrHSHSSA74jiz9?purpose=fullsize",
+         "markdown": "![Roadrunner Charters: Reliable Charter Bus Rentals in Central Texas](https://images.openai.com/static-rsc-4/M_2INhhwNMjkRpuy7KSzCHxM7jUi_FO7rvRn0Wgkg0r7MlU3gWh87DiddIist3UbzWkGhC1bMXJYYsGuCr_-kzsBuLpr796qYw3iJm_yLIE1WfROUogTRuaeuw9m47XqBaRuZFc1zE5aDpgmTiTNQhwgItKKJQ4wIPXDIPI_geCOmuaHZFwrHSHSSA74jiz9?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 5,
+       "rank_absolute": 9,
+       "markdown": "\n\n**Roadrunner Charters**\n\nHurst \u00b7 DFW area\n\nPrivate group transportation for local trips and travel around Texas and be",
+       "sources": null,
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Roadrunner Charters",
+         "category": "local_business",
+         "markdown": "Roadrunner Charters",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 5,
+       "rank_absolute": 10,
+       "markdown": "![Employee Shuttle Service & Corporate Transportation | BusBank](https://images.openai.com/static-rsc-4/ZkPVwaWJtslt-skl",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.busbank.com/group-travel/employee-shuttles/",
+         "alt": "Employee Shuttle Service & Corporate Transportation | BusBank",
+         "image_url": "https://images.openai.com/static-rsc-4/ZkPVwaWJtslt-sklNMeGXLCwaTizFX16HngLoIbOBEEB4LlLeCreinuCIoISjpgpYVyTHEvDo43i4s6JKkb1_2gJYxerM9Jwq5ttDf4feAYmS9yna_fv1l3FT2vletVZAec6FFmTM41O_BewbyzP5iXkjnAeIQN1hbYLuQAvA-S4R1qdTGwEQmI8DG0fk4tx?purpose=fullsize",
+         "markdown": "![Employee Shuttle Service & Corporate Transportation | BusBank](https://images.openai.com/static-rsc-4/ZkPVwaWJtslt-sklNMeGXLCwaTizFX16HngLoIbOBEEB4LlLeCreinuCIoISjpgpYVyTHEvDo43i4s6JKkb1_2gJYxerM9Jwq5ttDf4feAYmS9yna_fv1l3FT2vletVZAec6FFmTM41O_BewbyzP5iXkjnAeIQN1hbYLuQAvA-S4R1qdTGwEQmI8DG0fk4tx?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 6,
+       "rank_absolute": 11,
+       "markdown": "\n\n**BusBank**\n\nRegional booking service\n\nCompare coach buses, executive buses, and minibuses for group travel.\n\n[Request",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "Request a quote",
+         "snippet": null,
+         "domain": "www.busbank.com",
+         "url": "https://www.busbank.com/service-by-location/texas/charter-bus-fort-worth/",
+         "thumbnail": null,
+         "source_name": null,
+         "publication_date": null,
+         "markdown": "[Request a quote](https://www.busbank.com/service-by-location/texas/charter-bus-fort-worth/)"
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "FT WORTH CHARTER BUS RENTAL",
+         "snippet": null,
+         "domain": "gogocharters.com",
+         "url": "https://gogocharters.com/ft-worth-charter-bus",
+         "thumbnail": null,
+         "source_name": "GOGO CHARTERS FT WORTH",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Fort Worth Charter Bus Rentals",
+         "snippet": null,
+         "domain": "www.busbank.com",
+         "url": "https://www.busbank.com/service-by-location/texas/charter-bus-fort-worth/",
+         "thumbnail": null,
+         "source_name": "BusBank",
+         "publication_date": null,
+         "markdown": null
+        }
+       ],
+       "brand_entities": [
+        {
+         "type": "chat_gpt_brand_entity",
+         "title": "Charter bus booking and group transportation",
+         "category": "business",
+         "markdown": "BusBank",
+         "urls": null
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_table",
+       "rank_group": 1,
+       "rank_absolute": 12,
+       "text": null,
+       "markdown": "| Bus type | Approximate budget |\n|--------|--------|\n| Minibus, 18\u201328 passengers | \\$400\u2013\\$1,700+ |\n| Full-size coach, ",
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 7,
+       "rank_absolute": 13,
+       "markdown": "\nThese are indicative advertised ranges, not confirmed quotes. Ask whether the price includes the driver, fuel, tolls, p",
+       "sources": null,
+       "brand_entities": null
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

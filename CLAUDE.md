@@ -100,7 +100,7 @@ Supported providers: `openai`, `gemini`, `perplexity`, `anthropic`, `grok`. All 
 
 ## DataForSEO
 
-All 11 DataForSEO endpoint tables in `data-hub-468216.DataForSEO` now use the standardized schema (7-column metadata block: `job_id`, `upload_id`, `ingest_timestamp`, `domain_id`, `domain`, `task_id`, `endpoint_mode`, then endpoint-specific columns). Historical rows were migrated and metadata backfilled; see `scripts/migrate_dataforseo_tables.py` and related scripts in `scripts/` for the one-time migration tools.
+All 12 DataForSEO endpoint tables in `data-hub-468216.DataForSEO` use the standardized schema (7-column metadata block: `job_id`, `upload_id`, `ingest_timestamp`, `domain_id`, `domain`, `task_id`, `endpoint_mode`, then endpoint-specific columns). Historical rows were migrated and metadata backfilled; see `scripts/migrate_dataforseo_tables.py` and related scripts in `scripts/` for the one-time migration tools.
 
 **Key knobs when calling endpoints:**
 
@@ -112,7 +112,17 @@ All 11 DataForSEO endpoint tables in `data-hub-468216.DataForSEO` now use the st
 
 **Account balance check** — `DataForSEOClient.get_balance()` returns `{balance, total, raw}`. Use it as a pre-flight guard before expensive fetches.
 
-**Standard (POST/GET) mode** — only `serp-google-organic` and `keywords_data-google_ads-search_volume` support the async `task_post` + `task_get` workflow via `post_all()`. All other endpoints are live-only.
+**Standard (POST/GET) mode** — `serp-google-organic`, `keywords_data-google_ads-search_volume` and `ai_optimization-chat_gpt-llm_scraper` support the async `task_post` + `task_get` workflow via `post_all()`. All other endpoints are live-only.
+
+**ChatGPT fan-out (v1.6.2+)** — `client.ai_optimization_chat_gpt_llm_scraper` takes prompts and returns the search queries ChatGPT ran while answering, one row per task in `DataForSEO.ai_optimization-chat_gpt-llm_scraper`. It differs from every other endpoint, so read `docs/releases/v1.6.2.md` before using it:
+
+- No `domain`/`domain_id` (passing one raises `TypeError`); the domain columns are always NULL and rows are keyed by `prompt_id` (`fanout_prompt_id(text)`), because one prompt can serve several clients.
+- Use `post_all` for bulk ($0.0012 a prompt, 100 per request); `live_all` is one prompt per request at $0.004 and is for small pulls.
+- Keep `force_web_search=True` (the default): unforced runs return no fan-out for questions the model answers from memory.
+- Fan-out is a sample that rewords itself run to run. `samples=N` runs each prompt N times; the `..._queries` view unions them.
+- Location is country level only. Put the place in the prompt to get local fan-out.
+- Lists (`fan_out_queries`, `sources`, `search_results`, `brand_entities`, `local_businesses`) are JSON text; the `..._queries` and `..._sources` views unpack the first two.
+- Collector mode needs the collector VM on v1.6.2 and does not support `retry_empty`.
 
 **Cost tracking (v1.6.1+)** — automatic whenever the client has a `bq_client`; no caller changes.
 
@@ -121,7 +131,7 @@ All 11 DataForSEO endpoint tables in `data-hub-468216.DataForSEO` now use the st
 - `endpoint.estimate_cost(targets, **same kwargs)` returns `max_usd` (list price + 10% from `DataForSEO.cost_estimates`) and `avg_usd` (observed, from `endpoint_cost_actuals`). Rate constants live in `skyward/data/dataforseo/cost_rates.py`; refresh the table with `scripts/seed_dfs_cost_estimates.py`.
 - Every run fails fast before spending: `InsufficientBalanceError` when balance < max estimate x `balance_buffer` (default 1.2), re-checked at each data save; `InvalidLocationError` when `location_code` isn't in the endpoint's DFS list. Overrides: `ignore_balance_check=True`, `ignore_location_check=True` (both print a warning). The balance check is per-run and reserves nothing, so concurrent runs on the same account can each decide there is enough and overdraw it between them. See "The balance guard protects a single run, not a shared account" in `docs/releases/v1.6.1.md`.
 - Data saves in windows sized by expected rows (<10k once at end, 10k-100k every 10k, >100k every 50k); override with `upload_batch_rows=`. Return values are unchanged, so memory still grows on huge pulls.
-- Location catalog: `DataForSEO.locations` (flags `in_serp`, `in_google_ads`, `in_labs`), refreshed by `scripts/refresh_dfs_locations.py`; `client.get_locations(...)` and the `find_*` helpers read it.
+- Location catalog: `DataForSEO.locations` (flags `in_serp`, `in_google_ads`, `in_labs`, `in_llm_scraper`), refreshed by `scripts/refresh_dfs_locations.py`; `client.get_locations(...)` and the `find_*` helpers read it.
 - Tables/views are created by `scripts/create_dfs_cost_tables.py` (dry-run by default).
 - Collector VM: set `DFS_COLLECTOR_BALANCE_WARN_USD` and `DFS_COLLECTOR_BALANCE_CRITICAL_USD` to enable the low-balance Slack alert.
 
@@ -164,7 +174,7 @@ consumers — that is exactly what happened to `v1.6.0`.
 | `src/skyward/config/` | Central config loader (`load_config()`, `Settings` dataclass) |
 | `src/skyward/data/bigquery/` | BigQuery client wrapper with upload logging |
 | `src/skyward/data/supabase/` | `SupabaseClient` — psycopg3 transport for the skyward-ops Supabase project (meta schema + future client data) |
-| `src/skyward/data/dataforseo/` | DataForSEO API client (class-based, lazy endpoints), cost logging (`run.py`, `cost_log.py`), estimates (`estimates.py`, `cost_rates.py`), location catalog (`locations.py`) |
+| `src/skyward/data/dataforseo/` | DataForSEO API client (class-based, lazy endpoints), cost logging (`run.py`, `cost_log.py`), estimates (`estimates.py`, `cost_rates.py`), location catalog (`locations.py`), ChatGPT fan-out prompt and response helpers (`fanout.py`) |
 | `src/skyward/data/meta/` | MetaClient — CRUD for Meta tables, backed by Supabase (`meta` schema) via `SupabaseClient` |
 | `src/skyward/data/hub/` | DataHub — hybrid: entities/catalog from Supabase, analytics + upload log from BigQuery |
 | `src/skyward/llm/` | Multi-provider LLM abstraction (OpenAI, Gemini, Perplexity, Anthropic, Grok) with cost tracking |
