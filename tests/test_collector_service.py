@@ -449,10 +449,11 @@ def test_run_forever_sleep_is_interruptible_by_should_stop(monkeypatch):
     assert steps["n"] <= 2  # broke out mid-sleep, didn't wait the full 30s
 
 
-def test_build_allowlist_has_both_standard_endpoints():
+def test_build_allowlist_has_every_standard_endpoint():
     client = DataForSEOClient(username="u", password="p", bq_client=FakeBigQueryClient(),
                               config=ClientConfig())
     al = build_allowlist(client)
-    assert set(al) == {"serp_google_organic", "keywords_data_google_ads_search_volume"}
+    assert set(al) == {"serp_google_organic", "keywords_data_google_ads_search_volume",
+                       "ai_optimization_chat_gpt_llm_scraper"}
     assert al["serp_google_organic"].canonical_table == "serp-google-organic"
     assert "tasks_ready" in al["serp_google_organic"].ready_url

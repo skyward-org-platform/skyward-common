@@ -92,12 +92,21 @@ CREATE TABLE IF NOT EXISTS `{T}.locations` (
   in_serp               BOOL               OPTIONS(description="Accepted by SERP endpoints."),
   in_google_ads         BOOL               OPTIONS(description="Accepted by Google Ads (search volume) endpoints."),
   in_labs               BOOL               OPTIONS(description="Accepted by DataForSEO Labs endpoints."),
+  in_llm_scraper        BOOL               OPTIONS(description="Accepted by the AI Optimization ChatGPT LLM Scraper (fan-out) endpoint. Country level only. NULL until the first refresh after the column was added."),
   available_languages   STRING             OPTIONS(description="Labs only: JSON text of supported languages."),
   refreshed_at          TIMESTAMP          OPTIONS(description="When refresh_locations() last replaced the table.")
 )
 CLUSTER BY location_code
 OPTIONS(description="Cached DataForSEO location catalog. Replace with scripts/refresh_dfs_locations.py.")
 """.strip()
+
+# The locations table predates in_llm_scraper; CREATE TABLE IF NOT EXISTS leaves an existing
+# table alone, so add the column explicitly. Safe to re-run.
+LOCATIONS_ADD_LLM_SCRAPER = (
+    f"ALTER TABLE `{T}.locations` ADD COLUMN IF NOT EXISTS in_llm_scraper BOOL "
+    f'OPTIONS(description="Accepted by the AI Optimization ChatGPT LLM Scraper (fan-out) '
+    f'endpoint. Country level only. NULL until the first refresh after the column was added.")'
+)
 
 JOB_COSTS_VIEW = f"""
 CREATE OR REPLACE VIEW `{T}.job_costs` AS
@@ -203,6 +212,7 @@ ALL_STATEMENTS: list[tuple[str, str]] = [
     ("job_runs", JOB_RUNS_DDL),
     ("cost_estimates", COST_ESTIMATES_DDL),
     ("locations", LOCATIONS_DDL),
+    ("locations.in_llm_scraper", LOCATIONS_ADD_LLM_SCRAPER),
     ("job_costs", JOB_COSTS_VIEW),
     ("job_progress", JOB_PROGRESS_VIEW),
     ("endpoint_cost_actuals", ENDPOINT_COST_ACTUALS_VIEW),

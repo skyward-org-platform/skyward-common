@@ -6,6 +6,7 @@ ENDPOINTS = {
     "dataforseo_labs_google_keyword_suggestions", "dataforseo_labs_google_ranked_keywords",
     "dataforseo_labs_google_related_keywords", "dataforseo_labs_google_search_intent",
     "keywords_data_google_ads_search_volume", "serp_google_organic",
+    "ai_optimization_chat_gpt_llm_scraper",
 }
 
 
@@ -19,13 +20,26 @@ def test_standard_rates_exist_for_standard_endpoints():
     keys = rates_by_key()
     assert ("serp_google_organic", "standard") in keys
     assert ("keywords_data_google_ads_search_volume", "standard") in keys
+    assert ("ai_optimization_chat_gpt_llm_scraper", "standard") in keys
+
+
+FANOUT = "ai_optimization_chat_gpt_llm_scraper"
 
 
 def test_rates_carry_source_and_verified_date():
     for r in DEFAULT_RATES:
         assert r.source_url.startswith("https://dataforseo.com/pricing/")
-        assert r.verified_on == "2026-09-15"
+        assert r.verified_on == ("2026-10-09" if r.endpoint == FANOUT else "2026-09-15")
         assert r.max_buffer == 0.10
+
+
+def test_fanout_rates_are_flat_per_prompt():
+    k = rates_by_key()
+    live, std = k[(FANOUT, "live")], k[(FANOUT, "standard")]
+    assert (live.price_per_request_usd, live.price_per_item_usd) == (0.0, 0.004)
+    assert (std.price_per_request_usd, std.price_per_item_usd) == (0.0, 0.0012)
+    assert live.item_unit == std.item_unit == "prompt_sent"
+    assert std.max_items_per_request == 100
 
 
 def test_verified_list_prices():

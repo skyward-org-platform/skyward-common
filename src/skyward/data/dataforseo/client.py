@@ -130,6 +130,7 @@ class DataForSEOClient:
         self._dataforseo_labs_google_search_intent = None
         self._dataforseo_labs_google_domain_rank_overview = None
         self._keywords_data_google_ads_search_volume = None
+        self._ai_optimization_chat_gpt_llm_scraper = None
 
     @property
     def meta_client(self):
@@ -196,8 +197,12 @@ class DataForSEOClient:
         max_retries: int | None = None,
         retry_delay: int | None = None,
         status_sink: dict | None = None,
+        timeout: float = 30,
     ) -> dict | None:
         """Send a POST request to a DataForSEO endpoint with retry logic.
+
+        `timeout` is the per-attempt transport timeout in seconds. Slow live endpoints
+        (the ChatGPT scraper answers in up to two minutes) pass a longer one.
 
         If `status_sink` is provided, it is populated with the transport-level
         `http_status` (the HTTP status code, or None on a network failure where no
@@ -215,7 +220,7 @@ class DataForSEOClient:
                 status_sink["error"] = ""
             resp = None
             try:
-                resp = sess.post(endpoint, json=payload, timeout=30)
+                resp = sess.post(endpoint, json=payload, timeout=timeout)
                 if status_sink is not None:
                     status_sink["http_status"] = resp.status_code
                 resp.raise_for_status()
@@ -512,6 +517,14 @@ class DataForSEOClient:
             from skyward.data.dataforseo.endpoints.keywords_data_google_ads_search_volume import KeywordsDataGoogleAdsSearchVolume
             self._keywords_data_google_ads_search_volume = KeywordsDataGoogleAdsSearchVolume(self)
         return self._keywords_data_google_ads_search_volume
+
+    @property
+    def ai_optimization_chat_gpt_llm_scraper(self):
+        """Access the ai_optimization/chat_gpt/llm_scraper endpoint (ChatGPT fan-out queries)."""
+        if self._ai_optimization_chat_gpt_llm_scraper is None:
+            from skyward.data.dataforseo.endpoints.ai_optimization_chat_gpt_llm_scraper import AiOptimizationChatGptLlmScraper
+            self._ai_optimization_chat_gpt_llm_scraper = AiOptimizationChatGptLlmScraper(self)
+        return self._ai_optimization_chat_gpt_llm_scraper
 
     # -------------------------------------------------------------------------
     # Legacy compatibility properties

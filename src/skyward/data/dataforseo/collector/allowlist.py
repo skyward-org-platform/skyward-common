@@ -20,6 +20,7 @@ import pandas as pd
 _STANDARD_ENDPOINTS = (
     "serp_google_organic",
     "keywords_data_google_ads_search_volume",
+    "ai_optimization_chat_gpt_llm_scraper",
 )
 
 

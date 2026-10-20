@@ -1,0 +1,309 @@
+{
+ "version": "0.1.20260917",
+ "status_code": 20000,
+ "status_message": "Ok.",
+ "time": "26.3118 sec.",
+ "cost": 0.004,
+ "tasks_count": 1,
+ "tasks_error": 0,
+ "tasks": [
+  {
+   "id": "10091917-6590-0629-0000-868b1e788b29",
+   "status_code": 20000,
+   "status_message": "Ok.",
+   "time": "26.1865 sec.",
+   "cost": 0.004,
+   "result_count": 1,
+   "path": [
+    "v3",
+    "ai_optimization",
+    "chat_gpt",
+    "llm_scraper",
+    "live",
+    "advanced"
+   ],
+   "data": {
+    "api": "ai_optimization",
+    "function": "live",
+    "se": "chat_gpt",
+    "keyword": "How much does a charter bus cost in Chicago?",
+    "location_code": 2840,
+    "language_code": "en",
+    "force_web_search": true,
+    "tag": "probe-live",
+    "device": "desktop",
+    "os": "windows"
+   },
+   "result": [
+    {
+     "keyword": "How much does a charter bus cost in Chicago?",
+     "location_code": 2840,
+     "language_code": "en",
+     "model": "gpt-6",
+     "check_url": "https://chatgpt.com/?prompt=How%20much%20does%20a%20charter%20bus%20cost%20in%20Chicago%3F&hints=search",
+     "datetime": "2026-10-09 19:18:21 +00:00",
+     "markdown": "Charter bus rentals in Chicago typically cost **a few hundred to over \\$1,500 per trip**, depending on the bus size, rental duration, mileage, and time of year. The biggest factors are whether you need a local transfer, a full-day rental, or a long-distance trip.\n\nHere\u2019s a practical guide to budgeting for a Chicago charter bus in 2026.\n\n## Chicago charter bus rental prices\n\nEstimated 2026 rates in USD\n\n![Our Fleet - Limo Service Denver, CO | Colorado Transfer](https://images.openai.com/static-rsc-4/dvR4-tdhatPkPYTRiBbpnKc1_5voBLsfn7FunkKgBKW0HgWtl_E3rCtZNfUISteD0LKZ1GYLOsrArgvEwel8CR63CWX1JOiX",
+     "search_results": [
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.metropolitanshuttle.com/charter-bus-pricing/",
+       "domain": "www.metropolitanshuttle.com",
+       "title": "Charter Bus Rental Costs 2026: Rates From 20 Real Trips - Metropolitan Shuttle",
+       "description": null,
+       "breadcrumb": "www.metropolitanshuttle.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.metropolitanshuttle.com/charter-bus-rental-cost-chicago/",
+       "domain": "www.metropolitanshuttle.com",
+       "title": "How Much Does a Charter Bus Cost in Chicago in 2026? - Metropolitan Shuttle",
+       "description": null,
+       "breadcrumb": "www.metropolitanshuttle.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.chicagobuschartercompany.com/charter-bus-prices",
+       "domain": "www.chicagobuschartercompany.com",
+       "title": "Charter Bus Prices | Chicago Charter Bus Company",
+       "description": null,
+       "breadcrumb": "www.chicagobuschartercompany.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.choosechicago.com/listing/price4limo/",
+       "domain": "www.choosechicago.com",
+       "title": "Price 4 Charter Buses & Limos in Chicago | Choose Chicago",
+       "description": null,
+       "breadcrumb": "www.choosechicago.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.reddit.com/r/Chicagoweddings/comments/1qwz3og/party_bussprinter_van/",
+       "domain": "www.reddit.com",
+       "title": "Party bus/sprinter van",
+       "description": null,
+       "breadcrumb": "www.reddit.com"
+      },
+      {
+       "type": "chatgpt_search_result",
+       "url": "https://www.reddit.com/r/Chicagoweddings/comments/1srb43s/party_bus/",
+       "domain": "www.reddit.com",
+       "title": "Party bus",
+       "description": null,
+       "breadcrumb": "www.reddit.com"
+      }
+     ],
+     "sources": [
+      {
+       "type": "chat_gpt_source",
+       "title": "How Much Does a Charter Bus Cost in Chicago in 2026?",
+       "snippet": null,
+       "domain": "www.metropolitanshuttle.com",
+       "url": "https://www.metropolitanshuttle.com/charter-bus-rental-cost-chicago/",
+       "thumbnail": null,
+       "source_name": "Metropolitan Shuttle",
+       "publication_date": "2026-07-23 00:00:00 +00:00",
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Charter Bus Prices",
+       "snippet": null,
+       "domain": "www.chicagobuschartercompany.com",
+       "url": "https://www.chicagobuschartercompany.com/charter-bus-prices",
+       "thumbnail": null,
+       "source_name": "Chicago Charter Bus Company",
+       "publication_date": null,
+       "markdown": null
+      },
+      {
+       "type": "chat_gpt_source",
+       "title": "Price 4 Charter Buses & Limos in Chicago",
+       "snippet": null,
+       "domain": "www.choosechicago.com",
+       "url": "https://www.choosechicago.com/listing/price4limo/",
+       "thumbnail": null,
+       "source_name": "Choose Chicago",
+       "publication_date": null,
+       "markdown": null
+      }
+     ],
+     "fan_out_queries": [
+      "Chicago charter bus rental prices 2026 hourly daily rates charter bus companies"
+     ],
+     "brand_entities": null,
+     "se_results_count": 0,
+     "item_types": [
+      "chat_gpt_text",
+      "chat_gpt_images",
+      "chat_gpt_table"
+     ],
+     "items_count": 9,
+     "items": [
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 1,
+       "rank_absolute": 1,
+       "markdown": "Charter bus rentals in Chicago typically cost **a few hundred to over \\$1,500 per trip**, depending on the bus size, ren",
+       "sources": null,
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 1,
+       "rank_absolute": 2,
+       "markdown": "![Our Fleet - Limo Service Denver, CO | Colorado Transfer](https://images.openai.com/static-rsc-4/dvR4-tdhatPkPYTRiBbpnK",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://coloradotransfer.com/fleet",
+         "alt": "Our Fleet - Limo Service Denver, CO | Colorado Transfer",
+         "image_url": "https://images.openai.com/static-rsc-4/dvR4-tdhatPkPYTRiBbpnKc1_5voBLsfn7FunkKgBKW0HgWtl_E3rCtZNfUISteD0LKZ1GYLOsrArgvEwel8CR63CWX1JOiXNjjMYU9Yrgu3RIaTAcgVg_N3I2NeZwQYpL2Eb_aufxWOkyWkJkMXI2QD60EIBzCJP82xu_BsVWAe6OZf1FZdUHjzBMEdkZan?purpose=fullsize",
+         "markdown": "![Our Fleet - Limo Service Denver, CO | Colorado Transfer](https://images.openai.com/static-rsc-4/dvR4-tdhatPkPYTRiBbpnKc1_5voBLsfn7FunkKgBKW0HgWtl_E3rCtZNfUISteD0LKZ1GYLOsrArgvEwel8CR63CWX1JOiXNjjMYU9Yrgu3RIaTAcgVg_N3I2NeZwQYpL2Eb_aufxWOkyWkJkMXI2QD60EIBzCJP82xu_BsVWAe6OZf1FZdUHjzBMEdkZan?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 2,
+       "rank_absolute": 3,
+       "markdown": "\n\n**Sprinter van**\n\n12\u201314 passengers\n\n## \\$135\u2013\\$180/hr\n\nFull day: \\$1,200\u2013\\$1,900\n\n---\n\n",
+       "sources": null,
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 2,
+       "rank_absolute": 4,
+       "markdown": "![2024 Starcraft Allstar 25 Shuttle Bus AS25G2400GYE24 | Model 1](https://images.openai.com/static-rsc-4/FUephM07bO7NS9S",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://www.model1.com/inventory/2024-starcraft-allstar-25-shuttle-bus-1723842/",
+         "alt": "2024 Starcraft Allstar 25 Shuttle Bus AS25G2400GYE24 | Model 1",
+         "image_url": "https://images.openai.com/static-rsc-4/FUephM07bO7NS9SY6ijgnGCSOWZg2ZJU5S7PJw6cSkMbm69TEv2rG6IIHdAD-cDkKDU8MAniT9R1GcA38bYi6DmKfFDbJj6g1uyFzMRMN6fp__Wuw7ARKJN5Nb5Qg-5fSiuE5KvzrLp9k4NYP1GzBpwrdJfYnnmvuOrfzaf0HO5t-0CqzZxGdAA90XdF6-KR?purpose=fullsize",
+         "markdown": "![2024 Starcraft Allstar 25 Shuttle Bus AS25G2400GYE24 | Model 1](https://images.openai.com/static-rsc-4/FUephM07bO7NS9SY6ijgnGCSOWZg2ZJU5S7PJw6cSkMbm69TEv2rG6IIHdAD-cDkKDU8MAniT9R1GcA38bYi6DmKfFDbJj6g1uyFzMRMN6fp__Wuw7ARKJN5Nb5Qg-5fSiuE5KvzrLp9k4NYP1GzBpwrdJfYnnmvuOrfzaf0HO5t-0CqzZxGdAA90XdF6-KR?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 3,
+       "rank_absolute": 5,
+       "markdown": "\n\n**Minibus**\n\n20\u201335 passengers\n\n## \\$150\u2013\\$230/hr\n\nFull day: \\$1,650\u2013\\$2,100\n\n---\n\n",
+       "sources": null,
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_images",
+       "rank_group": 3,
+       "rank_absolute": 6,
+       "markdown": "![Fleet - Mid America Charter Bus](https://images.openai.com/static-rsc-4/h24pVHHO9-6nM3ywRUD_aYU0DvsVM1sp3JPGwBNqyeRe29",
+       "items": [
+        {
+         "type": "chat_gpt_images_element",
+         "url": "https://buscharterchicago.com/fleet/",
+         "alt": "Fleet - Mid America Charter Bus",
+         "image_url": "https://images.openai.com/static-rsc-4/h24pVHHO9-6nM3ywRUD_aYU0DvsVM1sp3JPGwBNqyeRe29-bq-npb-xEGQp14EjJTJ5vaBrQhBZhs2lORK-_c2NRCvZVr1-PRsQycweAJp7XMVnIpw_N9lObdKmKchgFCO30XE-xup616SpWsYQPXSJQrnV6qK4h8OBkycNueeDJMst2Z4E2hX-Juseqa6AG?purpose=fullsize",
+         "markdown": "![Fleet - Mid America Charter Bus](https://images.openai.com/static-rsc-4/h24pVHHO9-6nM3ywRUD_aYU0DvsVM1sp3JPGwBNqyeRe29-bq-npb-xEGQp14EjJTJ5vaBrQhBZhs2lORK-_c2NRCvZVr1-PRsQycweAJp7XMVnIpw_N9lObdKmKchgFCO30XE-xup616SpWsYQPXSJQrnV6qK4h8OBkycNueeDJMst2Z4E2hX-Juseqa6AG?purpose=fullsize)"
+        }
+       ]
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 4,
+       "rank_absolute": 7,
+       "markdown": "\n\n**Full-size charter bus**\n\n40\u201356 passengers\n\n## \\$180\u2013\\$320/hr\n\nFull day: \\$2,000\u2013\\$3,200\n\nRates are planning estimate",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "How Much Does a Charter Bus Cost in Chicago in 2026?",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/charter-bus-rental-cost-chicago/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": "2026-07-23 00:00:00 +00:00",
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Charter Bus Prices",
+         "snippet": null,
+         "domain": "www.chicagobuschartercompany.com",
+         "url": "https://www.chicagobuschartercompany.com/charter-bus-prices",
+         "thumbnail": null,
+         "source_name": "Chicago Charter Bus Company",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Price 4 Charter Buses & Limos in Chicago",
+         "snippet": null,
+         "domain": "www.choosechicago.com",
+         "url": "https://www.choosechicago.com/listing/price4limo/",
+         "thumbnail": null,
+         "source_name": "Choose Chicago",
+         "publication_date": null,
+         "markdown": null
+        }
+       ],
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_table",
+       "rank_group": 1,
+       "rank_absolute": 8,
+       "text": null,
+       "markdown": "| Type of trip | Estimated budget |\n|--------|--------|\n| Short local transfer | \\$400\u2013\\$800 |\n| 4\u20135 hour group outing |",
+       "brand_entities": null
+      },
+      {
+       "type": "chat_gpt_text",
+       "rank_group": 5,
+       "rank_absolute": 9,
+       "markdown": "\nThese are rough budgeting estimates, not guaranteed quotes. Minimum rental hours, mileage, and vehicle availability can",
+       "sources": [
+        {
+         "type": "chat_gpt_source",
+         "title": "How Much Does a Charter Bus Cost in Chicago in 2026?",
+         "snippet": null,
+         "domain": "www.metropolitanshuttle.com",
+         "url": "https://www.metropolitanshuttle.com/charter-bus-rental-cost-chicago/",
+         "thumbnail": null,
+         "source_name": "Metropolitan Shuttle",
+         "publication_date": "2026-07-23 00:00:00 +00:00",
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Charter Bus Prices",
+         "snippet": null,
+         "domain": "www.chicagobuschartercompany.com",
+         "url": "https://www.chicagobuschartercompany.com/charter-bus-prices",
+         "thumbnail": null,
+         "source_name": "Chicago Charter Bus Company",
+         "publication_date": null,
+         "markdown": null
+        },
+        {
+         "type": "chat_gpt_source",
+         "title": "Price 4 Charter Buses & Limos in Chicago",
+         "snippet": null,
+         "domain": "www.choosechicago.com",
+         "url": "https://www.choosechicago.com/listing/price4limo/",
+         "thumbnail": null,
+         "source_name": "Choose Chicago",
+         "publication_date": null,
+         "markdown": null
+        }
+       ],
+       "brand_entities": null
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

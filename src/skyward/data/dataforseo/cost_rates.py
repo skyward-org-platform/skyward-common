@@ -20,6 +20,8 @@ LABS_URL = "https://dataforseo.com/pricing/dataforseo-labs/dataforseo-google-api
 BACKLINKS_URL = "https://dataforseo.com/pricing/backlinks/backlinks"
 SERP_URL = "https://dataforseo.com/pricing/serp/google-organic-serp-api"
 ADS_URL = "https://dataforseo.com/pricing/keywords-data/google-ads"
+LLM_SCRAPER_URL = "https://dataforseo.com/pricing/ai-optimization/llm-scraper"
+LLM_SCRAPER_VERIFIED_ON = "2026-10-09"
 
 
 @dataclass(frozen=True)
@@ -28,7 +30,7 @@ class Rate:
     endpoint_mode: str
     price_per_request_usd: float
     price_per_item_usd: float
-    item_unit: str  # "result_row" | "keyword_sent" | "serp_page" | "none"
+    item_unit: str  # "result_row" | "keyword_sent" | "serp_page" | "prompt_sent" | "none"
     max_items_per_request: int | None
     source_url: str
     verified_on: str = VERIFIED_ON
@@ -66,6 +68,13 @@ DEFAULT_RATES: tuple[Rate, ...] = (
          None, SERP_URL, notes="Per 10 results of depth."),
     Rate("serp_google_organic", "standard", 0.0, 0.0006, "serp_page",
          None, SERP_URL, notes="Per 10 results of depth, normal priority."),
+    Rate("ai_optimization_chat_gpt_llm_scraper", "live", 0.0, 0.004, "prompt_sent",
+         1, LLM_SCRAPER_URL, verified_on=LLM_SCRAPER_VERIFIED_ON,
+         notes="Flat per prompt. One prompt per live request."),
+    Rate("ai_optimization_chat_gpt_llm_scraper", "standard", 0.0, 0.0012, "prompt_sent",
+         100, LLM_SCRAPER_URL, verified_on=LLM_SCRAPER_VERIFIED_ON,
+         notes="Flat per prompt, normal priority; high priority (2) bills double, which "
+               "plan() expresses by doubling the item count."),
 )
 
 

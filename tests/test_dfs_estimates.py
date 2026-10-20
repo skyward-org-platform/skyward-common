@@ -1,3 +1,4 @@
+import pytest
 import pandas as pd
 
 from skyward.data.dataforseo import DataForSEOClient
@@ -162,3 +163,36 @@ def test_null_max_items_per_request_is_allowed_not_flagged():
     assert est.basis == "list_price"
     rate = estimator.rates()[("dataforseo_labs_google_ranked_keywords", "live")]
     assert rate.max_items_per_request is None   # row was accepted, not skipped
+
+
+def test_missing_rate_warns_once_that_the_balance_guard_is_off(capsys, caplog):
+    client = DataForSEOClient(username="u", password="p", bq_client=None)
+    est = CostEstimator(client)
+    with caplog.at_level("WARNING"):
+        est.estimate(_plan(endpoint="fake_endpoint"))
+        est.estimate(_plan(endpoint="fake_endpoint"))
+    out = capsys.readouterr().out
+    assert out.count("balance guard is OFF") == 1
+    assert sum("balance guard is OFF" in r.message for r in caplog.records) == 1
+
+
+def test_known_rate_does_not_warn(capsys):
+    client = DataForSEOClient(username="u", password="p", bq_client=None)
+    est = CostEstimator(client).estimate(_plan(endpoint="ai_optimization_chat_gpt_llm_scraper",
+                                               endpoint_mode="standard", planned_requests=1,
+                                               planned_items=100))
+    assert est.basis == "list_price" and est.list_price_usd == 0.12
+    assert "balance guard" not in capsys.readouterr().out
+
+
+def test_flat_per_prompt_price_ignores_observed_per_request_average():
+    """cost_log has one row per task, so the observed "per request" average for the
+    ChatGPT scraper is really per task; multiplying it by requests under-prices a run."""
+    from skyward.data.dataforseo.cost_rates import rates_by_key
+
+    rate = rates_by_key()[("ai_optimization_chat_gpt_llm_scraper", "standard")]
+    plan = _plan(endpoint="ai_optimization_chat_gpt_llm_scraper", endpoint_mode="standard",
+                 planned_requests=7, planned_items=620)
+    est = price_plan(plan, rate, {"sample_requests": 5000, "avg_cost_per_request": 0.0012})
+    assert est.basis == "list_price"
+    assert est.avg_usd == pytest.approx(0.744) and est.max_usd == pytest.approx(0.8184)
