@@ -248,3 +248,32 @@ def test_search_volume_job_runs_partial_names_rejected_keywords(bq):
     end = [r for r in _rows(bq, "job_runs") if r["event"] == "end"][-1]
     assert end["status"] == "partial"
     assert "'a, b'" in end["error"]
+
+
+class NoDataSession:
+    """keyword_overview / search_intent for keywords DataForSEO holds nothing on: an
+    accepted, billed task whose result has no items."""
+
+    def __init__(self):
+        self.calls = []
+
+    def post(self, url, json=None, timeout=None):
+        self.calls.append((url, json))
+        return _Resp({"status_code": 20000, "tasks": [
+            {"id": f"task-{len(self.calls)}", "status_code": 20000, "cost": 0.0101,
+             "data": t, "result": [{"items_count": 0, "items": None}]} for t in json]})
+
+
+@pytest.mark.parametrize("attr", ["dataforseo_labs_google_keyword_overview",
+                                  "dataforseo_labs_google_search_intent"])
+def test_a_no_data_answer_is_not_resent(bq, attr):
+    # Each resend is billed again. With bisection after a 40501 the small halves are
+    # mostly no-data keywords, so five sends each turned ~16 batches into 536 billed
+    # tasks on the InSoFast P3 run (2026-10-17).
+    session = NoDataSession()
+    ep = getattr(_client(bq, session), attr)
+    df = asyncio.run(ep.live_all(["nothing here", "nor here"], domain=None,
+                                 job_id=generate_job_id(), upload=False,
+                                 ignore_balance_check=True))
+    assert df.empty
+    assert len(session.calls) == 1
