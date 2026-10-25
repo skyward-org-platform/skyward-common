@@ -192,7 +192,10 @@ class DataforseoLabsGoogleKeywordOverview(BaseEndpoint):
             build_payload=lambda kws: self._build_payload(kws, **kwargs),
             parse=self._parse_response,
             empty=lambda: pd.DataFrame(columns=self._get_schema() + ["task_id"]),
-            max_retries=max_retries, retry_delay=retry_delay, debug=debug)
+            max_retries=max_retries, retry_delay=retry_delay, debug=debug,
+            # No items is a real answer (DataForSEO holds nothing on these keywords),
+            # not a glitch; resending re-bills the task.
+            retry_empty=False)
 
     async def live_all(self, *args, **kwargs) -> pd.DataFrame:
         """Async wrapper — delegates to _live_all_sync in a thread executor
