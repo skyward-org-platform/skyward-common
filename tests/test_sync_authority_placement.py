@@ -76,3 +76,38 @@ def test_local_test_flag_refuses_remote_hosts(monkeypatch):
     except s.SyncError:
         return
     raise AssertionError("expected a refusal")
+
+
+def test_pre_existing_blank_means_false_and_bad_value_is_reported():
+    v = seed()
+    h = v[0]
+    v[1][h.index("pre_existing")] = "TRUE"
+    v[2][h.index("pre_existing")] = "sort of"
+    p = s.parse_sheet(v)
+    assert p.rows[0]["pre_existing"] is True and p.rows[2]["pre_existing"] is False
+    assert any("row 3, pre_existing" in e for e in p.errors)
+
+
+def test_live_paid_link_must_be_sponsored():
+    v = seed()
+    h = v[0]
+    v[1][h.index("type")] = "paid"  # row 2 is live
+    assert any("sponsored" in e for e in s.parse_sheet(v).errors)
+    v[1][h.index("sponsored")] = "TRUE"
+    assert s.parse_sheet(v).errors == []
+
+
+def test_30d_reading_due_only_after_30_days():
+    import datetime as dt
+
+    import enrich_authority_placement as e
+
+    v = seed()
+    h = v[0]
+    v[1][h.index("went_live")] = "2026-10-01"
+    p = s.parse_sheet(v)
+    assert e.due_from_csv(v, p, "30d", False, dt.date(2026, 10, 30)) == []
+    assert [x[1] for x in e.due_from_csv(v, p, "30d", False, dt.date(2026, 10, 31))] == ["a.com"]
+    v[2][h.index("metrics_read_at")] = "2026-11-11"
+    first = [x[1] for x in e.due_from_csv(v, s.parse_sheet(v), "first", False, dt.date(2026, 11, 11))]
+    assert "b.com" not in first and "a.com" in first

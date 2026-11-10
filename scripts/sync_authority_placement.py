@@ -7,12 +7,16 @@ noise), changed rows are updated, new rows are inserted.
 
 What the sheet owns and what the table owns
 -------------------------------------------
-People edit every spec column EXCEPT these five, which the table owns and
+People edit every spec column EXCEPT these six, which the table owns and
 this script writes back into the sheet after each run so people can see them:
 
     spam_score, site_us_traffic, metrics_read_at   (scripts/enrich_authority_placement.py)
-    quality                                        (generated column)
+    quality, counted                               (generated columns)
     updated_at                                     (set on every real change)
+
+quality = live AND followed AND spam < 40 AND US traffic >= 1000.
+counted = quality, but not pre_existing (live before Skyward started) and not
+paid. Only counted links count toward the target.
 
 A row with a blank placement_id is a new row: the script gives it a uuid and
 writes the uuid back into the sheet, so the row keeps the same key forever.
@@ -60,10 +64,10 @@ SHEET_OWNED = [
     "placement_id", "domain_id", "site", "url_live", "target_page", "page_group",
     "anchor", "anchor_kind", "type", "tactic", "tier", "vendor", "cost_usd",
     "status", "contacted_at", "replied_at", "went_live", "check_30d",
-    "check_90d", "dofollow", "work_item_id", "notes",
+    "check_90d", "dofollow", "pre_existing", "sponsored", "work_item_id", "notes",
 ]
 # Columns the table owns; written back into the sheet, never read from it.
-TABLE_OWNED = ["spam_score", "site_us_traffic", "metrics_read_at", "quality", "updated_at"]
+TABLE_OWNED = ["spam_score", "site_us_traffic", "metrics_read_at", "quality", "counted", "updated_at"]
 
 ENUMS = {
     "page_group": {"home", "pricing", "location", "service", "blog", "other"},
@@ -73,7 +77,7 @@ ENUMS = {
     "status": {"prospect", "contacted", "replied", "agreed", "live", "lost", "declined"},
 }
 DATES = {"contacted_at", "replied_at", "went_live"}
-BOOLS = {"check_30d", "check_90d", "dofollow"}
+BOOLS = {"check_30d", "check_90d", "dofollow", "sponsored"}
 TRUE, FALSE = {"true", "yes", "y", "1"}, {"false", "no", "n", "0"}
 
 
@@ -168,6 +172,14 @@ def parse_sheet(values: list[list]) -> Parsed:
             if v and v not in TRUE | FALSE:
                 bad(c, "must be TRUE or FALSE, or blank if not known")
             out[c] = None if not v else v in TRUE
+
+        v = cells["pre_existing"].lower()
+        if v and v not in TRUE | FALSE:
+            bad("pre_existing", "must be TRUE or FALSE (blank means FALSE)")
+        out["pre_existing"] = v in TRUE
+
+        if out.get("type") == "paid" and out.get("status") == "live" and out["sponsored"] is not True:
+            bad("sponsored", 'a live paid link must be marked rel="sponsored"; check it and set TRUE')
 
         if out.get("status") == "live" and not out["site"]:
             bad("site", "a live link needs its site")
@@ -295,6 +307,7 @@ def emit_sql(rows: list[dict]) -> str:
         "-- unchanged rows are left alone; changed rows are updated; new rows inserted.\n"
         "begin;\n" + head.strip() + "\nvalues\n" + values + tail.rstrip() + ";\n"
         "select count(*) as rows, count(*) filter (where quality) as quality_rows,\n"
+        "       count(*) filter (where counted) as counted_rows,\n"
         "       max(updated_at) as last_change\n"
         "  from authority.placement where domain_id in ("
         + ", ".join(sorted({str(r["domain_id"]) for r in rows})) + ");\n"
@@ -379,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
     mode = "DRY RUN, rolled back" if args.dry_run else "SYNCED"
     print(f"{mode}: {len(parsed.rows)} sheet rows -> {inserted} new, {updated} changed, "
           f"{unchanged} unchanged; {len(parsed.new_ids)} new id(s) given.")
-    print(f"quality (counted toward a target): {sum(1 for v in view.values() if v['quality'])}")
+    print(f"quality: {sum(1 for v in view.values() if v['quality'])}; "
+          f"counted toward the target: {sum(1 for v in view.values() if v['counted'])}")
     if gone:
         print(f"{len(gone)} row(s) are in the table but no longer in the sheet (left as they are):")
         for g in gone:
