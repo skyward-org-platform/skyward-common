@@ -31,6 +31,12 @@ USAGE
 
     SUPABASE_DB_URL=... uv run python scripts/sync_authority_placement.py --dry-run
     SUPABASE_DB_URL=... uv run python scripts/sync_authority_placement.py
+
+    # without Google API access (Workspace blocks gcloud's Sheets scope):
+    # File > Download > CSV on the `placement` tab, then
+    SUPABASE_DB_URL=... uv run python scripts/sync_authority_placement.py --csv ~/Downloads/<file>.csv
+    # Same upsert and checks. Nothing is written back to the sheet, so new
+    # rows must already have a placement_id; the run refuses otherwise.
 """
 
 from __future__ import annotations
@@ -288,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true",
                     help="upsert inside a transaction, report, roll back; the sheet is not touched")
+    ap.add_argument("--csv", metavar="PATH",
+                    help="read a CSV download of the sheet instead of the Sheets API (no write-back)")
     ap.add_argument("--local-test", action="store_true",
                     help="allow a localhost SUPABASE_DB_URL (testing only)")
     args = ap.parse_args(argv)
@@ -295,9 +303,20 @@ def main(argv: list[str] | None = None) -> int:
     import psycopg
 
     url = database_url(args.local_test)
-    session = google_session()
-    values = read_sheet(session)
+    if args.csv:
+        import csv
+        import pathlib
+
+        session = None
+        with pathlib.Path(args.csv).expanduser().open(newline="", encoding="utf-8-sig") as f:
+            values = list(csv.reader(f))
+    else:
+        session = google_session()
+        values = read_sheet(session)
     parsed = parse_sheet(values)
+    if args.csv and parsed.new_ids:
+        parsed.errors += [f"row {n}, placement_id: blank. With --csv nothing is written back, so give "
+                          f"the row an id first (e.g. {pid})" for n, pid in parsed.new_ids.items()]
     if parsed.errors:
         print(f"Nothing written. {len(parsed.errors)} problem(s) in the sheet:")
         for e in parsed.errors:
@@ -324,7 +343,9 @@ def main(argv: list[str] | None = None) -> int:
         for g in gone:
             print("  -", *g)
 
-    if not args.dry_run:
+    if args.csv:
+        print("CSV mode: nothing written back to the sheet.")
+    elif not args.dry_run:
         cells = write_back(session, values[0], parsed, view)
         print(f"wrote {cells} cell(s) back into the sheet")
     return 0
