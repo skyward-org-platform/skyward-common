@@ -119,8 +119,11 @@ class DataForSEOClient:
         self._session = self._create_session()
 
         # Lazy-initialized endpoint instances (imported on first property access)
+        self._backlinks_anchors = None
         self._backlinks_backlinks = None
         self._backlinks_bulk_pages_summary = None
+        self._backlinks_history = None
+        self._backlinks_referring_domains = None
         self._backlinks_summary = None
         self._serp_google_organic = None
         self._dataforseo_labs_google_keyword_suggestions = None
@@ -445,6 +448,30 @@ class DataForSEOClient:
             from skyward.data.dataforseo.endpoints.backlinks_bulk_pages_summary import BacklinksBulkPagesSummary
             self._backlinks_bulk_pages_summary = BacklinksBulkPagesSummary(self)
         return self._backlinks_bulk_pages_summary
+
+    @property
+    def backlinks_history(self):
+        """Access the backlinks/history/live endpoint."""
+        if self._backlinks_history is None:
+            from skyward.data.dataforseo.endpoints.backlinks_history import BacklinksHistory
+            self._backlinks_history = BacklinksHistory(self)
+        return self._backlinks_history
+
+    @property
+    def backlinks_anchors(self):
+        """Access the backlinks/anchors/live endpoint."""
+        if self._backlinks_anchors is None:
+            from skyward.data.dataforseo.endpoints.backlinks_anchors import BacklinksAnchors
+            self._backlinks_anchors = BacklinksAnchors(self)
+        return self._backlinks_anchors
+
+    @property
+    def backlinks_referring_domains(self):
+        """Access the backlinks/referring_domains/live endpoint."""
+        if self._backlinks_referring_domains is None:
+            from skyward.data.dataforseo.endpoints.backlinks_referring_domains import BacklinksReferringDomains
+            self._backlinks_referring_domains = BacklinksReferringDomains(self)
+        return self._backlinks_referring_domains
 
     @property
     def backlinks_summary(self):

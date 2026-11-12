@@ -12,6 +12,7 @@ import time
 import pandas as pd
 
 from skyward.data.dataforseo.base import BaseEndpoint
+from skyward.data.dataforseo.endpoints._backlinks_common import validate_subject
 
 
 class BacklinksSummary(BaseEndpoint):
@@ -19,6 +20,7 @@ class BacklinksSummary(BaseEndpoint):
     TABLE_NAME = "backlinks-summary"
 
     def _build_payload(self, target: str, **kwargs) -> list[dict]:
+        kwargs.pop("subject", None)
         return [{
             "target": target,
             "internal_list_limit": kwargs.get("internal_list_limit", 10),
@@ -30,7 +32,8 @@ class BacklinksSummary(BaseEndpoint):
         n = len(targets)
         return self._make_plan(targets, endpoint_mode, requests=n, items=n, max_rows=n)
 
-    def _parse_response(self, response: dict, target: str) -> pd.DataFrame:
+    def _parse_response(self, response: dict, target: str, subject: str = "client") -> pd.DataFrame:
+        subject = validate_subject(subject)
         try:
             task = response["tasks"][0]
             task_id = task.get("id", "")
@@ -47,6 +50,7 @@ class BacklinksSummary(BaseEndpoint):
             stripped = target_str.split("://", 1)[-1] if target_str else ""
             target_type = "url" if "/" in stripped else "domain"
             rows.append({
+                "subject": subject,
                 "target": target_str,
                 "target_type": target_type,
                 "rank": result.get("rank"),
@@ -81,7 +85,7 @@ class BacklinksSummary(BaseEndpoint):
 
     def _get_schema(self) -> list[str]:
         return [
-            "target", "target_type", "rank", "backlinks", "backlinks_spam_score",
+            "subject", "target", "target_type", "rank", "backlinks", "backlinks_spam_score",
             "target_spam_score", "crawled_pages",
             "referring_domains", "referring_domains_nofollow",
             "referring_main_domains", "referring_main_domains_nofollow",
@@ -127,12 +131,15 @@ class BacklinksSummary(BaseEndpoint):
                 df[col] = df[col].apply(
                     lambda v: json.dumps(v) if isinstance(v, (list, dict)) else v
                 )
+        if "subject" in df.columns:
+            df["subject"] = df["subject"].astype("string")
         return df
 
     def _fetch_live(self, target: str, **kwargs) -> pd.DataFrame:
         cfg = self.config
         # TODO(debug-logs): wire run-scoped collector into this loop (ClickUp 86babz7xp).
         kwargs.pop("_debug_collector", None)  # accepted, not yet captured
+        subject = validate_subject(kwargs.pop("subject", "client"))
         max_retries = kwargs.pop("max_retries", cfg.max_retries)
         retry_delay = kwargs.pop("retry_delay", cfg.retry_delay)
         debug = kwargs.pop("debug", cfg.debug)
@@ -149,7 +156,7 @@ class BacklinksSummary(BaseEndpoint):
                     print(f"[{target}] Invalid response. Attempt {attempt}/{max_retries}")
                 continue
             try:
-                df = self._parse_response(resp, target)
+                df = self._parse_response(resp, target, subject=subject)
                 if not df.empty:
                     return df
             except Exception as e:

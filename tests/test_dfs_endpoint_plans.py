@@ -26,8 +26,20 @@ def test_backlinks_bulk_pages_summary(client):
     assert _p(ep.plan([f"u{i}" for i in range(2500)], batch_size=500)) == (5, 2500, 2500)
 
 
+def test_backlinks_history(client):
+    assert _p(client.backlinks_history.plan(["a", "b", "c"])) == (3, 3, 360)
+
+
 def test_backlinks_summary(client):
     assert _p(client.backlinks_summary.plan(["a", "b", "c"])) == (3, 3, 3)
+
+
+def test_backlinks_referring_domains_and_anchors(client):
+    for ep in (client.backlinks_referring_domains, client.backlinks_anchors):
+        assert _p(ep.plan(["a", "b"])) == (40, 40000, 40000)
+        assert _p(ep.plan(["a"], limit=2500)) == (3, 2500, 2500)
+        assert _p(ep.plan(["a"], limit=2500, page_size=500)) == (5, 2500, 2500)
+        assert ep.plan(["a"], limit=2500).price_inputs == {"limit": 2500, "page_size": 1000}
 
 
 def test_domain_rank_overview(client):

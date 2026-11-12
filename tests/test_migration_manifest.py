@@ -3,14 +3,17 @@
 from scripts.migrate_dataforseo_manifest import MIGRATIONS, Migration
 
 
-def test_manifest_has_12_entries():
-    assert len(MIGRATIONS) == 12
+def test_manifest_has_15_entries():
+    assert len(MIGRATIONS) == 15
 
 
 def test_new_names_match_canonical_format():
     expected = {
+        "backlinks-anchors",
         "backlinks-backlinks",
         "backlinks-bulk_pages_summary",
+        "backlinks-history",
+        "backlinks-referring_domains",
         "backlinks-summary",
         "serp-google-organic",
         "dataforseo_labs-google-keyword_suggestions",
@@ -29,6 +32,20 @@ def test_new_names_match_canonical_format():
 def test_domain_rank_overview_is_new_table():
     m = next(m for m in MIGRATIONS if m.new_name == "dataforseo_labs-google-domain_rank_overview")
     assert m.old_name is None
+
+
+def test_new_backlinks_tables_and_subject_cols():
+    by_name = {m.new_name: m for m in MIGRATIONS}
+    for name in ("backlinks-referring_domains", "backlinks-anchors"):
+        assert by_name[name].old_name is None
+    for name in (
+        "backlinks-summary",
+        "backlinks-history",
+        "backlinks-referring_domains",
+        "backlinks-anchors",
+        "backlinks-bulk_pages_summary",
+    ):
+        assert "subject STRING" in by_name[name].new_schema
 
 
 def test_ranked_keywords_is_in_place_update():

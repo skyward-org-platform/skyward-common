@@ -111,6 +111,7 @@ BACKLINKS_BACKLINKS_COLS = """\
 """
 
 BACKLINKS_BULK_PAGES_SUMMARY_COLS = """\
+  subject STRING OPTIONS(description="Subject role in benchmarking runs ('client' or 'rival')."),
   url STRING OPTIONS(description="Target page URL as submitted to the API (one row per target)."),
   backlinks INT64 OPTIONS(description="Total number of backlinks pointing to the target page."),
   referring_domains INT64 OPTIONS(description="Count of unique referring domains linking to the target."),
@@ -133,7 +134,34 @@ BACKLINKS_BULK_PAGES_SUMMARY_COLS = """\
   lost_date TIMESTAMP OPTIONS(description="UTC timestamp of the last observed backlink if all links have since been lost; NULL while the target still has live backlinks.")
 """
 
+BACKLINKS_HISTORY_COLS = """\
+  subject STRING OPTIONS(description="Classification of target: 'client' or 'rival'."),
+  target STRING OPTIONS(description="The domain, subdomain, or webpage that was queried (echoed from the request)."),
+  target_type STRING OPTIONS(description="Classification of the target — 'domain' if no path component, 'url' if a specific page path was queried. Derived client-side."),
+  date TIMESTAMP OPTIONS(description="UTC timestamp of the historical snapshot (typically the 1st of the month)."),
+  rank INT64 OPTIONS(description="DataForSEO rank score (0-1000 scale) for that specific snapshot."),
+  backlinks INT64 OPTIONS(description="Total count of backlinks pointing to the target at that time."),
+  new_backlinks INT64 OPTIONS(description="Number of newly acquired backlinks for the given month."),
+  lost_backlinks INT64 OPTIONS(description="Number of lost backlinks for the given month."),
+  new_referring_domains INT64 OPTIONS(description="Number of new referring domains acquired in that month."),
+  lost_referring_domains INT64 OPTIONS(description="Number of lost referring domains in that month."),
+  crawled_pages INT64 OPTIONS(description="Total number of crawled pages associated with the target domain."),
+  internal_links_count INT64 OPTIONS(description="Total number of internal links on the target domain."),
+  external_links_count INT64 OPTIONS(description="Total number of external links pointing out from the target domain."),
+  broken_backlinks INT64 OPTIONS(description="Number of broken backlinks pointing to the target."),
+  broken_pages INT64 OPTIONS(description="Number of broken pages found on the target domain."),
+  referring_domains INT64 OPTIONS(description="Number of unique referring domains pointing to the target."),
+  referring_domains_nofollow INT64 OPTIONS(description="Number of referring domains pointing at least one nofollow link to the target."),
+  referring_main_domains INT64 OPTIONS(description="Number of unique root/main domains pointing to the target."),
+  referring_main_domains_nofollow INT64 OPTIONS(description="Number of unique root/main domains pointing at least one nofollow link to the target."),
+  referring_ips INT64 OPTIONS(description="Count of unique IP addresses hosting referring pages."),
+  referring_subnets INT64 OPTIONS(description="Count of unique /24 subnets hosting referring pages."),
+  referring_pages INT64 OPTIONS(description="Total count of unique referring pages linking to the target."),
+  referring_pages_nofollow INT64 OPTIONS(description="Count of referring pages whose links are all nofollow.")
+"""
+
 BACKLINKS_SUMMARY_COLS = """\
+  subject STRING OPTIONS(description="Subject role in benchmarking runs ('client' or 'rival')."),
   target STRING OPTIONS(description="The domain or URL that was queried (echoed from the request)."),
   target_type STRING OPTIONS(description="Classification of the target — 'domain' if no path component, 'url' if a specific page path was queried. Derived client-side."),
   rank INT64 OPTIONS(description="DataForSEO rank score (0-1000) representing the target's backlink authority."),
@@ -162,6 +190,47 @@ BACKLINKS_SUMMARY_COLS = """\
   first_seen TIMESTAMP OPTIONS(description="UTC timestamp of the earliest backlink DataForSEO has recorded for the target."),
   lost_date TIMESTAMP OPTIONS(description="UTC timestamp when the target's backlink profile was last marked as lost (NULL if still live).")
 """
+
+
+def _backlinks_paginated_cols(entity_col: str, entity_description: str) -> str:
+    return f"""\
+  subject STRING OPTIONS(description="Subject role in benchmarking runs ('client' or 'rival')."),
+  target STRING OPTIONS(description="The domain, subdomain, or webpage that was queried (echoed from the request)."),
+  type STRING OPTIONS(description="DataForSEO item type (e.g. 'backlinks_referring_domain' or 'backlinks_anchor')."),
+  {entity_col} STRING OPTIONS(description="{entity_description}"),
+  rank INT64 OPTIONS(description="DataForSEO rank score (0-1000 scale)."),
+  backlinks INT64 OPTIONS(description="Total number of backlinks for this entry pointing to the target."),
+  first_seen TIMESTAMP OPTIONS(description="UTC timestamp when DataForSEO first observed a backlink from this entry."),
+  lost_date TIMESTAMP OPTIONS(description="UTC timestamp when all backlinks from this entry were marked lost (NULL while live)."),
+  backlinks_spam_score INT64 OPTIONS(description="Aggregate spam score (0-100) across backlinks for this entry."),
+  broken_backlinks INT64 OPTIONS(description="Count of broken backlinks for this entry pointing to the target."),
+  broken_pages INT64 OPTIONS(description="Count of broken referring pages associated with this entry."),
+  referring_domains INT64 OPTIONS(description="Count of unique referring domains associated with this entry."),
+  referring_domains_nofollow INT64 OPTIONS(description="Count of referring domains whose links are all rel='nofollow'."),
+  referring_main_domains INT64 OPTIONS(description="Count of unique root/main domains associated with this entry."),
+  referring_main_domains_nofollow INT64 OPTIONS(description="Count of referring root/main domains whose links are all rel='nofollow'."),
+  referring_ips INT64 OPTIONS(description="Count of unique IP addresses hosting referring pages for this entry."),
+  referring_subnets INT64 OPTIONS(description="Count of unique /24 subnets hosting referring pages for this entry."),
+  referring_pages INT64 OPTIONS(description="Count of unique referring pages linking to the target for this entry."),
+  referring_pages_nofollow INT64 OPTIONS(description="Count of referring pages whose links to the target are all rel='nofollow'."),
+  referring_links_tld STRING OPTIONS(description="Stringified JSON dict-of-counters mapping referring TLDs to link counts."),
+  referring_links_types STRING OPTIONS(description="Stringified JSON dict-of-counters mapping link types to counts."),
+  referring_links_attributes STRING OPTIONS(description="Stringified JSON dict-of-counters mapping link attributes to counts."),
+  referring_links_platform_types STRING OPTIONS(description="Stringified JSON dict-of-counters mapping platform types to counts."),
+  referring_links_semantic_locations STRING OPTIONS(description="Stringified JSON dict-of-counters mapping semantic page locations to counts."),
+  referring_links_countries STRING OPTIONS(description="Stringified JSON dict-of-counters mapping ISO country codes to counts.")
+"""
+
+
+BACKLINKS_REFERRING_DOMAINS_COLS = _backlinks_paginated_cols(
+    "referring_domain",
+    "Referring domain hostname pointing to the target (renamed from API field 'domain').",
+)
+
+BACKLINKS_ANCHORS_COLS = _backlinks_paginated_cols(
+    "anchor",
+    "Anchor text string used in backlinks pointing to the target.",
+)
 
 SERP_GOOGLE_ORGANIC_COLS = """\
   keyword STRING OPTIONS(description="The search query submitted to Google."),
@@ -524,6 +593,22 @@ MIGRATIONS: list[Migration] = [
         # caller context that the new metadata block expects. Drop to keep
         # semantics clean; info is derivable from `url` at query time.
         preserve_domain_column=False,
+    ),
+    Migration(
+        new_name="backlinks-history",
+        new_schema=METADATA_BLOCK_SQL + BACKLINKS_HISTORY_COLS,
+    ),
+    Migration(
+        # New table — no old_name
+        old_name=None,
+        new_name="backlinks-referring_domains",
+        new_schema=METADATA_BLOCK_SQL + BACKLINKS_REFERRING_DOMAINS_COLS,
+    ),
+    Migration(
+        # New table — no old_name
+        old_name=None,
+        new_name="backlinks-anchors",
+        new_schema=METADATA_BLOCK_SQL + BACKLINKS_ANCHORS_COLS,
     ),
     Migration(
         old_name="backlinks_summary_live",
