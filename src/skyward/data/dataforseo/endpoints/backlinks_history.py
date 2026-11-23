@@ -75,6 +75,8 @@ class BacklinksHistory(BaseEndpoint):
                     "task_id": task_id,
                 })
 
+        if not rows:
+            return pd.DataFrame(columns=self._get_schema() + ["task_id"])
         return pd.DataFrame(rows)
 
     def _get_schema(self) -> list[str]:
@@ -94,6 +96,8 @@ class BacklinksHistory(BaseEndpoint):
         return ["target", "date"]
 
     def _cast_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
         int_cols = [
             "rank", "backlinks", "new_backlinks", "lost_backlinks",
             "new_referring_domains", "lost_referring_domains",
@@ -132,10 +136,15 @@ class BacklinksHistory(BaseEndpoint):
                 if debug:
                     print(f"[{target}] Invalid response. Attempt {attempt}/{max_retries}")
                 continue
+            tasks = resp.get("tasks") or []
+            task = tasks[0] if tasks else {}
+            status_code = task.get("status_code")
+            if status_code is not None and status_code != 20000:
+                if debug:
+                    print(f"[{target}] DFS task status {status_code}: {task.get('status_message')}. Attempt {attempt}/{max_retries}")
+                continue
             try:
-                df = self._parse_response(resp, target, **kwargs)
-                if not df.empty:
-                    return df
+                return self._parse_response(resp, target, **kwargs)
             except Exception as e:
                 if debug:
                     print(f"[{target}] Parse error: {e}. Attempt {attempt}/{max_retries}")

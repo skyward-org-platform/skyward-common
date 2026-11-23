@@ -8,6 +8,22 @@ A version only reaches consumers when a **GitHub Release** is published. Tagging
 not publish anything (see `.github/workflows/publish.yml`, which triggers on
 `release: [published]`).
 
+## [1.6.3] - 2026-11-23
+
+New Backlinks endpoints and batch orchestration for Authority Data (referring domains, anchors, history).
+
+### Added
+- **`client.backlinks_referring_domains`**: Paginated referring domains (`v3/backlinks/referring_domains/live` -> `DataForSEO.backlinks-referring_domains`).
+- **`client.backlinks_anchors`**: Paginated anchor texts (`v3/backlinks/anchors/live` -> `DataForSEO.backlinks-anchors`).
+- **`client.backlinks_history`**: Historical backlink and referring domain snapshots (`v3/backlinks/history/live` -> `DataForSEO.backlinks-history`).
+- **Tables `DataForSEO.backlinks-referring_domains`**, **`DataForSEO.backlinks-anchors`**, and **`DataForSEO.backlinks-history`**.
+- **`subject` column (`client` | `rival`)** across all Backlinks endpoints, including `backlinks-summary` and `backlinks-bulk_pages_summary`.
+- **`skyward.data.dataforseo.backlinks_batch`**: Batch orchestration module for multi-client runs with shared rival deduplication and dry-run work plan estimation.
+
+### Fixed
+- **`backlinks_history`**: Do not retry valid empty responses (`status_code == 20000` with no items) for domains with no history, eliminating redundant billed requests.
+- **`_backlinks_common`**: Warn and raise on task failure or error status during pagination so partial pulls are not quietly treated as complete.
+
 ## [1.6.2] - 2026-10-09
 
 Full notes: [docs/releases/v1.6.2.md](docs/releases/v1.6.2.md)

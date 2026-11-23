@@ -160,3 +160,68 @@ def test_empty_response(endpoint):
     assert df.empty
     assert "task_id" in df.columns
 
+
+def test_valid_empty_history_does_not_retry(client, endpoint):
+    calls = []
+
+    def fake_post(url, payload, max_retries=1, retry_delay=0):
+        calls.append((url, payload))
+        return {
+            "status_code": 20000,
+            "tasks": [{
+                "id": f"task_{len(calls)}",
+                "status_code": 20000,
+                "cost": 0.02,
+                "data": payload[0],
+                "result": [{
+                    "target": payload[0]["target"],
+                    "items_count": 0,
+                    "items": None,
+                }],
+            }],
+        }
+
+    client._post = fake_post
+    df = endpoint._fetch_live("nodata-domain.com", max_retries=5)
+    assert df.empty
+    assert "task_id" in df.columns
+    # Must only be called once — no retry when DataForSEO returns a valid empty result
+    assert len(calls) == 1
+
+
+def test_failed_task_retries_history(client, endpoint):
+    calls = []
+
+    def fake_post(url, payload, max_retries=1, retry_delay=0):
+        calls.append((url, payload))
+        if len(calls) < 3:
+            return {
+                "status_code": 20000,
+                "tasks": [{
+                    "id": f"task_{len(calls)}",
+                    "status_code": 50000,
+                    "status_message": "Internal error",
+                    "cost": 0.0,
+                    "data": payload[0],
+                    "result": None,
+                }],
+            }
+        return {
+            "status_code": 20000,
+            "tasks": [{
+                "id": f"task_{len(calls)}",
+                "status_code": 20000,
+                "cost": 0.02,
+                "data": payload[0],
+                "result": [{
+                    "target": payload[0]["target"],
+                    "items": [{"date": "2026-01-31 00:00:00 +00:00", "backlinks": 5}],
+                }],
+            }],
+        }
+
+    client._post = fake_post
+    df = endpoint._fetch_live("eventual-domain.com", max_retries=5, retry_delay=0)
+    assert len(df) == 1
+    assert len(calls) == 3
+

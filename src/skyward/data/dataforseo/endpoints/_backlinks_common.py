@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 from typing import Any
@@ -10,6 +11,8 @@ from typing import Any
 import pandas as pd
 
 from skyward.data.dataforseo.base import BaseEndpoint
+
+logger = logging.getLogger(__name__)
 
 VALID_SUBJECTS = ("client", "rival")
 DFS_MAX_OFFSET = 20000
@@ -206,6 +209,7 @@ class PaginatedBacklinksEndpoint(BaseEndpoint):
         retry_delay: float,
         debug: bool,
     ) -> tuple[pd.DataFrame | None, int | None]:
+        offset = payload[0].get("offset", 0) if payload else 0
         for attempt in range(1, max_retries + 1):
             if attempt > 1:
                 time.sleep(retry_delay)
@@ -219,18 +223,27 @@ class PaginatedBacklinksEndpoint(BaseEndpoint):
                 task = tasks[0] if tasks else {}
                 status_code = task.get("status_code")
                 if status_code is not None and status_code != 20000:
+                    status_msg = task.get("status_message", "Unknown error")
+                    msg = f"[{target}] DFS task status {status_code}: {status_msg} (offset={offset})"
+                    logger.warning(msg)
                     if debug:
-                        print(f"[{target}] DFS task status {status_code}: {task.get('status_message')}")
-                    return pd.DataFrame(columns=self._get_schema() + ["task_id"]), None
+                        print(msg)
+                    if attempt < max_retries and status_code >= 50000:
+                        continue
+                    raise RuntimeError(msg)
                 results = task.get("result") or []
                 total_count = results[0].get("total_count") if results else None
                 df = self._parse_response(resp, target, subject=subject)
                 return df, total_count
+            except RuntimeError:
+                raise
             except Exception as e:
                 if debug:
                     print(f"[{target}] Parse error: {e}. Attempt {attempt}/{max_retries}")
                 continue
-        return None, None
+        msg = f"[{target}] Failed to fetch page from {url} after {max_retries} attempts (offset={offset})"
+        logger.warning(msg)
+        raise RuntimeError(msg)
 
     def _fetch_live(self, target: str, **kwargs) -> pd.DataFrame:
         cfg = self.config

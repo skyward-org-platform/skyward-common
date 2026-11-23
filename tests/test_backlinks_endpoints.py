@@ -41,11 +41,18 @@ class _FakeMetaClient:
 class _BacklinksFakeDfsSession:
     """Fake requests session answering all five Backlinks endpoints."""
 
-    def __init__(self, *, total_count_override: dict[str, int] | None = None, fail_40501_on: str | None = None):
+    def __init__(
+        self,
+        *,
+        total_count_override: dict[str, int] | None = None,
+        fail_40501_on: str | None = None,
+        fail_offset_on: int | None = None,
+    ):
         self.calls: list[tuple[str, list[dict]]] = []
         self._ids = itertools.count(1)
         self._total_count_override = total_count_override or {}
         self._fail_40501_on = fail_40501_on
+        self._fail_offset_on = fail_offset_on
 
     def post(self, url: str, json: list[dict] | None = None, timeout=None):  # noqa: A002
         payload = json or []
@@ -137,6 +144,16 @@ class _BacklinksFakeDfsSession:
             if url.endswith("backlinks/referring_domains/live") or url.endswith("backlinks/anchors/live"):
                 t = task["target"]
                 offset = int(task.get("offset", 0))
+                if self._fail_offset_on is not None and offset >= self._fail_offset_on:
+                    tasks.append({
+                        "id": tid,
+                        "status_code": 50000,
+                        "status_message": "Internal error on offset",
+                        "cost": 0.0,
+                        "data": task,
+                        "result": None,
+                    })
+                    continue
                 limit = int(task.get("limit", 1000))
                 total = self._total_count_override.get(t, 2)
                 remaining = max(0, min(limit, total - offset))
@@ -221,6 +238,27 @@ def test_referring_domains_and_anchors_preserve_client_domain_and_subject():
         client.backlinks_referring_domains.live(
             "rival.example", domain_id=10, job_id=jid, subject="competitor"
         )
+
+
+def test_referring_domains_pagination_error_raises_and_warns(caplog):
+    bq = FakeBigQueryClient()
+    # Total count is 5, page_size=2. Page 0 (offset 0) succeeds, Page 1 (offset 2) fails.
+    session = _BacklinksFakeDfsSession(total_count_override={"rival.example": 5}, fail_offset_on=2)
+    client = _make_client(bq, session, {10: "client.example"})
+    jid = generate_job_id()
+
+    with pytest.raises(RuntimeError, match="DFS task status 50000"):
+        client.backlinks_referring_domains.live(
+            "rival.example",
+            domain_id=10,
+            job_id=jid,
+            limit=5,
+            page_size=2,
+            max_retries=1,
+        )
+
+    # Confirm warning was logged so partial data failure is visible
+    assert any("DFS task status 50000" in record.message for record in caplog.records)
 
 
 def test_backlinks_summary_and_bulk_pages_summary_subject_tagging():
