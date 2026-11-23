@@ -8,7 +8,7 @@ A version only reaches consumers when a **GitHub Release** is published. Tagging
 not publish anything (see `.github/workflows/publish.yml`, which triggers on
 `release: [published]`).
 
-## [1.6.3] - 2026-11-23
+## [1.7.1] - 2026-11-24
 
 New Backlinks endpoints and batch orchestration for Authority Data (referring domains, anchors, history).
 
@@ -23,6 +23,20 @@ New Backlinks endpoints and batch orchestration for Authority Data (referring do
 ### Fixed
 - **`backlinks_history`**: Do not retry valid empty responses (`status_code == 20000` with no items) for domains with no history, eliminating redundant billed requests.
 - **`_backlinks_common`**: Warn and raise on task failure or error status during pagination so partial pulls are not quietly treated as complete.
+
+## [1.7.0] - 2026-11-24
+
+Full notes: [docs/releases/v1.7.0.md](docs/releases/v1.7.0.md)
+
+Where a warehouse dataset's latest day lives, so the operator dashboard can tell a stopped
+feed from a healthy one. Additive.
+
+### Added
+- **Migration `meta_029_dataset_last_day`**: `last_day` and `last_day_checked_at` on
+  `meta.dataset_catalog`, plus select for `dashboard_ro`.
+- **`MetaClient.record_dataset_last_days(rows)`**, one batched update; refuses rows with no
+  check time so a failed read never overwrites a good date.
+- `get_dataset_catalog()` returns the two new columns.
 
 ## [1.6.2] - 2026-10-09
 

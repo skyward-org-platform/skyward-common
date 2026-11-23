@@ -911,6 +911,7 @@ class MetaClient:
         query = f"""
             SELECT dc.dataset, dc.dataset_type, dc.hostname,
                    dc.shape, dc.shape_checked_at, dc.shape_detail,
+                   dc.last_day, dc.last_day_checked_at,
                    dc.owner, dc.active, dc.updated_at
             FROM meta.dataset_catalog dc
             {where_clause}
@@ -974,6 +975,64 @@ class MetaClient:
                    updated_at = now()
               FROM (VALUES {', '.join(values)})
                    AS v(dataset, shape, shape_checked_at, shape_detail)
+             WHERE dc.dataset = v.dataset
+        """
+        self.sb.execute(query, params)
+        return len(rows)
+
+    def record_dataset_last_days(self, rows: list) -> int:
+        """Store the latest day each dataset held, for many datasets in ONE
+        statement.
+
+        Each row carries `dataset`, `last_day` (a date, or None when the
+        read succeeded and found nothing to date) and `last_day_checked_at`
+        (when the read ran). Like shape, this is an observation with a
+        date: write it on every successful read, even when the day did not
+        move, because the check time is what tells "the feed stopped" from
+        "our job stopped".
+
+        A FAILED read must not reach this method. That is our outage, not
+        the dataset's, and writing it would replace a good date with a
+        null. So a row without a check time is refused rather than guessed.
+
+        Batched for the same reason as record_dataset_shapes: one survey
+        touches every readable dataset.
+
+        Returns the number of rows sent.
+        """
+        if not rows:
+            return 0
+
+        values, params = [], {}
+        for i, row in enumerate(rows):
+            dataset = (row.get("dataset") or "").strip()
+            if not dataset:
+                raise ValueError(
+                    f"record_dataset_last_days: row {i} has no dataset. The "
+                    "dataset name is the key, and a blank one would match "
+                    "every row in the catalogue."
+                )
+            if not row.get("last_day_checked_at"):
+                raise ValueError(
+                    f"record_dataset_last_days: {dataset} has no "
+                    "last_day_checked_at. Only a read that ran may be "
+                    "stored; a failed read writes nothing."
+                )
+            values.append(
+                f"(%(dataset_{i})s, %(last_day_{i})s, "
+                f"%(last_day_checked_at_{i})s)"
+            )
+            params[f"dataset_{i}"] = dataset
+            params[f"last_day_{i}"] = row.get("last_day")
+            params[f"last_day_checked_at_{i}"] = row["last_day_checked_at"]
+
+        query = f"""
+            UPDATE meta.dataset_catalog AS dc
+               SET last_day = v.last_day::date,
+                   last_day_checked_at = v.last_day_checked_at::timestamptz,
+                   updated_at = now()
+              FROM (VALUES {', '.join(values)})
+                   AS v(dataset, last_day, last_day_checked_at)
              WHERE dc.dataset = v.dataset
         """
         self.sb.execute(query, params)
