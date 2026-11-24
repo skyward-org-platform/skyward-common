@@ -514,6 +514,30 @@ AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_COLS = """\
 """
 
 AI_OPTIMIZATION_CHAT_GPT_LLM_SCRAPER_TABLE = "ai_optimization-chat_gpt-llm_scraper"
+BACKLINKS_HISTORY_TABLE = "backlinks-history"
+BACKLINKS_HISTORY_LATEST_VIEW = "backlinks-history_latest"
+
+
+def backlinks_history_view_statement(project: str, dataset: str = "DataForSEO") -> tuple[str, str]:
+    """(name, CREATE OR REPLACE VIEW ...) for the deduped latest view over backlinks-history.
+
+    Option B: deduplicates per client domain_id, target, and monthly date, keeping only
+    the latest pull (by ingest_timestamp DESC, task_id DESC) so rival rows replicated across
+    multiple clients remain filterable per client without duplicate months.
+    """
+    view_name = BACKLINKS_HISTORY_LATEST_VIEW
+    table = f"`{project}.{dataset}.{BACKLINKS_HISTORY_TABLE}`"
+    statement = f"""\
+CREATE OR REPLACE VIEW `{project}.{dataset}.{view_name}`
+OPTIONS(description="Latest backlink and referring domain monthly history per client domain_id, target and month (deduplicated across repeated pulls).")
+AS
+SELECT *
+FROM {table}
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY domain_id, target, DATE(date)
+  ORDER BY ingest_timestamp DESC, task_id DESC
+) = 1"""
+    return (view_name, statement)
 
 
 def fanout_view_statements(project: str, dataset: str = "DataForSEO") -> list[tuple[str, str]]:
