@@ -133,3 +133,15 @@ def test_fanout_script_statements():
     assert all(sql.startswith("CREATE OR REPLACE VIEW") for _, sql in statements[1:])
     assert "JSON_VALUE_ARRAY(t.fan_out_queries)" in statements[1][1]
     assert "JSON_QUERY_ARRAY(t.sources)" in statements[2][1]
+
+
+def test_backlinks_history_view_statement():
+    from scripts.migrate_dataforseo_manifest import (
+        BACKLINKS_HISTORY_LATEST_VIEW,
+        backlinks_history_view_statement,
+    )
+    name, sql = backlinks_history_view_statement("proj", "DataForSEO")
+    assert name == BACKLINKS_HISTORY_LATEST_VIEW
+    assert "CREATE OR REPLACE VIEW `proj.DataForSEO.backlinks-history_latest`" in sql
+    assert "PARTITION BY domain_id, target, DATE(date)" in sql
+    assert "ORDER BY ingest_timestamp DESC, task_id DESC" in sql

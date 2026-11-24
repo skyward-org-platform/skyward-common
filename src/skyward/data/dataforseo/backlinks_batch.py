@@ -75,6 +75,14 @@ class BulkUrlWorkUnit:
     urls: tuple[str, ...]
 
 
+COMPETITOR_PRIORITY_RANK: dict[str, int] = {
+    "VERY HIGH": 1,
+    "HIGH": 2,
+    "NORMAL": 3,
+    "LOW": 4,
+}
+
+
 def load_manifest(manifest_path: Path) -> dict[str, Any]:
     """Load a target manifest JSON containing a non-empty 'clients' list."""
     with Path(manifest_path).open("r", encoding="utf-8") as fh:
@@ -82,6 +90,110 @@ def load_manifest(manifest_path: Path) -> dict[str, Any]:
     if not isinstance(data, dict) or not data.get("clients"):
         raise ValueError(f"Manifest {manifest_path} missing non-empty 'clients' list")
     return data
+
+
+def load_manifest_from_supabase(
+    meta_client: Any,
+    *,
+    domain_ids: tuple[int, ...] = (),
+    client_ids: tuple[int, ...] = (),
+    top_n_rivals: int | None = 3,
+    min_priority: str | None = None,
+    sitemap_urls_by_domain: dict[int | str, list[str]] | None = None,
+) -> dict[str, Any]:
+    """Build a backlinks work plan manifest dynamically from Supabase `meta`.
+
+    Queries `meta.site` to resolve client sites and `meta.site_competitors`
+    via `meta_client.get_site_competitors(domain_id)` to resolve rivals.
+
+    Args:
+        meta_client: Instance of `skyward.data.meta.MetaClient` (or compatible duck-typed object).
+        domain_ids: Optional specific client domain_ids to pull (defaults to all active client sites).
+        client_ids: Optional specific client_ids to pull if domain_ids not specified.
+        top_n_rivals: Maximum rivals per client (ordered by priority), or None for all rivals.
+        min_priority: Optional filter for minimum priority ('VERY HIGH', 'HIGH', etc.).
+        sitemap_urls_by_domain: Optional mapping of domain_id or domain name to sitemap URLs.
+
+    Returns:
+        Manifest dictionary matching the structure expected by `filter_clients`
+        and `build_work_plan` ({"version": "supabase", "clients": [...]}).
+    """
+    sitemap_map = sitemap_urls_by_domain or {}
+    raw_sites: list[dict[str, Any]] = []
+
+    if domain_ids:
+        for did in domain_ids:
+            site = None
+            if hasattr(meta_client, "get_site"):
+                site = meta_client.get_site(int(did))
+            if site is None and hasattr(meta_client, "get_domain_by_id"):
+                site = meta_client.get_domain_by_id(int(did))
+            if site is None:
+                raise ValueError(f"Domain ID {did} not found in meta")
+            raw_sites.append(site)
+    elif client_ids:
+        if hasattr(meta_client, "list_sites"):
+            for cid in client_ids:
+                df = meta_client.list_sites(client_id=int(cid))
+                if not df.empty:
+                    raw_sites.extend(df.to_dict(orient="records"))
+        else:
+            raise AttributeError("meta_client does not implement list_sites")
+    else:
+        if hasattr(meta_client, "list_sites"):
+            df = meta_client.list_sites(engagement_status="client")
+            if df.empty:
+                df = meta_client.list_sites()
+            raw_sites = df.to_dict(orient="records")
+        else:
+            raise AttributeError("meta_client does not implement list_sites")
+
+    clients: list[dict[str, Any]] = []
+    max_rank = (
+        COMPETITOR_PRIORITY_RANK.get(min_priority.upper(), 99)
+        if min_priority
+        else 99
+    )
+
+    for site in raw_sites:
+        did = int(site["domain_id"])
+        domain = str(site["domain"])
+
+        rivals: list[dict[str, Any]] = []
+        if hasattr(meta_client, "get_site_competitors"):
+            comp_df = meta_client.get_site_competitors(did)
+            if comp_df is not None and not comp_df.empty:
+                comp_df = comp_df.copy()
+                comp_df["_rank"] = comp_df["priority"].apply(
+                    lambda p: COMPETITOR_PRIORITY_RANK.get(str(p).upper(), 99)
+                )
+                if min_priority:
+                    comp_df = comp_df[comp_df["_rank"] <= max_rank]
+                comp_df = comp_df.sort_values(by=["_rank", "domain"])
+                if top_n_rivals is not None and top_n_rivals > 0:
+                    comp_df = comp_df.head(top_n_rivals)
+
+                for _, row in comp_df.iterrows():
+                    rivals.append({
+                        "domain_id": int(row["competitor_domain_id"]),
+                        "domain": str(row["domain"]),
+                    })
+
+        sitemap_urls = (
+            sitemap_map.get(did)
+            or sitemap_map.get(domain)
+            or site.get("sitemap_urls")
+            or []
+        )
+
+        clients.append({
+            "domain_id": did,
+            "domain": domain,
+            "rivals": rivals,
+            "sitemap_urls": list(sitemap_urls),
+        })
+
+    return {"version": "supabase", "clients": clients}
 
 
 def filter_clients(

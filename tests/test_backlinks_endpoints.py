@@ -398,3 +398,72 @@ def test_backlinks_batch_plan_and_shared_rival_reuse(tmp_path):
     assert set(combined_bulk["domain_id"]) == {10, 20}
     assert len(combined_bulk) == 3
 
+
+class _FakeMetaCompetitorClient:
+    def __init__(self, sites: list[dict], competitors: dict[int, list[dict]]):
+        self._sites = sites
+        self._competitors = competitors
+
+    def list_sites(self, client_id: int | None = None, engagement_status: str | None = None) -> pd.DataFrame:
+        rows = self._sites
+        if client_id is not None:
+            rows = [r for r in rows if r.get("client_id") == client_id]
+        if engagement_status is not None:
+            rows = [r for r in rows if r.get("engagement_status") == engagement_status]
+        return pd.DataFrame(rows)
+
+    def get_site(self, domain_id: int) -> dict | None:
+        for s in self._sites:
+            if s["domain_id"] == domain_id:
+                return s
+        return None
+
+    def get_site_competitors(self, domain_id: int) -> pd.DataFrame:
+        comps = self._competitors.get(domain_id, [])
+        return pd.DataFrame(comps)
+
+
+def test_load_manifest_from_supabase():
+    sites = [
+        {"domain_id": 10, "domain": "client-a.com", "client_id": 1, "engagement_status": "client"},
+        {"domain_id": 20, "domain": "client-b.com", "client_id": 2, "engagement_status": "client"},
+    ]
+    competitors = {
+        10: [
+            {"domain_id": 10, "competitor_domain_id": 101, "domain": "rival-low.com", "priority": "LOW"},
+            {"domain_id": 10, "competitor_domain_id": 102, "domain": "rival-vhigh.com", "priority": "VERY HIGH"},
+            {"domain_id": 10, "competitor_domain_id": 103, "domain": "rival-high.com", "priority": "HIGH"},
+            {"domain_id": 10, "competitor_domain_id": 104, "domain": "rival-normal.com", "priority": "NORMAL"},
+        ],
+        20: [
+            {"domain_id": 20, "competitor_domain_id": 102, "domain": "rival-vhigh.com", "priority": "VERY HIGH"},
+        ],
+    }
+    meta = _FakeMetaCompetitorClient(sites, competitors)
+
+    # 1. Default load: top 3 rivals ordered by priority (VERY HIGH, HIGH, NORMAL, LOW)
+    manifest = batch.load_manifest_from_supabase(meta)
+    assert manifest["version"] == "supabase"
+    assert len(manifest["clients"]) == 2
+
+    client_a = next(c for c in manifest["clients"] if c["domain_id"] == 10)
+    assert client_a["domain"] == "client-a.com"
+    # Expected top-3 ordered by priority: rival-vhigh (1), rival-high (2), rival-normal (3)
+    assert [r["domain"] for r in client_a["rivals"]] == [
+        "rival-vhigh.com",
+        "rival-high.com",
+        "rival-normal.com",
+    ]
+
+    # 2. Filter by domain_ids and min_priority="HIGH"
+    manifest_high = batch.load_manifest_from_supabase(
+        meta,
+        domain_ids=(10,),
+        min_priority="HIGH",
+        sitemap_urls_by_domain={10: ["https://client-a.com/page1"]},
+    )
+    assert len(manifest_high["clients"]) == 1
+    c10 = manifest_high["clients"][0]
+    assert [r["domain"] for r in c10["rivals"]] == ["rival-vhigh.com", "rival-high.com"]
+    assert c10["sitemap_urls"] == ["https://client-a.com/page1"]
+

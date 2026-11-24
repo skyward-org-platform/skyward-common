@@ -8,6 +8,14 @@ A version only reaches consumers when a **GitHub Release** is published. Tagging
 not publish anything (see `.github/workflows/publish.yml`, which triggers on
 `release: [published]`).
 
+## [1.7.2] - 2026-11-24
+
+Supabase rivals manifest loader and Option B history deduplication view.
+
+### Added
+- **`load_manifest_from_supabase` in `skyward.data.dataforseo.backlinks_batch`**: Dynamically builds the Backlinks manifest directly from Supabase `meta.site` and `meta.site_competitors` via `MetaClient.get_site_competitors`, ordered by priority (`VERY HIGH` -> `HIGH` -> `NORMAL` -> `LOW`), eliminating the requirement for static local JSON target manifests.
+- **`backlinks-history_latest` View DDL**: Option B deduplication view statement in `scripts/migrate_dataforseo_manifest.py` and CLI script `scripts/create_dfs_backlinks_views.py`, partitioning by `(domain_id, target, DATE(date))` to keep only the latest pull per client, target, and month.
+
 ## [1.7.1] - 2026-11-24
 
 New Backlinks endpoints and batch orchestration for Authority Data (referring domains, anchors, history).
