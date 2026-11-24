@@ -1,7 +1,8 @@
 from skyward.data.dataforseo.cost_rates import DEFAULT_RATES, rates_by_key
 
 ENDPOINTS = {
-    "backlinks_backlinks", "backlinks_bulk_pages_summary", "backlinks_summary",
+    "backlinks_anchors", "backlinks_backlinks", "backlinks_bulk_pages_summary",
+    "backlinks_history", "backlinks_referring_domains", "backlinks_summary",
     "dataforseo_labs_google_domain_rank_overview", "dataforseo_labs_google_keyword_overview",
     "dataforseo_labs_google_keyword_suggestions", "dataforseo_labs_google_ranked_keywords",
     "dataforseo_labs_google_related_keywords", "dataforseo_labs_google_search_intent",

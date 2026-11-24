@@ -50,8 +50,11 @@ def _backlinks(endpoint: str, max_items: int) -> Rate:
 
 
 DEFAULT_RATES: tuple[Rate, ...] = (
+    _backlinks("backlinks_anchors", 1000),
     _backlinks("backlinks_backlinks", 1000),
     _backlinks("backlinks_bulk_pages_summary", 1000),
+    _backlinks("backlinks_history", 1),
+    _backlinks("backlinks_referring_domains", 1000),
     _backlinks("backlinks_summary", 1),
     _labs("dataforseo_labs_google_domain_rank_overview", 1),
     _labs("dataforseo_labs_google_keyword_overview", 700),

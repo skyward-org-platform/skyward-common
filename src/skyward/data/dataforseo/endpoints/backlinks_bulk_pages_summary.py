@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 
 from skyward.data.dataforseo.base import _UNSET, BaseEndpoint
+from skyward.data.dataforseo.endpoints._backlinks_common import validate_subject
 from skyward.data.dataforseo.run import DEFAULT_BALANCE_BUFFER
 from skyward.functions import _validate_job_id
 
@@ -30,6 +31,7 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
 
     def _build_payload(self, target: str, **kwargs) -> list[dict]:
         """Build payload for a single target."""
+        kwargs.pop("subject", None)
         return [{"targets": [target]}]
 
     def _build_bulk_payload(self, targets: list[str]) -> list[dict]:
@@ -54,11 +56,12 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         return self._make_plan(targets, endpoint_mode, requests=math.ceil(n / batch),
                                items=n, max_rows=n, batch_size=batch)
 
-    def _parse_response(self, response: dict, target: str) -> pd.DataFrame:
+    def _parse_response(self, response: dict, target: str, subject: str = "client") -> pd.DataFrame:
         """Parse API response into a DataFrame. Works for single and bulk responses.
 
         Response structure: tasks[0].result[0].items[{url, backlinks, ...}]
         """
+        subject = validate_subject(subject)
         try:
             task = response["tasks"][0]
             task_id = task.get("id", "")
@@ -74,6 +77,7 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
             if not item:
                 continue
             rows.append({
+                "subject": subject,
                 "url": item.get("url"),
                 "backlinks": item.get("backlinks"),
                 "referring_domains": item.get("referring_domains"),
@@ -103,7 +107,7 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
 
     def _get_schema(self) -> list[str]:
         return [
-            "url", "backlinks",
+            "subject", "url", "backlinks",
             "referring_domains", "referring_domains_nofollow",
             "referring_main_domains", "referring_main_domains_nofollow",
             "rank", "main_domain_rank", "spam_score",
@@ -121,6 +125,7 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         retry_delay: int,
         debug: bool,
         _depth: int = 0,
+        subject: str = "client",
     ) -> pd.DataFrame | None:
         """
         Fetch a batch with error handling:
@@ -157,10 +162,10 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
                         print(f"{indent}2 consecutive failures. Splitting batch of {len(current_batch)} in half (depth {_depth + 1})...")
                     mid = len(current_batch) // 2
                     left = await self._fetch_batch_with_fallback(
-                        current_batch[:mid], max_retries, retry_delay, debug, _depth + 1
+                        current_batch[:mid], max_retries, retry_delay, debug, _depth + 1, subject=subject
                     )
                     right = await self._fetch_batch_with_fallback(
-                        current_batch[mid:], max_retries, retry_delay, debug, _depth + 1
+                        current_batch[mid:], max_retries, retry_delay, debug, _depth + 1, subject=subject
                     )
                     parts = [df for df in [left, right] if df is not None and not df.empty]
                     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
@@ -191,10 +196,10 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
                             print(f"{indent}40501 with no extractable URL. Splitting batch of {len(current_batch)} in half (depth {_depth + 1})...")
                         mid = len(current_batch) // 2
                         left = await self._fetch_batch_with_fallback(
-                            current_batch[:mid], max_retries, retry_delay, debug, _depth + 1
+                            current_batch[:mid], max_retries, retry_delay, debug, _depth + 1, subject=subject
                         )
                         right = await self._fetch_batch_with_fallback(
-                            current_batch[mid:], max_retries, retry_delay, debug, _depth + 1
+                            current_batch[mid:], max_retries, retry_delay, debug, _depth + 1, subject=subject
                         )
                         parts = [df for df in [left, right] if df is not None and not df.empty]
                         return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
@@ -209,10 +214,10 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
                             print(f"{indent}Server error {task_status}. Splitting batch of {len(current_batch)} in half (depth {_depth + 1})...")
                         mid = len(current_batch) // 2
                         left = await self._fetch_batch_with_fallback(
-                            current_batch[:mid], max_retries, retry_delay, debug, _depth + 1
+                            current_batch[:mid], max_retries, retry_delay, debug, _depth + 1, subject=subject
                         )
                         right = await self._fetch_batch_with_fallback(
-                            current_batch[mid:], max_retries, retry_delay, debug, _depth + 1
+                            current_batch[mid:], max_retries, retry_delay, debug, _depth + 1, subject=subject
                         )
                         parts = [df for df in [left, right] if df is not None and not df.empty]
                         return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
@@ -224,7 +229,7 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
 
             # Try to parse the response
             try:
-                df = self._parse_response(resp, target="bulk")
+                df = self._parse_response(resp, target="bulk", subject=subject)
                 if not df.empty:
                     return df
                 if debug:
@@ -283,6 +288,8 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
                 df[col] = df[col].apply(
                     lambda v: json.dumps(v) if isinstance(v, (list, dict)) else v
                 )
+        if "subject" in df.columns:
+            df["subject"] = df["subject"].astype("string")
 
         return df
 
@@ -290,11 +297,14 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         """Single-target wrapper around the bulk fetch machinery."""
         # TODO(debug-logs): wire run-scoped collector into this loop (ClickUp 86babz7xp).
         kwargs.pop("_debug_collector", None)  # accepted, not yet captured
+        subject = validate_subject(kwargs.pop("subject", "client"))
         max_retries = kwargs.pop("max_retries", self.config.max_retries)
         retry_delay = kwargs.pop("retry_delay", self.config.retry_delay)
         debug = kwargs.pop("debug", self.config.debug)
         result = asyncio.run(
-            self._fetch_batch_with_fallback([target], max_retries, retry_delay, debug)
+            self._fetch_batch_with_fallback(
+                [target], max_retries, retry_delay, debug, subject=subject
+            )
         )
         if result is None or result.empty:
             return pd.DataFrame(columns=self._get_schema() + ["task_id"])
@@ -315,9 +325,11 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
         ignore_balance_check: bool = False,
         ignore_location_check: bool = False,
         upload_batch_rows: int | None = None,
+        subject: str = "client",
         **kwargs,
     ) -> pd.DataFrame:
         _validate_job_id(job_id)
+        subject = validate_subject(subject)
         resolved = self._resolve_domain(domain, domain_id, interactive)
 
         batch_size = min(batch_size or 1000, 1000)
@@ -351,7 +363,7 @@ class BacklinksBulkPagesSummary(BaseEndpoint):
                 await run.run_unit_async(
                     current_batch,
                     lambda b=current_batch: self._fetch_batch_with_fallback(
-                        b, max_retries, retry_delay, debug),
+                        b, max_retries, retry_delay, debug, subject=subject),
                 )
                 if idx < total_batches:
                     await asyncio.sleep(batch_delay)
